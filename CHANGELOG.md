@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.8 (2026-08-11)
+
+### 修复
+
+- **终端：write 回调保护缺失导致 PTY 完全冻结** — 根因：`_writeProcessDataViaScheduler` 的 `term.write()` 回调未使用 `runGuardedWriteCompletionStep` 保护，当回调中的 `ackBufferer.ack()`、`resolveWrite()` 或 `onData()` 抛出异常时，异常逃逸到 xterm 的 WriteBuffer 内部，永久楔住 WriteBuffer，导致所有后续 `term.write()` 的回调永不触发，背压 ack 停止发送，主进程 inflight 持续增长超过 HighWatermark(100000) → `pty.pause()` → pi 进程 stdout 被 OS 管道阻塞 → 终端完全冻结。修复：`onWillData` 调用及 `term.write` 回调中的每一步（write-parsed/ack/resolve-write/on-data）分别用 `runGuardedWriteCompletionStep` 保护，catch 块中额外释放 `ackBufferer.ack` 和 `resolveWrite`，防止背压 inflight 永久泄漏。
+
+### 测试
+
+- **完善主进程测试 mock** — 在 `integratedTerminalIpc`/`splash`/`openExternal` 的 `fs` mock 中添加 `mkdirSync`，消除 `ensureAppWorkDir`/`writeConfigNow` 的 stderr 报错；`openExternal.test.ts` 改用 `child_process.exec` 替代 `shell.openExternal` 验证外部链接打开；添加 `__dirname`/`path.join` ESM 兼容处理；添加 `electron.mock` 的 `requestSingleInstanceLock`。
+- **渲染层测试重构** — `App`/`CenterPane`/`SettingsPanel`/`XtermTerminal` 等测试文件统一使用 `makeApi` mock 工厂 + 更新 store 状态字段以对齐最新的分屏树架构。
+
+---
+
 ## v1.0.7 (2026-08-08)
 
 ### 修复
