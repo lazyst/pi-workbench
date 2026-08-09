@@ -60,26 +60,87 @@ vi.mock('../components/DiffTab', () => ({
   ),
 }));
 
-/** 重置 store 到干净状态。 */
+/** 重置 store 到干净状态（splitStore 初始状态）。 */
 function resetStore() {
   useTabStore.setState({
-    tabs: [],
-    activeTabId: null,
+    cwdTrees: {},
     activeCwd: null,
+    activeLeafId: null,
     cwdOrder: [],
+    cwdActiveLeafId: {},
     cwdActiveTab: {},
+    cwdTabHistory: {},
     terminals: [],
   });
 }
 
-/** 用 tabs 灌入 store，自动根据第一个非 hidden tab 的 cwd 设置 activeCwd。 */
+/** 获取当前活跃 leaf 的 tabs。 */
+function getTabs(): Tab[] {
+  const s = useTabStore.getState();
+  if (!s.activeCwd || !s.activeLeafId) return [];
+  const tree = s.cwdTrees[s.activeCwd];
+  if (!tree) return [];
+  const findLeaf = (node: any): any => {
+    if (node.type === 'leaf') return node.id === s.activeLeafId ? node : null;
+    for (const child of node.children) {
+      const found = findLeaf(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  const leaf = findLeaf(tree);
+  return leaf?.tabs ?? [];
+}
+
+/** 获取当前活跃 leaf 的 activeTabId。 */
+function getActiveTabId(): string | null {
+  const s = useTabStore.getState();
+  if (!s.activeCwd || !s.activeLeafId) return null;
+  const tree = s.cwdTrees[s.activeCwd];
+  if (!tree) return null;
+  const findLeaf = (node: any): any => {
+    if (node.type === 'leaf') return node.id === s.activeLeafId ? node : null;
+    for (const child of node.children) {
+      const found = findLeaf(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  const leaf = findLeaf(tree);
+  return leaf?.activeTabId ?? null;
+}
+
+/** 设置当前活跃 leaf 的 activeTabId。 */
+function setActiveTab(tabId: string) {
+  const s = useTabStore.getState();
+  if (!s.activeCwd) return;
+  const tree = s.cwdTrees[s.activeCwd];
+  if (!tree || tree.type !== 'leaf') return;
+  useTabStore.setState({
+    cwdTrees: { ...s.cwdTrees, [s.activeCwd]: { ...tree, activeTabId: tabId } },
+  });
+}
+
+/** 用 tabs 灌入 store，自动根据第一个非 hidden tab 的 cwd 设置 activeCwd。
+ *  创建一个单 leaf 的树结构（splitStore 数据模型）。 */
 function seedTabs(tabs: Tab[]) {
-  const first = tabs.find((t) => !t.hidden) || tabs[0];
-  const cwd = first ? getTabCwd(first) : null;
+  const firstVisible = tabs.find((t) => !t.hidden) || tabs[0];
+  const cwd = firstVisible ? getTabCwd(firstVisible) : null;
+  const leafId = 'leaf-1';
+  const activeTabId = firstVisible?.id ?? null;
   const cwdOrder = cwd ? [cwd] : [];
-  const firstVisible = tabs.find((t) => !t.hidden);
-  const cwdActiveTab = cwd && firstVisible ? { [cwd]: firstVisible.id } : {};
-  useTabStore.setState({ tabs, activeCwd: cwd, cwdOrder, cwdActiveTab });
+  const cwdActiveLeafId = cwd && firstVisible ? { [cwd]: leafId } : {};
+  const cwdActiveTab = cwd && firstVisible ? { [cwd]: activeTabId } : {};
+  useTabStore.setState({
+    cwdTrees: cwd ? { [cwd]: { type: 'leaf', id: leafId, tabs, activeTabId } } : {},
+    activeCwd: cwd,
+    activeLeafId: cwd ? leafId : null,
+    cwdOrder,
+    cwdActiveLeafId,
+    cwdActiveTab,
+    cwdTabHistory: {},
+    terminals: [],
+  });
 }
 
 function renderCenterPane(overrides: Partial<React.ComponentProps<typeof CenterPane>> = {}) {
@@ -107,30 +168,39 @@ describe('CenterPane — 按工作目录分组', () => {
         { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
         { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
       ]);
-      useTabStore.setState({ activeTabId: 's2' });
+      setActiveTab('s2');
       const { container } = renderCenterPane();
       const tabEls = container.querySelectorAll('.center-pane .terminal-tab');
       expect(tabEls[0].className).not.toContain('active');
       expect(tabEls[1].className).toContain('active');
     });
 
-    it('activeCwd 为 null 时渲染空状态提示', () => {
+    it('activeCwd 为 null 时渲染目录选择提示', () => {
       useTabStore.setState({
-        tabs: [],
+        cwdTrees: {},
         activeCwd: null,
+        activeLeafId: null,
         cwdOrder: [],
+        cwdActiveLeafId: {},
         cwdActiveTab: {},
+        cwdTabHistory: {},
+        terminals: [],
       });
       const { container } = renderCenterPane();
-      expect(container.querySelector('.empty-state')).toBeTruthy();
+      // 无 activeCwd 时，cwd 选择器显示「选择工作目录」提示
+      expect(container.querySelector('.cwd-select')?.textContent).toContain('选择工作目录');
     });
 
     it('activeCwd 有值但目录下无任何 tab 时渲染新建会话按钮', () => {
       useTabStore.setState({
-        tabs: [],
+        cwdTrees: { '/a': { type: 'leaf', id: 'leaf-1', tabs: [], activeTabId: null } },
         activeCwd: '/a',
+        activeLeafId: 'leaf-1',
         cwdOrder: ['/a'],
+        cwdActiveLeafId: { '/a': 'leaf-1' },
         cwdActiveTab: {},
+        cwdTabHistory: {},
+        terminals: [],
       });
       const { container } = renderCenterPane();
       expect(container.querySelector('.empty-state')).toBeTruthy();
@@ -139,12 +209,16 @@ describe('CenterPane — 按工作目录分组', () => {
 
     it('activeCwd 有值且目录下有隐藏 tab 时不显示空状态', () => {
       useTabStore.setState({
-        tabs: [
+        cwdTrees: { '/a': { type: 'leaf', id: 'leaf-1', tabs: [
           { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: true, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-        ],
+        ], activeTabId: null } },
         activeCwd: '/a',
+        activeLeafId: 'leaf-1',
         cwdOrder: ['/a'],
+        cwdActiveLeafId: { '/a': 'leaf-1' },
         cwdActiveTab: { '/a': null },
+        cwdTabHistory: {},
+        terminals: [],
       });
       const { container } = renderCenterPane();
       // hidden tab 内容仍挂载（keep-alive），不应显示空状态
@@ -159,7 +233,7 @@ describe('CenterPane — 按工作目录分组', () => {
         { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
         { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
       ]);
-      useTabStore.setState({ activeTabId: 's1' });
+      setActiveTab('s1');
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
@@ -173,9 +247,8 @@ describe('CenterPane — 按工作目录分组', () => {
       fireEvent.click(closeBtns[0] as HTMLElement);
 
       expect(closeCenterTab).toHaveBeenCalledWith('s1');
-      const s = useTabStore.getState();
-      expect(s.tabs.find((t) => t.id === 's1')).toBeUndefined();
-      expect(s.tabs).toHaveLength(1);
+      expect(getTabs().find((t) => t.id === 's1')).toBeUndefined();
+      expect(getTabs()).toHaveLength(1);
     });
 
     it('关闭后重新打开会创建新 tab 实例', () => {
@@ -189,7 +262,7 @@ describe('CenterPane — 按工作目录分组', () => {
 
       // tab 被移除，内容 div 不再挂载
       expect(container.querySelectorAll('[data-testid="terminal-pane"]').length).toBe(0);
-      expect(useTabStore.getState().tabs.find((t) => t.id === '/a')).toBeUndefined();
+      expect(getTabs().find((t) => t.id === '/a')).toBeUndefined();
     });
   });
 
@@ -198,7 +271,7 @@ describe('CenterPane — 按工作目录分组', () => {
       seedTabs([
         { id: 'preview:/repo//a.ts', kind: 'preview', location: 'editor', title: 'a.ts', hidden: false, order: 0, root: '/repo', path: 'a.ts' } as Tab,
       ]);
-      useTabStore.setState({ activeTabId: 'preview:/repo//a.ts' });
+      setActiveTab('preview:/repo//a.ts');
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
@@ -215,7 +288,7 @@ describe('CenterPane — 按工作目录分组', () => {
         { id: 'preview:/repo//a.ts', kind: 'preview', location: 'editor', title: 'a.ts', hidden: false, order: 0, root: '/repo', path: 'a.ts' } as Tab,
         { id: 'diff:/repo//work', kind: 'diff', location: 'editor', title: '工作区改动', hidden: false, order: 1, cwd: '/repo', commitHash: null } as Tab,
       ]);
-      useTabStore.setState({ activeTabId: 'diff:/repo//work' });
+      setActiveTab('diff:/repo//work');
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
@@ -250,7 +323,8 @@ describe('CenterPane — 按工作目录分组', () => {
       expect(panesBefore).toHaveLength(3);
 
       act(() => {
-        useTabStore.getState().reorderTabs(['s3', 's1', 's2']);
+        const leafId = useTabStore.getState().activeLeafId!;
+        useTabStore.getState().reorderTabsInLeaf(leafId, ['s3', 's1', 's2']);
       });
 
       const els = container.querySelectorAll('.center-pane .terminal-tab');

@@ -60,6 +60,7 @@ function makeApi(overrides: Record<string, unknown> = {}) {
     terminalInput: vi.fn(),
     terminalResize: vi.fn(),
     onTerminalData: vi.fn(() => () => {}),
+    gitWatch: vi.fn(() => () => {}),
     ...overrides,
   };
   (window as any).pi = api;

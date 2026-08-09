@@ -1,17 +1,36 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { defaultConfig } from '../../../main/config';
 
 const CONFIG = defaultConfig();
 
+// 构建组件挂载所需的 window.pi mock。SettingsPanel 的「常规」页会渲染 UpdateCheck，
+// 其在挂载时调用 getCurrentVersion / getUpdateStatus / onDownloadProgress，
+// 缺了会抛 “pi.xxx is not a function”。
+function makeApi(overrides: Record<string, any> = {}) {
+  return {
+    getConfig: vi.fn().mockResolvedValue(CONFIG),
+    setConfig: vi.fn().mockResolvedValue(undefined),
+    getCurrentVersion: vi.fn().mockResolvedValue('1.0.0'),
+    getUpdateStatus: vi.fn().mockResolvedValue(null),
+    onDownloadProgress: vi.fn().mockReturnValue(() => {}),
+    listSessions: vi.fn().mockResolvedValue([]),
+    readSessionContent: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  };
+}
+
 describe('SettingsPanel', () => {
+  // 会话管理相关测试会 handleNav('sessions') 并把导航写入 localStorage，
+  // 若不清理，后续测试会从「会话管理」页起步，导致 GeneralSettings（含字体大小）不渲染。
+  beforeEach(() => {
+    localStorage.removeItem('pi-desktop:settings-nav');
+  });
+
   it('renders a close-behavior segmented control defaulting to minimize-to-tray', async () => {
-    const api = {
-      getConfig: vi.fn().mockResolvedValue(CONFIG),
-      setConfig: vi.fn().mockResolvedValue(undefined),
-    };
+    const api = makeApi();
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
 
@@ -27,10 +46,7 @@ describe('SettingsPanel', () => {
   });
 
   it('switching close behavior persists via setConfig', async () => {
-    const api = {
-      getConfig: vi.fn().mockResolvedValue(CONFIG),
-      setConfig: vi.fn().mockResolvedValue(undefined),
-    };
+    const api = makeApi();
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
 
@@ -49,11 +65,7 @@ describe('SettingsPanel', () => {
   });
 
   it('renders 常规 and 会话管理 navigation items', async () => {
-    const api = {
-      getConfig: vi.fn().mockResolvedValue(CONFIG),
-      setConfig: vi.fn().mockResolvedValue(undefined),
-      listSessions: vi.fn().mockResolvedValue([]),
-    };
+    const api = makeApi({ listSessions: vi.fn().mockResolvedValue([]) });
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
     expect(screen.getByText('常规')).toBeInTheDocument();
@@ -65,12 +77,10 @@ describe('SettingsPanel', () => {
       { cwd: 'C:\\work\\a', sessions: [{ key: 'k1', name: 'alpha', time: '10:00' }] },
       { cwd: 'C:\\work\\b', sessions: [{ key: 'k2', name: 'beta', time: '11:00' }] },
     ];
-    const api = {
-      getConfig: vi.fn().mockResolvedValue(CONFIG),
-      setConfig: vi.fn().mockResolvedValue(undefined),
+    const api = makeApi({
       listSessions: vi.fn().mockResolvedValue(groups),
       deleteSession: vi.fn().mockResolvedValue(undefined),
-    };
+    });
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
 
@@ -92,11 +102,7 @@ describe('SettingsPanel', () => {
     const cwd = 'C:\\work\\many';
     const sessions = Array.from({ length: 5 }, (_, i) => ({ key: `k${i}`, name: `sess-${i}`, time: '10:0' + i }));
     const groups = [{ cwd, sessions }];
-    const api = {
-      getConfig: vi.fn().mockResolvedValue(CONFIG),
-      setConfig: vi.fn().mockResolvedValue(undefined),
-      listSessions: vi.fn().mockResolvedValue(groups),
-    };
+    const api = makeApi({ listSessions: vi.fn().mockResolvedValue(groups) });
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
 
@@ -122,10 +128,7 @@ describe('SettingsPanel', () => {
   });
 
   it('字体大小步进器：增大/减小调用 setConfig 并更新显示', async () => {
-    const api = {
-      getConfig: vi.fn().mockResolvedValue(CONFIG),
-      setConfig: vi.fn().mockResolvedValue(undefined),
-    };
+    const api = makeApi();
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
 

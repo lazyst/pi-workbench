@@ -55,7 +55,7 @@ describe('terminal-registry 单点订阅刷新所有存活实例', () => {
     expect(liveTerminalCount()).toBe(0);
   });
 
-  it('主题切换经 onThemeChange 统一刷新所有存活实例', () => {
+  it('主题切换经 onThemeChange 统一刷新所有存活实例', async () => {
     const a = makeFakeTerminal();
     const b = makeFakeTerminal();
     registerTerminal(a);
@@ -68,20 +68,25 @@ describe('terminal-registry 单点订阅刷新所有存活实例', () => {
 
     setTheme('light');
     expect(getTheme()).toBe('light');
-    expect(a.theme).toBe('light');
+    // 主题变更经 rAF 聚合后刷新终端，等待 rAF 回调
+    await vi.waitFor(() => {
+      expect(a.theme).toBe('light');
+    });
     expect(a.themeFamily).toBe('github');
     expect(b.theme).toBe('light');
     expect(b.themeFamily).toBe('github');
 
     setTheme('dark');
-    expect(a.theme).toBe('dark');
+    await vi.waitFor(() => {
+      expect(a.theme).toBe('dark');
+    });
     expect(b.theme).toBe('dark');
 
     unregisterTerminal(a);
     unregisterTerminal(b);
   });
 
-  it('字号变化经 onFontSizeChange 统一刷新所有存活实例', () => {
+  it('字号变化经 onFontSizeChange 统一刷新所有存活实例', async () => {
     const a = makeFakeTerminal();
     const b = makeFakeTerminal();
     registerTerminal(a);
@@ -91,7 +96,10 @@ describe('terminal-registry 单点订阅刷新所有存活实例', () => {
 
     const next = setFontSize(18);
     expect(getFontSize()).toBe(18);
-    expect(a.size).toBe(18);
+    // 字号变更经 rAF 聚合后刷新终端，等待 rAF 回调
+    await vi.waitFor(() => {
+      expect(a.size).toBe(18);
+    });
     expect(b.size).toBe(18);
     expect(next).toBe(18);
 

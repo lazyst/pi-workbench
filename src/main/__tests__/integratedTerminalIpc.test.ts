@@ -40,6 +40,7 @@ vi.mock('electron', () => ({
     whenReady: () => new Promise<void>((res) => { readyResolver = res; }),
     on: vi.fn(),
     quit: vi.fn(),
+    requestSingleInstanceLock: () => true,
   },
   BrowserWindow: class {
     constructor(_opts: any) {}
@@ -66,8 +67,8 @@ vi.mock('electron', () => ({
 
 vi.mock('node-pty', () => ({ default: { spawn: vi.fn() } }));
 vi.mock('fs', () => ({
-  default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] },
-  readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [],
+  default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), mkdirSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] },
+  readFileSync: vi.fn(), writeFileSync: vi.fn(), mkdirSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [],
 }));
 
 // 用可控的 mock 替换统一终端池，捕获构造回调 + 记录方法调用。

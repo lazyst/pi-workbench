@@ -15,7 +15,30 @@ const hoist = vi.hoisted(() => ({
   clipboardActivateCalls: 0,
   unicodeActivateCalls: 0,
   registerDecorationCalls: 0,
+  fitProposeDefault: null as { cols: number; rows: number } | null,
+  fitProposeCalls: 0,
+  fitCalls: 0,
 }));
+vi.mock('@xterm/addon-fit', () => {
+  class FitAddonMock {
+    _terminal: any = null;
+    activate(t: any) { this._terminal = t; }
+    dispose() {}
+    proposeDimensions() {
+      hoist.fitProposeCalls++;
+      if (hoist.fitProposeDefault) return hoist.fitProposeDefault;
+      return { cols: 80, rows: 24 };
+    }
+    fit() {
+      hoist.fitCalls++;
+      const d = this.proposeDimensions();
+      if (d && this._terminal) {
+        this._terminal.resize(d.cols, d.rows);
+      }
+    }
+  }
+  return { FitAddon: FitAddonMock };
+});
 vi.mock('@xterm/addon-webgl', () => {
   class WebglAddon {
     disposed = false;
@@ -86,6 +109,9 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     hoist.webglActivateCalls = 0;
     hoist.clipboardActivateCalls = 0;
     hoist.unicodeActivateCalls = 0;
+    hoist.fitProposeDefault = null;
+    hoist.fitProposeCalls = 0;
+    hoist.fitCalls = 0;
   });
   afterEach(() => {
     document.body.innerHTML = '';
@@ -294,21 +320,15 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
 
   it('calls pi.resize with fitted dims after mount', () => {
     const api = makeApi();
-    // jsdom 无布局引擎，proposeDimensions 默认返回 undefined；mock 出有效目标维度，
+    // jsdom 无布局引擎，mock 出有效目标维度，
     // 对齐真实浏览器里 mount 后首帧用宿主尺寸校准终端、通知 PTY 的路径。
-    const propose = vi
-      .spyOn(FitAddon.prototype, 'proposeDimensions')
-      .mockReturnValue({ cols: 100, rows: 30 });
-    const fit = vi.spyOn(FitAddon.prototype, 'fit').mockImplementation(() => {});
+    hoist.fitProposeDefault = { cols: 100, rows: 30 };
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     const host = mountHost();
     Object.defineProperty(host, 'clientWidth', { value: 800, configurable: true });
     Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true });
     t.mount(host);
-    expect(fit).toHaveBeenCalled();
     expect(api.resize).toHaveBeenCalled();
-    propose.mockRestore();
-    fit.mockRestore();
     t.unmount();
   });
 
@@ -645,47 +665,26 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  // 不可见终端的 idle 延迟 resize（对齐 VS Code runWhenWindowIdle）：非 active 时 scheduleResize
-  // 不立即执行、推迟到 idle 后再经 TerminalResizeDebouncer 分别触发 _resizeX / _resizeY；
-  // 可见时仍走同步/防抖。
-  it('defers resize to idle when not active (runWhenWindowIdle semantics)', async () => {
+  // scheduleResize 直接调用 doResize 执行同步 resize（不再使用 idle 延迟 / 分轴防抖），
+  // 验证 doResize 正确调用了 proposeDimensions 和 PTY 通知。
+  it('scheduleResize calls doResize directly', () => {
     const api = makeApi();
-    const propose = vi
-      .spyOn(FitAddon.prototype, 'proposeDimensions')
-      .mockReturnValue({ cols: 100, rows: 30 });
-    const resizeX = vi
-      .spyOn(XtermTerminal.prototype as any, '_resizeX')
-      .mockImplementation(() => {});
-    const resizeY = vi
-      .spyOn(XtermTerminal.prototype as any, '_resizeY')
-      .mockImplementation(() => {});
+    // 先用一组尺寸 mount，使终端初始化为该尺寸。
+    hoist.fitProposeDefault = { cols: 100, rows: 30 };
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     const host = mountHost();
     Object.defineProperty(host, 'clientWidth', { value: 800, configurable: true });
     Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true });
     t.mount(host);
-    // 模拟「大 buffer」（行数 ≥ 200，对齐 VS Code StartDebouncingThreshold），使非 active 时
-    // resize 走 idle 延迟而非立即路径。
-    Object.defineProperty((t as any).term, 'buffer', {
-      configurable: true,
-      value: { active: { length: 500, viewportY: 0, baseY: 400 } },
-    });
-    // mount 内部已调过 doResize(true)（首帧对齐尺寸，走 immediate），清零后再测 idle 延迟语义。
-    resizeX.mockClear();
-    resizeY.mockClear();
-    // 模拟隐藏（keep-alive 非 active）。
+    // 非 active 时 scheduleResize 仍直接执行 resize（无 idle 延迟）
     (t as any).active = false;
+    // 用不同尺寸使 doResize 跳过相等检测，触发 PTY 通知
+    hoist.fitProposeDefault = { cols: 120, rows: 40 };
+    hoist.fitProposeCalls = 0;
+    api.resize.mockClear();
     t.scheduleResize();
-    // 立即不应执行（idle 延迟）。jsdom 无 requestIdleCallback，降级 setTimeout(0)。
-    expect(resizeX).not.toHaveBeenCalled();
-    expect(resizeY).not.toHaveBeenCalled();
-    // 让出事件循环后 idle 回调触发 _resizeX / _resizeY。
-    await new Promise((r) => setTimeout(r, 30));
-    expect(resizeX).toHaveBeenCalled();
-    expect(resizeY).toHaveBeenCalled();
-    propose.mockRestore();
-    resizeX.mockRestore();
-    resizeY.mockRestore();
+    expect(hoist.fitProposeCalls).toBeGreaterThan(0);
+    expect(api.resize).toHaveBeenCalled();
     t.unmount();
   });
 });

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import App from '../App';
 import { useTabStore } from '../store/tabStore';
@@ -11,23 +11,91 @@ const CONFIG = defaultConfig();
 // 等价于重构前 App 的 useState 每实例独立；见 issue 03 状态收编进 store）。
 beforeEach(() => {
   useTabStore.setState({
-    tabs: [],
-    activeTabId: null,
+    cwdTrees: {},
+    activeCwd: null,
+    activeLeafId: null,
+    cwdOrder: [],
+    cwdActiveLeafId: {},
+    cwdActiveTab: {},
+    cwdTabHistory: {},
     terminals: [],
   });
 });
 
+/** 创建基础 mock pi 对象，提供所有方法（各测试通过 overrides 自定义特定行为）。 */
+function makeApi(overrides: Record<string, unknown> = {}) {
+  const api = {
+    listSessions: vi.fn().mockResolvedValue([]),
+    openSession: vi.fn(),
+    terminate: vi.fn(),
+    deleteSession: vi.fn(),
+    deleteMany: vi.fn(),
+    clearDirectory: vi.fn(),
+    input: vi.fn(),
+    resize: vi.fn(),
+    onData: vi.fn(() => () => {}),
+    onStatus: vi.fn(() => () => {}),
+    onExit: vi.fn(() => () => {}),
+    onIndex: vi.fn(() => () => {}),
+    onRelink: vi.fn(() => () => {}),
+    pickDirectory: vi.fn(),
+    debug: vi.fn(),
+    getConfig: vi.fn().mockResolvedValue(CONFIG),
+    setConfig: vi.fn().mockResolvedValue(undefined),
+    listTerminalProfiles: vi.fn().mockResolvedValue([]),
+    spawnTerminal: vi.fn(),
+    destroyTerminal: vi.fn(),
+    terminalInput: vi.fn(),
+    terminalResize: vi.fn(),
+    onTerminalData: vi.fn(() => () => {}),
+    onTerminalList: vi.fn(() => () => {}),
+    onTerminalExit: vi.fn(() => () => {}),
+    splashDone: vi.fn(),
+    gitWatch: vi.fn(() => () => {}),
+    gitStatus: vi.fn(),
+    gitLog: vi.fn(),
+    gitDiff: vi.fn(),
+    gitFileStatusMap: vi.fn(),
+    gitIgnoredPaths: vi.fn(),
+    fsListDir: vi.fn(),
+    fsReadFile: vi.fn(),
+    fsWriteFile: vi.fn(),
+    fsStat: vi.fn(),
+    fsMkdir: vi.fn(),
+    fsCreateFile: vi.fn(),
+    fsRename: vi.fn(),
+    fsRemove: vi.fn(),
+    fsCopy: vi.fn(),
+    fsListNames: vi.fn(),
+    fsUniqueName: vi.fn(),
+    fsWatch: vi.fn(() => () => {}),
+    fsWatchFile: vi.fn(() => () => {}),
+    fsOpenWithSystem: vi.fn(),
+    fsShowInFolder: vi.fn(),
+    openExternal: vi.fn(),
+    saveImage: vi.fn(),
+    getPathForFile: vi.fn(),
+    acknowledgeDataEvent: vi.fn(),
+    minimizeWindow: vi.fn(),
+    toggleMaximizeWindow: vi.fn(),
+    closeWindow: vi.fn(),
+    getWindowBounds: vi.fn(),
+    setWindowBounds: vi.fn(),
+    onMaximizeChange: vi.fn(() => () => {}),
+    getInitialConfig: vi.fn(),
+    onNewFromPi: vi.fn(),
+    onSessionNameChanged: vi.fn(() => () => {}),
+    registerPtyOwner: vi.fn(),
+    queryPtyOwner: vi.fn(),
+    ...overrides,
+  };
+  (window as any).pi = api;
+  return api;
+}
+
 describe('App', () => {
   it('passes only disk sessions to the sidebar (no live merge)', async () => {
-    const api = {
-      listSessions: vi.fn().mockResolvedValue([]),
-      openSession: vi.fn(),
-      terminate: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
-    };
-    (window as any).pi = api;
+    const api = makeApi();
     render(<App />);
     // onIndex 被订阅（用于后续晋升），初始 listSessions 被调用
     expect(api.onIndex).toHaveBeenCalled();
@@ -39,17 +107,12 @@ describe('App', () => {
 
   it('batch delete: select sessions then confirm calls pi.deleteMany', async () => {
     const groups = [{ cwd: 'C:\\Users\\hcz\\project', sessions: [{ key: 'k1', name: 's1', time: 't' }, { key: 'k2', name: 's2', time: 't' }] }];
-    // 左侧栏只展示“添加目录”注册的目录下的会话，需把 cwd 纳入 addedDirs。
+    // 左侧栏只展示"添加目录"注册的目录下的会话，需把 cwd 纳入 addedDirs。
     const cfgWithDir = { ...CONFIG, addedDirs: ['C:\\Users\\hcz\\project'] };
-    const api = {
+    const api = makeApi({
       listSessions: vi.fn().mockResolvedValue(groups),
-      openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
-      deleteMany: vi.fn(), clearDirectory: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(cfgWithDir),
-    };
-    (window as any).pi = api;
+      getConfig: vi.fn().mockResolvedValue(cfgWithDir),
+    });
     render(<App />);
     // 初始 listSessions 加载出磁盘会话（避免被异步重置）
     await screen.findByText('s1');
@@ -63,7 +126,7 @@ describe('App', () => {
     fireEvent.click(item1);
     expect(await screen.findByText('已选 1 项')).toBeInTheDocument();
 
-    // 点击顶部“删除”打开确认框（用 data-action 区分 header 按钮与确认按钮）
+    // 点击顶部"删除"打开确认框（用 data-action 区分 header 按钮与确认按钮）
     fireEvent.click(document.querySelector('[data-action="batch-delete"]')!);
     expect(await screen.findByText(/确定删除选中的 1 个会话/)).toBeInTheDocument();
 
@@ -76,21 +139,16 @@ describe('App', () => {
   it('clear directory: confirm calls pi.clearDirectory with the cwd', async () => {
     const cwd = 'C:\\Users\\hcz\\project';
     const groups = [{ cwd, sessions: [{ key: 'k1', name: 's1', time: 't' }] }];
-    // 左侧栏只展示“添加目录”注册的目录下的会话，需把 cwd 纳入 addedDirs。
+    // 左侧栏只展示"添加目录"注册的目录下的会话，需把 cwd 纳入 addedDirs。
     const cfgWithDir = { ...CONFIG, addedDirs: [cwd] };
-    const api = {
+    const api = makeApi({
       listSessions: vi.fn().mockResolvedValue(groups),
-      openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
-      deleteMany: vi.fn(), clearDirectory: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(cfgWithDir),
-    };
-    (window as any).pi = api;
+      getConfig: vi.fn().mockResolvedValue(cfgWithDir),
+    });
     render(<App />);
     await screen.findByText('s1');
 
-    // 点击组 header 的“清空”
+    // 点击组 header 的"清空"
     fireEvent.click(screen.getByLabelText(`清空 ${cwd}`));
     expect(await screen.findByText(/确定清空目录/)).toBeInTheDocument();
 
@@ -103,16 +161,7 @@ describe('App', () => {
   it('dismisses the splash overlay and notifies the main process on mount', async () => {
     // 模拟 index.html 中的启动动画 overlay（见 docs/adr/0003）。
     document.body.innerHTML = '<div id="splash"><div class="splash-logo">π</div><div class="splash-dot"></div></div><div id="root"></div>';
-    const api = {
-      listSessions: vi.fn().mockResolvedValue([]),
-      openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
-      deleteMany: vi.fn(), clearDirectory: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
-      splashDone: vi.fn(),
-    };
-    (window as any).pi = api;
+    const api = makeApi();
     render(<App />);
     // App 挂载（useEffect + rAF）后应触发 splashDone 并给 #splash 加隐藏类。
     await new Promise((r) => setTimeout(r, 50));
@@ -122,15 +171,9 @@ describe('App', () => {
   });
 
   it('三栏布局：渲染 .sidebar / .center-pane / .right-panel，且中间区含统一 Tab 条', async () => {
-    const api = {
-      listSessions: vi.fn().mockResolvedValue([]),
-      openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
-      deleteMany: vi.fn(), clearDirectory: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
-    };
-    (window as any).pi = api;
+    const api = makeApi();
+    // 设置一个工作目录，使 CenterPane 渲染分屏树和 TabBar
+    useTabStore.getState().setActiveCwd('/tmp');
     render(<App />);
     // 三栏结构存在
     expect(document.querySelector('.sidebar')).toBeTruthy();
@@ -144,20 +187,14 @@ describe('App', () => {
     const cwd = 'C:\\Users\\hcz\\project';
     const groups = [{ cwd, sessions: [{ key: 'k1', name: 's1', time: 't' }] }];
     const cfgWithDir = { ...CONFIG, addedDirs: [cwd] };
-    const api = {
+    const api = makeApi({
       listSessions: vi.fn().mockResolvedValue(groups),
       openSession: vi.fn().mockResolvedValue({ key: 'k1', name: 's1', cwd }),
-      terminate: vi.fn(), deleteSession: vi.fn(),
-      deleteMany: vi.fn(), clearDirectory: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(cfgWithDir),
+      getConfig: vi.fn().mockResolvedValue(cfgWithDir),
       gitDiff: vi.fn().mockResolvedValue(''),
-      gitWatch: vi.fn(() => () => {}),
       gitStatus: vi.fn().mockResolvedValue({ isGit: true, branch: 'main', additions: 0, deletions: 0, ahead: 0, behind: 0 }),
       gitLog: vi.fn().mockResolvedValue([]),
-    };
-    (window as any).pi = api;
+    });
     render(<App />);
     // 等会话加载出（addedDirs 含 cwd，右栏根目录下拉可选 cwd，无需打开会话 tab）
     await screen.findByText('s1');
@@ -188,18 +225,13 @@ describe('App', () => {
     const cwd = 'C:\\Users\\hcz\\project';
     const groups = [{ cwd, sessions: [{ key: 'k1', name: 's1', time: 't' }] }];
     const cfgWithDir = { ...CONFIG, addedDirs: [cwd] };
-    const api = {
+    const api = makeApi({
       listSessions: vi.fn().mockResolvedValue(groups),
       openSession: vi.fn().mockResolvedValue({ key: 'k1', name: 's1', cwd }),
-      terminate: vi.fn(), deleteSession: vi.fn(),
-      deleteMany: vi.fn(), clearDirectory: vi.fn(),
-      input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(cfgWithDir),
+      getConfig: vi.fn().mockResolvedValue(cfgWithDir),
       // 文件树根目录列出一个文件，点击即触发 onOpenFile → 中间区预览 tab
       fsListDir: vi.fn().mockResolvedValue([{ name: 'README.md', isDir: false, fullPath: cwd + '\\README.md' }]),
-    };
-    (window as any).pi = api;
+    });
     render(<App />);
     await screen.findByText('s1');
     // 在右栏根目录下拉中选择 cwd（避免打开会话 tab 触发 TerminalPane/xterm）

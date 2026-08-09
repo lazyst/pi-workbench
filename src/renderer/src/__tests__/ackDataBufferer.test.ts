@@ -16,8 +16,8 @@ describe('AckDataBufferer (aligned with VS Code AckDataBufferer)', () => {
     expect(ackCallback).not.toHaveBeenCalled();
   });
 
-  it('sends ack when accumulated chars reach CharCountAckSize', () => {
-    bufferer.ack(FlowControlConstants.CharCountAckSize);
+  it('sends ack when accumulated chars exceed CharCountAckSize', () => {
+    bufferer.ack(FlowControlConstants.CharCountAckSize + 1);
     expect(ackCallback).toHaveBeenCalledTimes(1);
     expect(ackCallback).toHaveBeenCalledWith(FlowControlConstants.CharCountAckSize);
   });
@@ -30,11 +30,14 @@ describe('AckDataBufferer (aligned with VS Code AckDataBufferer)', () => {
     // 剩余 1000 未达阈值，等待下次 ack 或 flush
   });
 
-  it('uses >= threshold so exact boundary triggers ack', () => {
+  it('uses > threshold so exact boundary does not trigger ack until exceeded', () => {
     // 累积两次刚好到阈值
     bufferer.ack(FlowControlConstants.CharCountAckSize / 2);
     expect(ackCallback).not.toHaveBeenCalled();
     bufferer.ack(FlowControlConstants.CharCountAckSize / 2);
+    expect(ackCallback).not.toHaveBeenCalled();
+    // 再累积超过阈值
+    bufferer.ack(1);
     expect(ackCallback).toHaveBeenCalledTimes(1);
     expect(ackCallback).toHaveBeenCalledWith(FlowControlConstants.CharCountAckSize);
   });
@@ -86,14 +89,14 @@ describe('AckDataBufferer (aligned with VS Code AckDataBufferer)', () => {
   });
 
   it('refills accumulated chars after partial flush', () => {
-    bufferer.ack(FlowControlConstants.CharCountAckSize); // → sends one ack, resets to 0
+    bufferer.ack(FlowControlConstants.CharCountAckSize + 1); // → sends one ack, leaves 1
     expect(ackCallback).toHaveBeenCalledTimes(1);
-    bufferer.ack(FlowControlConstants.CharCountAckSize + 500); // → sends one ack, leaves 500
+    bufferer.ack(FlowControlConstants.CharCountAckSize + 500); // → sends one ack, leaves 501
     expect(ackCallback).toHaveBeenCalledTimes(2);
-    expect(bufferer.unsentCharCount).toBe(500);
-    bufferer.flush(); // → sends remaining 500
+    expect(bufferer.unsentCharCount).toBe(501);
+    bufferer.flush(); // → sends remaining 501
     expect(ackCallback).toHaveBeenCalledTimes(3);
-    expect(ackCallback).toHaveBeenLastCalledWith(500);
+    expect(ackCallback).toHaveBeenLastCalledWith(501);
     expect(bufferer.unsentCharCount).toBe(0);
   });
 });

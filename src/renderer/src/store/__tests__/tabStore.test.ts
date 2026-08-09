@@ -5,29 +5,55 @@ vi.mock('../../components/paneManager', () => ({
   capturePaneScrollState: vi.fn(),
 }));
 
-import { useTabStore, selectNextTabOnClose, type Tab, type TabLocation } from '../tabStore';
-
-/** 重置 store 到初始空状态，保证用例间隔离。 */
-function resetStore() {
-  useTabStore.setState({
-    tabs: [],
-    activeTabId: null,
-    activeCwd: null,
-    cwdOrder: [],
-    cwdActiveTab: {},
-    terminals: [],
-  });
-}
+import { useTabStore, selectNextTabOnClose } from '../tabStore';
+import { findLeaf } from '../splitStore';
+import type { Tab, TabLocation, SplitTree, SplitChild } from '../splitStore';
 
 /** 取当前 store 状态快照。 */
 function getState() {
   return useTabStore.getState();
 }
 
+/** 收集所有 cwd 中所有 tab。 */
+function getTabs(): Tab[] {
+  const state = getState();
+  const result: Tab[] = [];
+  function walk(node: SplitChild) {
+    if (node.type === 'leaf') result.push(...node.tabs);
+    else node.children.forEach(walk);
+  }
+  for (const tree of Object.values(state.cwdTrees)) {
+    walk(tree);
+  }
+  return result;
+}
+
+/** 获取当前活跃 leaf 的 activeTabId。 */
+function getActiveTabId(): string | null {
+  const state = getState();
+  if (!state.activeLeafId) return null;
+  const found = findLeaf(state.cwdTrees, state.activeLeafId);
+  return found?.leaf.activeTabId ?? null;
+}
+
+/** 重置 store 到初始空状态，保证用例间隔离。 */
+function resetStore() {
+  useTabStore.setState({
+    cwdTrees: {},
+    activeCwd: null,
+    activeLeafId: null,
+    cwdOrder: [],
+    cwdActiveLeafId: {},
+    cwdActiveTab: {},
+    cwdTabHistory: {},
+    terminals: [],
+  });
+}
+
 /** 便捷读取某 location 下可见 tab（按 order 排序）。 */
 function visibleIn(location: TabLocation): Tab[] {
-  return getState()
-    .tabs.filter((t) => t.location === location && !t.hidden)
+  return getTabs()
+    .filter((t) => t.location === location && !t.hidden)
     .sort((a, b) => a.order - b.order);
 }
 
@@ -38,39 +64,39 @@ describe('tabStore — 状态容器与 action', () => {
     it('创建新 session tab 并激活', () => {
       getState().openSession({ key: '/a/session.jsonl', cwd: '/a', name: 'sess-a' });
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      const tab = s.tabs[0];
+      expect(getTabs()).toHaveLength(1);
+      const tab = getTabs()[0];
       expect(tab.kind).toBe('session');
       expect(tab.id).toBe('/a/session.jsonl');
       expect((tab as any).key).toBe('/a/session.jsonl');
       expect(tab.location).toBe('editor');
       expect(tab.hidden).toBe(false);
       expect(tab.order).toBe(0);
-      expect(s.activeTabId).toBe('/a/session.jsonl');
+      expect(getActiveTabId()).toBe('/a/session.jsonl');
     });
 
     it('同 key 已存在则取消隐藏并激活（不重复创建）', () => {
       getState().openSession({ key: '/a/session.jsonl', cwd: '/a', name: 'sess-a' });
       getState().hideTab('/a/session.jsonl');
-      expect(getState().tabs).toHaveLength(1);
+      expect(getTabs()).toHaveLength(1);
       getState().openSession({ key: '/a/session.jsonl' });
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.tabs[0].hidden).toBe(false);
-      expect(s.activeTabId).toBe('/a/session.jsonl');
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs()[0].hidden).toBe(false);
+      expect(getActiveTabId()).toBe('/a/session.jsonl');
     });
 
     it('key 缺失时用 cwd 作为 id 与 key', () => {
       getState().openSession({ cwd: '/b', name: 'sess-b' });
       const s = getState();
-      expect(s.tabs[0].id).toBe('/b');
-      expect((s.tabs[0] as any).key).toBe('/b');
+      expect(getTabs()[0].id).toBe('/b');
+      expect((getTabs()[0] as any).key).toBe('/b');
     });
 
     it('多个 session 按创建顺序分配 order', () => {
-      getState().openSession({ key: 'k1' });
-      getState().openSession({ key: 'k2' });
-      getState().openSession({ key: 'k3' });
+      getState().openSession({ key: 'k1', cwd: '/a' });
+      getState().openSession({ key: 'k2', cwd: '/a' });
+      getState().openSession({ key: 'k3', cwd: '/a' });
       const orders = visibleIn('editor').map((t) => t.order);
       expect(orders).toEqual([0, 1, 2]);
     });
@@ -80,12 +106,12 @@ describe('tabStore — 状态容器与 action', () => {
     it('用 preview:<root>//<path> 作 id 创建并激活', () => {
       getState().openPreview('/repo', 'src/index.ts');
       const s = getState();
-      const tab = s.tabs[0];
+      const tab = getTabs()[0];
       expect(tab.kind).toBe('preview');
       expect(tab.id).toBe('preview:/repo//src/index.ts');
       expect(tab.location).toBe('editor');
       expect(tab.title).toBe('index.ts');
-      expect(s.activeTabId).toBe('preview:/repo//src/index.ts');
+      expect(getActiveTabId()).toBe('preview:/repo//src/index.ts');
     });
 
     it('同 root+path 已存在则激活不重复创建', () => {
@@ -93,8 +119,8 @@ describe('tabStore — 状态容器与 action', () => {
       getState().hideTab('preview:/repo//a.ts');
       getState().openPreview('/repo', 'a.ts');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.tabs[0].hidden).toBe(false);
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs()[0].hidden).toBe(false);
     });
   });
 
@@ -102,24 +128,24 @@ describe('tabStore — 状态容器与 action', () => {
     it('工作区 diff（commitHash=null）使用 work 后缀 id', () => {
       getState().openDiff('/repo', null);
       const s = getState();
-      expect(s.tabs[0].id).toBe('diff:/repo//work');
-      expect((s.tabs[0] as any).commitHash).toBeNull();
-      expect(s.tabs[0].title).toBe('工作区改动');
+      expect(getTabs()[0].id).toBe('diff:/repo//work');
+      expect((getTabs()[0] as any).commitHash).toBeNull();
+      expect(getTabs()[0].title).toBe('工作区改动');
     });
 
     it('指定 commitHash 时使用短 hash 标题', () => {
       getState().openDiff('/repo', 'abc1234def');
       const s = getState();
-      expect(s.tabs[0].id).toBe('diff:/repo//abc1234def');
-      expect(s.tabs[0].title).toBe('abc1234d');
+      expect(getTabs()[0].id).toBe('diff:/repo//abc1234def');
+      expect(getTabs()[0].title).toBe('abc1234d');
     });
 
     it('同 id 已存在则激活不重复创建', () => {
       getState().openDiff('/repo', 'h1');
       getState().hideTab('diff:/repo//h1');
       getState().openDiff('/repo', 'h1');
-      expect(getState().tabs).toHaveLength(1);
-      expect(getState().tabs[0].hidden).toBe(false);
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs()[0].hidden).toBe(false);
     });
   });
 
@@ -127,19 +153,19 @@ describe('tabStore — 状态容器与 action', () => {
     it('创建 integrated-terminal tab 并激活指针', () => {
       getState().openTerminal('terminal:/proj', '/proj', 'Terminal');
       const s = getState();
-      const tab = s.tabs[0];
+      const tab = getTabs()[0];
       expect(tab.kind).toBe('integrated-terminal');
       expect(tab.location).toBe('editor');
       expect(tab.id).toBe('terminal:/proj');
-      expect(s.activeTabId).toBe('terminal:/proj');
+      expect(getActiveTabId()).toBe('terminal:/proj');
     });
 
     it('同 id 已存在则激活不重复创建', () => {
       getState().openTerminal('terminal:/proj', '/proj', 'Terminal');
       getState().openTerminal('terminal:/proj', '/proj', 'Terminal');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.activeTabId).toBe('terminal:/proj');
+      expect(getTabs()).toHaveLength(1);
+      expect(getActiveTabId()).toBe('terminal:/proj');
     });
   });
 
@@ -148,55 +174,55 @@ describe('tabStore — 状态容器与 action', () => {
       getState().openSession({ key: 's1' });
       getState().openSession({ key: 's2' });
       getState().selectTab('s1');
-      expect(getState().activeTabId).toBe('s1');
+      expect(getActiveTabId()).toBe('s1');
     });
 
     it('写入 activeTabId（terminal tab）', () => {
       getState().openTerminal('terminal:/p1', '/p1', 'Terminal');
       getState().openTerminal('terminal:/p2', '/p2', 'Terminal');
       getState().selectTab('terminal:/p2');
-      expect(getState().activeTabId).toBe('terminal:/p2');
+      expect(getActiveTabId()).toBe('terminal:/p2');
     });
 
     it('不存在的 id 不改变状态', () => {
       getState().openSession({ key: 's1' });
       getState().selectTab('nope');
-      expect(getState().activeTabId).toBe('s1');
+      expect(getActiveTabId()).toBe('s1');
     });
   });
 
   describe('closeTab', () => {
     it('移除 tab；若为激活项则回退到下一个可见 tab', () => {
-      getState().openSession({ key: 's1' });
-      getState().openSession({ key: 's2' });
+      getState().openSession({ key: 's1', cwd: '/a' });
+      getState().openSession({ key: 's2', cwd: '/a' });
       getState().closeTab('s1');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.tabs[0].id).toBe('s2');
-      expect(s.activeTabId).toBe('s2');
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs()[0].id).toBe('s2');
+      expect(getActiveTabId()).toBe('s2');
     });
 
     it('移除 terminal tab 后回退到下一个可见 tab', () => {
       getState().openTerminal('terminal:/p1', '/p1', 'Terminal');
-      getState().openTerminal('terminal:/p2', '/p2', 'Terminal');
+      getState().openTerminal('terminal:/p2', '/p1', 'Terminal');
       getState().closeTab('terminal:/p1');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.activeTabId).toBe('terminal:/p2');
+      expect(getTabs()).toHaveLength(1);
+      expect(getActiveTabId()).toBe('terminal:/p2');
     });
 
     it('关闭隐藏（keep-alive）的 session 仍真移除（closeTab=卸载语义）', () => {
-      getState().openSession({ key: 's1' });
+      getState().openSession({ key: 's1', cwd: '/a' });
       getState().hideTab('s1');
       getState().closeTab('s1');
-      expect(getState().tabs).toHaveLength(0);
-      expect(getState().activeTabId).toBeNull();
+      expect(getTabs()).toHaveLength(0);
+      expect(getActiveTabId()).toBeNull();
     });
 
     it('不存在的 id 不改变状态', () => {
-      getState().openSession({ key: 's1' });
+      getState().openSession({ key: 's1', cwd: '/a' });
       getState().closeTab('nope');
-      expect(getState().tabs).toHaveLength(1);
+      expect(getTabs()).toHaveLength(1);
     });
   });
 
@@ -206,27 +232,27 @@ describe('tabStore — 状态容器与 action', () => {
       getState().openSession({ key: 's2' });
       getState().hideTab('s1');
       const s = getState();
-      expect(s.tabs).toHaveLength(2);
-      expect(s.tabs.find((t) => t.id === 's1')!.hidden).toBe(true);
+      expect(getTabs()).toHaveLength(2);
+      expect(getTabs().find((t) => t.id === 's1')!.hidden).toBe(true);
     });
 
     it('隐藏激活的 tab 时，激活态切到下一个可见 tab', () => {
       getState().openSession({ key: 's1' });
       getState().openSession({ key: 's2' });
       getState().hideTab('s1');
-      expect(getState().activeTabId).toBe('s2');
+      expect(getActiveTabId()).toBe('s2');
     });
 
     it('隐藏最后一个可见 tab 后激活指针为 null', () => {
       getState().openSession({ key: 's1' });
       getState().hideTab('s1');
-      expect(getState().activeTabId).toBeNull();
+      expect(getActiveTabId()).toBeNull();
     });
 
     it('不存在的 id 不改变状态', () => {
       getState().openSession({ key: 's1' });
       getState().hideTab('nope');
-      expect(getState().tabs[0].hidden).toBe(false);
+      expect(getTabs()[0].hidden).toBe(false);
     });
   });
 
@@ -234,7 +260,7 @@ describe('tabStore — 状态容器与 action', () => {
     it('setHidden(id, true) 等价于 hideTab', () => {
       getState().openSession({ key: 's1' });
       getState().setHidden('s1', true);
-      expect(getState().tabs[0].hidden).toBe(true);
+      expect(getTabs()[0].hidden).toBe(true);
     });
 
     it('setHidden(id, false) 取消隐藏；若无激活项则激活它', () => {
@@ -242,15 +268,15 @@ describe('tabStore — 状态容器与 action', () => {
       getState().hideTab('s1');
       getState().setHidden('s1', false);
       const s = getState();
-      expect(s.tabs[0].hidden).toBe(false);
-      expect(s.activeTabId).toBe('s1');
+      expect(getTabs()[0].hidden).toBe(false);
+      expect(getActiveTabId()).toBe('s1');
     });
 
     it('setHidden 与当前状态相同则为 no-op', () => {
       getState().openSession({ key: 's1' });
-      const before = getState().tabs;
+      const before = getState().cwdTrees;
       getState().setHidden('s1', false);
-      expect(getState().tabs).toBe(before);
+      expect(getState().cwdTrees).toBe(before);
     });
   });
 
@@ -262,20 +288,20 @@ describe('tabStore — 状态容器与 action', () => {
       // 关闭 s1 → 实例被移除，不再 keep-alive。
       getState().closeCenterTab('s1');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.tabs.find((t) => t.id === 's1')).toBeUndefined();
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs().find((t) => t.id === 's1')).toBeUndefined();
       // 激活指针移到下一个可见 tab。
-      expect(s.activeTabId).toBe('s2');
+      expect(getActiveTabId()).toBe('s2');
     });
 
     it('session 已关闭再 closeCenterTab 为 no-op（同 id 不存在则跳过）', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().closeCenterTab('s1');
-      const before = getState().tabs;
+      const before = getState().cwdTrees;
       getState().closeCenterTab('s1');
       const s = getState();
-      expect(s.tabs).toBe(before);
-      expect(s.tabs.find((t) => t.id === 's1')).toBeUndefined();
+      expect(getState().cwdTrees).toBe(before);
+      expect(getTabs().find((t) => t.id === 's1')).toBeUndefined();
     });
 
     it('preview / diff 关闭 = 真移除（无 keep-alive）', () => {
@@ -283,11 +309,11 @@ describe('tabStore — 状态容器与 action', () => {
       getState().openDiff('/repo', null);
       getState().closeCenterTab('preview:/repo//a.ts');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.tabs[0].id).toBe('diff:/repo//work');
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs()[0].id).toBe('diff:/repo//work');
     });
 
-    it('关闭激活的 preview tab 后激活指针回退到同目录下一个可见 tab（preview 为真移除）', () => {
+    it('关闭激活的 preview tab 后激活指针回退到上一个历史 tab（preview 为真移除）', () => {
       getState().openSession({ key: 's1', cwd: '/repo', name: 'sess-a' });
       getState().openPreview('/repo', 'a.ts');
       getState().openPreview('/repo', 'b.ts');
@@ -295,16 +321,16 @@ describe('tabStore — 状态容器与 action', () => {
       getState().closeCenterTab('preview:/repo//a.ts');
       const s = getState();
       // a.ts 被真移除；b.ts 预览仍保留（仅移除被关的那一个）。
-      expect(s.tabs.find((t) => t.id === 'preview:/repo//a.ts')).toBeUndefined();
-      expect(s.tabs.find((t) => t.id === 'preview:/repo//b.ts')).toBeTruthy();
-      // 激活指针回退到同目录下一个可见 tab（按 order 首个为 session s1）。
-      expect(s.activeTabId).toBe('s1');
+      expect(getTabs().find((t) => t.id === 'preview:/repo//a.ts')).toBeUndefined();
+      expect(getTabs().find((t) => t.id === 'preview:/repo//b.ts')).toBeTruthy();
+      // 激活指针回退到上一个历史 tab（b.ts 是最近访问的）。
+      expect(getActiveTabId()).toBe('preview:/repo//b.ts');
     });
 
     it('不存在的 id 不改变状态', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().closeCenterTab('nope');
-      expect(getState().tabs).toHaveLength(1);
+      expect(getTabs()).toHaveLength(1);
     });
   });
 
@@ -318,9 +344,9 @@ describe('tabStore — 状态容器与 action', () => {
       getState().selectTab('t-2');
       getState().removeTerminalTab('t-2');
       const s = getState();
-      expect(s.tabs.find((t) => t.kind === 'integrated-terminal' && t.id === 't-2')).toBeUndefined();
-      // 激活态迁移到同目录下一个可见 tab（按 order 首个为 s1）。
-      expect(s.activeTabId).toBe('s1');
+      expect(getTabs().find((t) => t.kind === 'integrated-terminal' && t.id === 't-2')).toBeUndefined();
+      // 激活态迁移到上一个历史 tab（t-3 是最近访问的）。
+      expect(getActiveTabId()).toBe('t-3');
     });
 
     it('移除最后一个 terminal tab 后 activeTabId 迁移到同目录 session tab', () => {
@@ -328,9 +354,9 @@ describe('tabStore — 状态容器与 action', () => {
       getState().openTerminal('t-1', '/a', 'Terminal');
       getState().removeTerminalTab('t-1');
       const s = getState();
-      expect(s.tabs).toHaveLength(1);
-      expect(s.tabs[0].kind).toBe('session');
-      expect(s.activeTabId).toBe('s1');
+      expect(getTabs()).toHaveLength(1);
+      expect(getTabs()[0].kind).toBe('session');
+      expect(getActiveTabId()).toBe('s1');
     });
 
     it('移除非激活 terminal tab 不影响当前 activeTabId', () => {
@@ -339,7 +365,7 @@ describe('tabStore — 状态容器与 action', () => {
       getState().openTerminal('t-2', '/a', 'Terminal');
       getState().selectTab('t-1');
       getState().removeTerminalTab('t-2');
-      expect(getState().activeTabId).toBe('t-1');
+      expect(getActiveTabId()).toBe('t-1');
     });
   });
 
@@ -419,10 +445,10 @@ describe('tabStore — 状态容器与 action', () => {
 
 describe('reorderTabs', () => {
     it('按传入顺序重排 order', () => {
-      getState().openSession({ key: 's1' });
-      getState().openSession({ key: 's2' });
-      getState().openSession({ key: 's3' });
-      getState().reorderTabs(['s3', 's1', 's2']);
+      getState().openSession({ key: 's1', cwd: '/a' });
+      getState().openSession({ key: 's2', cwd: '/a' });
+      getState().openSession({ key: 's3', cwd: '/a' });
+      getState().reorderTabsInLeaf(getState().activeLeafId!, ['s3', 's1', 's2']);
       const byId = Object.fromEntries(visibleIn('editor').map((t) => [t.id, t.order]));
       expect(byId['s3']).toBe(0);
       expect(byId['s1']).toBe(1);
@@ -430,26 +456,26 @@ describe('reorderTabs', () => {
     });
 
     it('不影响不在 orderedIds 中的 tab', () => {
-      getState().openSession({ key: 's1' });
-      getState().openTerminal('terminal:/p1', '/p1', 'Terminal');
-      getState().openTerminal('terminal:/p2', '/p2', 'Terminal');
-      getState().reorderTabs(['s1']);
+      getState().openSession({ key: 's1', cwd: '/a' });
+      getState().openTerminal('terminal:/p1', '/a', 'Terminal');
+      getState().openTerminal('terminal:/p2', '/a', 'Terminal');
+      getState().reorderTabsInLeaf(getState().activeLeafId!, ['s1']);
       // 未在 orderedIds 中的 terminal tab 保持原 order
-      expect(getState().tabs.find((t) => t.id === 's1')!.order).toBe(0);
-      expect(getState().tabs.find((t) => t.id === 'terminal:/p1')!.order).toBe(1);
-      expect(getState().tabs.find((t) => t.id === 'terminal:/p2')!.order).toBe(2);
+      expect(getTabs().find((t) => t.id === 's1')!.order).toBe(0);
+      expect(getTabs().find((t) => t.id === 'terminal:/p1')!.order).toBe(1);
+      expect(getTabs().find((t) => t.id === 'terminal:/p2')!.order).toBe(2);
     });
 
     it('传入顺序外的 tab 保持原 order', () => {
-      getState().openSession({ key: 's1' });
-      getState().openSession({ key: 's2' });
-      getState().openSession({ key: 's3' });
+      getState().openSession({ key: 's1', cwd: '/a' });
+      getState().openSession({ key: 's2', cwd: '/a' });
+      getState().openSession({ key: 's3', cwd: '/a' });
       // 只重排 s1、s3，s2 保持 order=1
-      getState().reorderTabs(['s3', 's1']);
-      const s2 = getState().tabs.find((t) => t.id === 's2')!;
+      getState().reorderTabsInLeaf(getState().activeLeafId!, ['s3', 's1']);
+      const s2 = getTabs().find((t) => t.id === 's2')!;
       expect(s2.order).toBe(1);
-      expect(getState().tabs.find((t) => t.id === 's3')!.order).toBe(0);
-      expect(getState().tabs.find((t) => t.id === 's1')!.order).toBe(1);
+      expect(getTabs().find((t) => t.id === 's3')!.order).toBe(0);
+      expect(getTabs().find((t) => t.id === 's1')!.order).toBe(1);
     });
   });
 });

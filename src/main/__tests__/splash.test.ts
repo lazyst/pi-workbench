@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
     whenReady: () => new Promise<void>((res) => { readyResolver = res; }),
     on: vi.fn(),
     quit: vi.fn(),
+    requestSingleInstanceLock: () => true,
   },
   BrowserWindow: class {
     constructor(_opts: any) {}
@@ -70,8 +71,22 @@ vi.mock('node-pty', () => ({
     return pty;
   }),
 }));
-vi.mock('fs', () => ({ default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] }, readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] }));
+vi.mock('fs', () => ({ default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), mkdirSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] }, readFileSync: vi.fn(), writeFileSync: vi.fn(), mkdirSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] }));
 vi.mock('./sessionPool', () => ({ SessionPool: class { constructor() {} } }));
+
+// 在 ESM 环境下 __dirname 未定义，但 index.ts 中使用 path.join(__dirname, ...)
+// Mock path.join 以处理 undefined 参数，确保 createWindow 中 win.loadFile 能正常执行。
+vi.mock('node:path', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:path')>();
+  return {
+    ...actual,
+    join: (...args: string[]) => actual.join(...args.filter((a) => a != null)),
+  };
+});
+
+// 在测试环境中可能设置了 ELECTRON_RENDERER_URL（dev 模式），
+// 但此测试验证的是生产构建的 win.loadFile 路径。
+delete process.env.ELECTRON_RENDERER_URL;
 
 describe('createWindow splash behavior', () => {
   beforeAll(async () => {

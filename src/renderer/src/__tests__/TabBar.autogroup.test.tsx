@@ -54,8 +54,9 @@ describe('TabBar — TabAutoGroup 分组展示', () => {
     expect(tabs[0].textContent).toContain('Alpha');
     expect(tabs[1].textContent).toContain('Beta');
     // 分隔在 Beta 与 Gamma 之间（idx2）、Delta 与 Epsilon 之间（idx5）。
-    // 结构：tab tab sep tab tab sep tab → sep 在索引 2 与 5。
-    const children = Array.from(container.querySelector('.terminal-tabbar')!.children);
+    // 结构（tabbar-scroll-inner 内）：tab tab sep tab tab sep tab → sep 在索引 2 与 5。
+    const scrollInner = container.querySelector('.tabbar-scroll-inner')!;
+    const children = Array.from(scrollInner.children);
     const sepIndices = children
       .map((c, i) => (c.className.includes('terminal-tab-group-sep') ? i : -1))
       .filter((i) => i >= 0);
