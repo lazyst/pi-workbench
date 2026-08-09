@@ -1768,7 +1768,10 @@ export class XtermTerminal implements LiveTerminal {
     const seq = ++this._latestWriteSeq;
 
     // 对齐 VS Code _onWillData：写前通知外部消费者
-    this.onWillData?.(data);
+    // 使用 runGuardedWriteCompletionStep 保护，防止同步 throw 逃逸（见 write-callback-guard.ts 的说明）
+    runGuardedWriteCompletionStep('will-data', () => {
+      this.onWillData?.(data);
+    });
 
     // 当 trackCommit=true 时记录 writePromise 供 flush() 等待
     let resolveWrite: (() => void) | null = null;
@@ -1776,21 +1779,41 @@ export class XtermTerminal implements LiveTerminal {
 
     try {
       term.write(data, () => {
-        // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
-        this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        // 使用 runGuardedWriteCompletionStep 保护每一步，防止同步 throw 逃逸到 xterm WriteBuffer
+        // （见 write-callback-guard.ts 的说明：未捕获的异常会永久冻结终端面板）
+        runGuardedWriteCompletionStep('write-parsed', () => {
+          // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
+          this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        });
 
-        // 背压 ack：对齐 VS Code acknowledgeDataEvent
-        this.ackBufferer?.ack(data.length);
+        runGuardedWriteCompletionStep('ack', () => {
+          // 背压回传（对齐 VSCode AckDataBufferer 独立类）：
+          // 通过 ackBufferer.ack 累积消费字符数到阈值再发 IPC，
+          // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
+          // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
+          this.ackBufferer?.ack(data.length);
+        });
 
-        // 对齐 VS Code cb?.()：写完成回调
-        resolveWrite?.();
+        runGuardedWriteCompletionStep('resolve-write', () => {
+          // 对齐 VS Code cb?.()：写完成回调（resolve writePromise），
+          // 在 onData 之前触发，与 VSCode 的 cb?.() → _onData 顺序一致。
+          resolveWrite?.();
+        });
 
-        // 对齐 VS Code _onData：写解析完毕后通知外部消费者
-        this.onData?.(data);
+        runGuardedWriteCompletionStep('on-data', () => {
+          // 对齐 VS Code _onData：写解析完毕后通知外部消费者
+          this.onData?.(data);
+        });
       });
     } catch {
-      /* 终端已销毁等边界 */
-      (resolveWrite as (() => void) | null)?.();
+      /* 终端已销毁等边界：term.write 同步抛异常（如 xterm WriteBuffer 内部 pendingData 超限），
+         必须释放 ack 和 resolveWrite，否则主进程背压 inflight 永久泄漏 → 终端冻结。 */
+      runGuardedWriteCompletionStep('ack-on-catch', () => {
+        this.ackBufferer?.ack(data.length);
+      });
+      runGuardedWriteCompletionStep('resolve-write-on-catch', () => {
+        (resolveWrite as (() => void) | null)?.();
+      });
     }
 
     // 对齐 VS Code：将 writePromise 挂载到 _pendingWritePromise 私有字段上
