@@ -317,9 +317,12 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
 
   // Branch picker
   const branchPickerRef = useRef<HTMLDivElement>(null);
+  const branchToggleRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!showBranchPicker) return;
     const handler = (e: MouseEvent) => {
+      // 排除点击分支切换按钮本身（由 onClick 的 toggle 逻辑处理）
+      if (branchToggleRef.current && branchToggleRef.current.contains(e.target as Node)) return;
       if (branchPickerRef.current && !branchPickerRef.current.contains(e.target as Node)) {
         setShowBranchPicker(false);
       }
@@ -465,6 +468,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
           className="git-branch"
           title={status.branch ?? ''}
           style={{ cursor: 'pointer' }}
+          ref={branchToggleRef}
           onClick={() => setShowBranchPicker((v) => !v)}
           data-testid="git-branch-switch"
         >
