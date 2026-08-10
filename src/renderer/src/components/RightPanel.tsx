@@ -210,7 +210,7 @@ export function RightPanel({
               <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
             </div>
             <div className={`rp-tab-content ${tab === 'git' ? 'active' : 'inactive'}`} data-panel="git">
-              <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} />
+              <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} onOpenFile={onOpenFile} />
             </div>
           </>
         )}

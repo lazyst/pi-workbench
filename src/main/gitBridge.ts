@@ -306,6 +306,20 @@ export async function gitDiff(cwd: string, ref?: string): Promise<string> {
   }
 }
 
+/**
+ * 获取单个文件的 diff（unified 格式），用于编辑器行号标记。
+ * 合并 staged + unstaged 变更。
+ */
+export async function gitFileDiff(cwd: string, path: string): Promise<string> {
+  try {
+    const unstaged = await git(cwd, ['diff', '--no-color', '--', path]);
+    const staged = await git(cwd, ['diff', '--cached', '--no-color', '--', path]);
+    return (unstaged + '\n' + staged).trim() + '\n';
+  } catch {
+    return '';
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Write operations
 // ════════════════════════════════════════════════════════════════════════════

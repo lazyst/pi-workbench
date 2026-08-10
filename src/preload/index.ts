@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld('pi', {
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),
   gitDiff: (cwd: string, ref?: string): Promise<string> => ipcRenderer.invoke('git:diff', { cwd, ref }),
+gitFileDiff: (cwd: string, path: string): Promise<string> => ipcRenderer.invoke('git:fileDiff', { cwd, path }),
   gitFileStatusMap: (cwd: string): Promise<Record<string, any>> => ipcRenderer.invoke('git:fileStatusMap', { cwd }),
   gitIgnoredPaths: (cwd: string): Promise<string[]> => ipcRenderer.invoke('git:ignoredPaths', { cwd }),
 

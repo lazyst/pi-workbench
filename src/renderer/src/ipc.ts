@@ -59,6 +59,7 @@ export interface PiApi {
   gitStatus(cwd: string): Promise<{ isGit: boolean; branch: string | null; additions: number; deletions: number; ahead: number; behind: number; porcelain: string }>;
   gitLog(cwd: string, limit?: number): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;
   gitDiff(cwd: string, ref?: string): Promise<string>;
+  gitFileDiff(cwd: string, path: string): Promise<string>;
   // 文件树专用：返回 { relPath → GitFileStatusEntry } 映射
   gitFileStatusMap(cwd: string): Promise<Record<string, GitFileStatusEntry>>;
   // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用）

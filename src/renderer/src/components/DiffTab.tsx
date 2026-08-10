@@ -11,7 +11,7 @@
 // 替代 MonacoDiffEditor 的双栏并排模式。
 import { useCallback, useEffect, useState } from 'react';
 import { pi } from '../ipc';
-import { SingleDiffView } from './SingleDiffView';
+import { SideBySideDiffView } from './SideBySideDiffView';
 
 interface Props {
   cwd: string;
@@ -95,7 +95,7 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
           <div className="git-empty">{commitHash ? '该提交无改动' : '无改动'}</div>
         )}
         {!loading && !error && !empty && (
-          <SingleDiffView diff={diff} />
+          <SideBySideDiffView diff={diff} />
         )}
       </div>
     </div>

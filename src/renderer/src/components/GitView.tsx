@@ -28,6 +28,8 @@ interface Props {
   cwd: string;
   onOpenWorkDiff: (cwd: string) => void;
   onOpenCommit: (cwd: string, hash: string) => void;
+  /** 点击 Git 文件列表中的文件 → 打开编辑器 */
+  onOpenFile?: (relPath: string, fileName: string, root: string) => void;
 }
 
 // ── Porcelain parser ──
@@ -94,6 +96,11 @@ export function parseResources(porcelain: string): GitResource[] {
 
 // ── UI helpers ──
 
+function basename(p: string): string {
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
 function FileIcon({ badge }: { badge: string }) {
   const icon = badge === 'M' ? '✏️' : badge === 'A' || badge === '?' ? '📄' : badge === 'D' ? '🗑️' : badge === 'R' ? '📎' : badge === '!' ? '⚠️' : '📄';
   return <span className="git-file-icon">{icon}</span>;
@@ -113,7 +120,7 @@ function Spinner() {
 
 // ── Main component ──
 
-export function GitView({ cwd, onOpenWorkDiff, onOpenCommit }: Props) {
+export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile }: Props) {
   // ── State ──
   const [branches, setBranches] = useState<Array<{ name: string; current: boolean; remote: boolean }>>([]);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
@@ -235,6 +242,11 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit }: Props) {
     scheduleRefresh();
   }, [cwd, scheduleRefresh]);
 
+  // 点击 Git 文件行 → 在中间区打开该文件（VS Code Source Control 行为）。
+  const handleOpenResource = useCallback((path: string) => {
+    onOpenFile?.(path, basename(path), cwd);
+  }, [onOpenFile, cwd]);
+
   const handleCommit = useCallback(async (opts?: { all?: boolean; amend?: boolean; signOff?: boolean }) => {
     const msg = commitMsg.trim();
     if (!msg && !opts?.amend) { setCommitError('Commit message is empty'); return; }
@@ -342,7 +354,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit }: Props) {
           <div className="git-group-body">
             {items.length === 0 && <div className="git-group-empty">{opts.emptyText ?? 'No changes'}</div>}
             {items.map((r) => (
-              <div className="git-resource-row" key={r.path + r.group}>
+              <div className="git-resource-row" key={r.path + r.group} onClick={() => handleOpenResource(r.path)}>
                 <Badge badge={r.badge} group={r.group} />
                 <span className="git-resource-path" title={r.path}>{r.path}</span>
                 {r.renameTarget && <span className="git-rename-arrow">→ {r.renameTarget}</span>}

@@ -2905,6 +2905,70 @@ html, body, #root {
 .monaco-code-editor .monaco-editor .lines-decorations,
 .monaco-code-editor .monaco-editor .margin-view-overlays { background: transparent !important; }
 
+/* Git 变更标记：行号左侧竖条（VS Code 风格）。
+   使用 glyph margin + lines decorations 两个图层叠加。 */
+.monaco-code-editor .git-gutter-added { background: var(--diff-added, #4ade80); width: 3px !important; margin-left: 2px; }
+.monaco-code-editor .git-gutter-removed { background: var(--diff-removed, #f87171); width: 3px !important; margin-left: 2px; }
+.monaco-code-editor .git-gutter { background: var(--diff-added, #4ade80); width: 3px !important; margin-left: 2px; }
+
+/* Git 变更标记弹窗（DiffPopup） */
+.diff-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: transparent;
+}
+.diff-popup {
+  position: fixed;
+  z-index: 1001;
+  background: var(--bg-panel, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  min-width: 300px;
+  max-width: 500px;
+  max-height: 300px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+.diff-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--bg-app, #111);
+  border-bottom: 1px solid var(--border, #333);
+  color: var(--text-dim, #888);
+  font-size: 11px;
+  font-family: var(--font-ui, sans-serif);
+}
+.diff-popup-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.diff-popup-line {
+  display: flex;
+  padding: 0 8px;
+  line-height: 1.6;
+}
+.diff-popup-line-add { background: rgba(0,200,80,0.12); }
+.diff-popup-line-del { background: rgba(240,60,60,0.14); }
+.diff-popup-line-ctx { background: transparent; }
+.diff-popup-prefix {
+  min-width: 14px;
+  user-select: none;
+  color: var(--text-dim, #888);
+}
+.diff-popup-text {
+  flex: 1;
+  white-space: pre;
+  color: var(--text, #ccc);
+}
+
 /* Monaco diff 编辑器容器（取代原自研 SplitDiffView）。填满 .diff-tab-body，
    内部自带滚动，不抢父容器滚动；与 .monaco-code-editor 同视觉语言。 */
 .monaco-diff-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; background: var(--editor-surface); }
@@ -3338,6 +3402,96 @@ html, body, #root {
   white-space: pre;
   color: var(--text);
   overflow-x: auto;
+}
+
+/* ── SideBySideDiffView（左右分栏 diff，对齐 VS Code Diff Editor）── */
+.sdx { flex: 1; overflow-y: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; }
+.sdx-file { border-bottom: 1px solid var(--border); }
+.sdx-file-header {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-panel);
+  cursor: pointer;
+  user-select: none;
+  position: sticky; top: 0; z-index: 1;
+  border-bottom: 1px solid var(--border);
+}
+.sdx-file-header:hover { background: var(--bg-hover); }
+.sdx-file-header:focus-visible { outline: 2px solid var(--bg-active); outline-offset: -2px; }
+.sdx-file-header-icon { font-size: 10px; color: var(--text-dim); flex-shrink: 0; width: 12px; text-align: center; }
+.sdx-file-header-dir { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sdx-file-header-name { font-size: 13px; font-weight: var(--fw-semibold); color: var(--text); flex-shrink: 0; }
+.sdx-file-header-stats { margin-left: auto; display: flex; gap: var(--sp-2); font-size: 11px; font-weight: var(--fw-semibold); flex-shrink: 0; }
+.sdx-stat-added { color: var(--diff-added); }
+.sdx-stat-removed { color: var(--diff-removed); }
+
+/* 列头提示栏 */
+.sdx-col-headers {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  position: sticky; top: 37px; z-index: 1;
+}
+.sdx-col-header {
+  flex: 1;
+  padding: 2px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sdx-col-header-old { border-right: 1px solid var(--border); }
+
+.sdx-body { overflow-x: auto; }
+.sdx-hunk {
+  padding: 2px var(--sp-3);
+  color: var(--text-dim);
+  font-size: 11px;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+}
+.sdx-row {
+  display: flex;
+  min-height: 21px;
+}
+.sdx-cell {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.sdx-cell-r { background: var(--diff-removed-bg); border-right: 1px solid var(--border); }
+.sdx-cell-a { background: var(--diff-added-bg); }
+.sdx-cell-c { background: transparent; border-right: 1px solid var(--border); }
+.sdx-cell:last-child { border-right: none; }
+.sdx-cell-no {
+  min-width: 44px;
+  padding: 0 8px 0 16px;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+  font-size: 11px;
+  line-height: 1.6;
+  border-right: 1px solid var(--border);
+  background: rgba(0,0,0,0.06);
+  flex-shrink: 0;
+}
+.sdx-cell-text {
+  flex: 1;
+  padding: 0 8px;
+  white-space: pre;
+  color: var(--text);
+  overflow-x: auto;
+}
+
+/* 文件树底部留白：点击空白区域可取消选中，右键唤出工作目录空位菜单 */
+.file-tree-spacer {
+  height: 48px;
+  flex-shrink: 0;
+}
+.file-tree-spacer:hover {
+  background: var(--bg-hover, rgba(128,128,128,0.06));
 }
 
 /* ── 右栏（文件树 / Git）Tab 容器 ── */

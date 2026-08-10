@@ -11,12 +11,20 @@
 //   • 字号跟随：监听 --font-scale（fontSize.ts 写入根节点），按比例设 editor fontSize。
 //   • keep-alive：用 `keepCurrentModel` 让每个 path 的 model 跨 tab 切换保留（不 dispose），
 //     自然支持 keep-alive、不丢滚动与光标。saveViewState 关掉，由本组件缓存/恢复视图状态。
+//   • lineDecorations：行号旁 Git 变更标记（added/removed 竖条），点击触发 onDecorationClick。
 //
 // 注意：本组件不读盘、不写盘——加载与保存由父组件（PreviewTab）负责，保持单一职责。
 import { useCallback, useEffect, useRef } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { themeIsDark, getMonacoFontSize, useMonacoFontFollow } from '../../editorUtils';
+
+export interface LineDecoration {
+  /** 行号（1-based）。 */
+  line: number;
+  /** 变更类型。 */
+  type: 'added' | 'removed' | 'modified';
+}
 
 interface Props {
   /** 仓库根目录，用于构造稳定的 model path（uri）。 */
@@ -31,6 +39,10 @@ interface Props {
   onChange?: (content: string) => void;
   /** Ctrl/Cmd+S 保存请求。父组件据此落盘。不传则快捷键不拦截。 */
   onSave?: () => void;
+  /** Git 变更行标记（行号左侧竖条）。 */
+  lineDecorations?: LineDecoration[];
+  /** 点击行号旁的变更标记 → 打开该行对应的 diff 弹窗。 */
+  onDecorationClick?: (line: number, type: 'added' | 'removed' | 'modified', clientX: number, clientY: number) => void;
 }
 
 // 把 root + path 合成一个稳定、合法的 monaco model uri。
@@ -49,16 +61,26 @@ function modelUri(root: string, path: string): string {
   return `file:///${normRoot}/${normPath}`;
 }
 
-export function MonacoCodeEditor({ root, path, language, content, onChange, onSave }: Props) {
+// 装饰 ID 前缀（用于 deltaDecorations 分组标识）。
+const DECO_ID = 'git-change-mark';
+
+export function MonacoCodeEditor({ root, path, language, content, onChange, onSave, lineDecorations, onDecorationClick }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   // 应用层视图状态缓存：key 为 model uri，value 为保存的 view state（cursor/scroll/selection）。
   const viewStateCache = useRef<Map<string, editor.ICodeEditorViewState | null>>(new Map());
+  // 已应用的装饰 ID 集合，用于 deltaDecorations 增量更新。
+  const decoIdsRef = useRef<string[]>([]);
+  // 当前 decorations 的引用（用于 onMouseDown 判断）。
+  const lineDecorationsRef = useRef<LineDecoration[]>(lineDecorations ?? []);
+  lineDecorationsRef.current = lineDecorations ?? [];
 
   // 把最新回调挂到 ref，避免 onMount 闭包拿到过期值。
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const onDecorationClickRef = useRef(onDecorationClick);
+  onDecorationClickRef.current = onDecorationClick;
 
   const uri = modelUri(root, path);
 
@@ -87,7 +109,36 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
     ed.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => {
       onSaveRef.current?.();
     });
+
+    // 点击行号区域 → 检测是否点击了变更标记行
+    ed.onMouseDown((event) => {
+      const target = event.target;
+      // 只在 gutter 区域响应（含 glyph margin / 行号）
+      const isGutter = target.type === m.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        target.type === m.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
+        target.type === m.editor.MouseTargetType.GUTTER_VIEW_ZONE;
+      if (!isGutter) return;
+
+      const line = target.position?.lineNumber;
+      if (line == null) return;
+
+      // 检查该行是否有变更标记（有则触发弹窗）
+      const cb = onDecorationClickRef.current;
+      if (cb && lineDecorationsRef.current.some((d) => d.line === line)) {
+        cb(line, 'modified', event.event.browserEvent.clientX, event.event.browserEvent.clientY);
+      }
+    });
+
+    // 首次挂载后应用初始 decorations
+    applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
   }, [root]);
+
+  // lineDecorations 变化时更新 decorations
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
+  }, [lineDecorations]);
 
   // 卸载时不销毁当前 model（keepCurrentModel 已保证），仅清缓存引用。
   useEffect(() => () => {
@@ -122,6 +173,8 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
         smoothScrolling: true, // 滚动平滑
         cursorSmoothCaretAnimation: 'on',
         padding: { top: 0 },
+        // 启用字形边距（用于显示 Git 变更标记竖条）
+        glyphMargin: true,
         find: {
           addExtraSpaceOnTop: false,
           autoFindInSelection: 'never',
@@ -137,4 +190,42 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       }}
     />
   );
+}
+
+// ── 装饰应用 ──
+
+function applyDecorations(
+  ed: editor.IStandaloneCodeEditor,
+  decorations: LineDecoration[],
+  decoIdsRef: React.MutableRefObject<string[]>,
+) {
+  const newDecorations: editor.IModelDeltaDecoration[] = decorations.map((d) => {
+    const className = d.type === 'added'
+      ? 'git-gutter-added'
+      : d.type === 'removed'
+        ? 'git-gutter-removed'
+        : 'git-gutter';
+    return {
+      range: {
+        startLineNumber: d.line,
+        startColumn: 1,
+        endLineNumber: d.line,
+        endColumn: 1,
+      },
+      options: {
+        // 字形边距：在行号左侧显示一个小图标/标记
+        glyphMarginClassName: className,
+        // 行号左侧的竖线条（VS Code 的 gutter decoration）
+        linesDecorationsClassName: className,
+        isWholeLine: true,
+      },
+    };
+  });
+
+  const model = ed.getModel();
+  if (model) {
+    const oldIds = decoIdsRef.current.splice(0, decoIdsRef.current.length);
+    const newIds = model.deltaDecorations(oldIds, newDecorations);
+    decoIdsRef.current = newIds;
+  }
 }

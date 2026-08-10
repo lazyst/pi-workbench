@@ -718,6 +718,17 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         onCancelEdit={onCancelEdit}
       />
 
+      {/* 底部留白：用于唤出空白区域右键菜单 */}
+      <div
+        className="file-tree-spacer"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpenContextMenu(e, null);
+        }}
+        onClick={() => { if (selection.size) setSelection(new Set()); }}
+      />
+
       {menu && (
         <ContextMenu
           x={menu.x}

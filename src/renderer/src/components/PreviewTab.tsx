@@ -7,11 +7,13 @@
 //   • 图片 → ImagePreview
 //   • 二进制/过大 → 系统默认程序打开（fsOpenWithSystem）
 //   • 预览内相对链接点击 → onOpenFile（在应用内切到目标文件）
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { pi } from '../ipc';
-import { MonacoCodeEditor } from './editor/MonacoCodeEditor';
+import { MonacoCodeEditor, type LineDecoration } from './editor/MonacoCodeEditor';
 import { ImagePreview } from './ImagePreview';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DiffPopup } from './DiffPopup';
+import { parseDiffLineChanges, extractHunkCompressed } from '../lib/diffLines';
 import { MarkdownPreview } from './MarkdownPreview';
 import { RichMarkdownEditor } from './RichMarkdownEditor';
 
@@ -64,6 +66,35 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
   const [isMarkdown, setIsMarkdown] = useState(false);
   const [viewMode, setViewMode] = useState<'rendered' | 'source' | 'rich'>('source');
 
+  // Git 行号变更标记
+  const [lineDecorations, setLineDecorations] = useState<LineDecoration[]>([]);
+  const [diffPopup, setDiffPopup] = useState<{ x: number; y: number; lines: Array<{ type: 'add' | 'del' | 'ctx'; text: string; newLine: number | null }> } | null>(null);
+
+  // 读取文件时一并获取 Git 变更行标记
+  const fetchLineDecorations = useCallback(async (root: string, path: string) => {
+    try {
+      const diff = await pi.gitFileDiff(root, path);
+      if (!diff) { setLineDecorations([]); return; }
+      const hunks = parseDiffLineChanges(diff);
+      const decos: LineDecoration[] = [];
+      for (const hunk of hunks) {
+        for (const r of hunk.ranges) {
+          if (r.type === 'added') {
+            for (let i = 0; i < r.count; i++) {
+              decos.push({ line: r.startLine + i, type: 'added' });
+            }
+          } else if (r.type === 'removed') {
+            // 删除行在原位置标记为 removed（新版本中该行已被删，但仍在有内容的一行旁）
+            decos.push({ line: Math.max(r.startLine, 1), type: 'removed' });
+          }
+        }
+      }
+      setLineDecorations(decos);
+    } catch {
+      setLineDecorations([]);
+    }
+  }, []);
+
   // Load metadata (kind + initial content) when the file changes.
   useEffect(() => {
     let cancelled = false;
@@ -72,11 +103,16 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
     setKind('loading');
     setInitialContent('');
     setCurrentContent('');
+    setLineDecorations([]);
     (async () => {
       try {
         const res = await pi.fsReadFile(root, path);
         if (cancelled) return;
         // 二进制 / 过大文件：无内置预览器，交系统默认程序打开（等同双击文件）。
+        // 异步获取 git 行号标记（不阻塞文件加载）
+        if (!res.isBinary && !res.isImage) {
+          fetchLineDecorations(root, path).catch(() => {});
+        }
         if (res.isBinary) {
           const abs = toAbsolutePath(root, path);
           const ok = await pi.fsOpenWithSystem(abs);
@@ -245,6 +281,25 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
               content={currentContent}
               onChange={handleChange}
               onSave={dirty ? doSave : undefined}
+              lineDecorations={lineDecorations}
+              onDecorationClick={(line, type, x, y) => {
+                // 点击变更标记 → 打开 diff 弹窗
+                fetchLineDecorations(root, path).then(() => {
+                  // 重新获取 diff 后解析弹窗内容
+                  pi.gitFileDiff(root, path).then((diff) => {
+                    if (!diff) return;
+                    const hunks = extractHunkCompressed(diff);
+                    // 找到包含该行号的 hunk
+                    const hunk = hunks.find((h) => {
+                      const last = h.lines.filter((l) => l.newLine != null).pop();
+                      return h.newStart <= line && (last ? last.newLine! >= line : true);
+                    });
+                    if (hunk) {
+                      setDiffPopup({ x, y, lines: hunk.lines });
+                    }
+                  }).catch(() => {});
+                }).catch(() => {});
+              }}
             />
           )
         )}
@@ -262,6 +317,15 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
           cancelLabel="继续编辑"
           onConfirm={() => { setConfirmClose(false); onClose(); }}
           onCancel={() => setConfirmClose(false)}
+        />
+      )}
+
+      {diffPopup && (
+        <DiffPopup
+          x={diffPopup.x}
+          y={diffPopup.y}
+          lines={diffPopup.lines}
+          onClose={() => setDiffPopup(null)}
         />
       )}
     </div>
