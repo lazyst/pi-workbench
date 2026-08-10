@@ -36,10 +36,17 @@ interface Props {
 // 把 root + path 合成一个稳定、合法的 monaco model uri。
 // @monaco-editor/react 的 `path` prop 会经 `monaco.Uri.parse(path)` 传给 createModel，
 // 故这里直接构造合法 uri 即可作为「每文件一个 model」的稳定 key（keep-alive 的锚点）。
-// 用 `file://` scheme + encode 防止路径中的特殊字符破坏 uri 解析。
+//
+// 用规范 file:// URI（正斜杠、分段规范、不做整段 encodeURIComponent）：
+//   旧实现对整个 key 做 encodeURIComponent，产出形如
+//   `file:///c%3A%5C...\pi-workbench//electron.vite.config.ts` 的畸形 URI，
+//   Monaco 的 TS worker 无法把这样的 URI 解析回真实磁盘路径，导致
+//   "Could not find source file"（worker 在算诊断/悬停/跳转定义时会去找源文件）。
+//   这里把 Windows 反斜杠转成正斜杠、去掉 root 尾部多余的斜杠，再拼接普通相对路径。
 function modelUri(root: string, path: string): string {
-  const key = `${root}//${path}`;
-  return `file:///${encodeURIComponent(key)}`;
+  const normRoot = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normPath = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  return `file:///${normRoot}/${normPath}`;
 }
 
 export function MonacoCodeEditor({ root, path, language, content, onChange, onSave }: Props) {
