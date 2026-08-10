@@ -2559,16 +2559,31 @@ html, body, #root {
 .monaco-code-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; background: var(--editor-surface); }
 .monaco-code-editor .monaco-editor,
 .monaco-code-editor .monaco-editor .overflow-guard { height: 100% !important; }
+/* 覆盖 Monaco 内部元素的硬编码背景色 */
+.monaco-code-editor .monaco-editor .lines-decorations,
+.monaco-code-editor .monaco-editor .margin-view-overlays { background: transparent !important; }
+
 /* Monaco diff 编辑器容器（取代原自研 SplitDiffView）。填满 .diff-tab-body，
    内部自带滚动，不抢父容器滚动；与 .monaco-code-editor 同视觉语言。 */
 .monaco-diff-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; background: var(--editor-surface); }
 .monaco-diff-editor .monaco-editor,
 .monaco-diff-editor .monaco-editor .overflow-guard { height: 100% !important; }
+/* 覆盖 Monaco 内部元素的硬编码背景色 */
+.monaco-diff-editor .monaco-editor .lines-decorations,
+.monaco-diff-editor .monaco-editor .margin-view-overlays { background: transparent !important; }
+
 
 /* ── 覆盖 Monaco --vscode-editor-* CSS 变量 ──
    Monaco 的 standaloneThemeService 通过 <style class="monaco-colors"> 动态设置这些变量。
    有时因主题系统未正确初始化，变量被覆写为 #ff0000。这里用更高特指度的选择器强制覆盖。 */
-[data-theme="dark"] .monaco-editor {
+[data-theme="dark"] .monaco-editor,
+[data-theme="dark"] .monaco-diff-editor,
+[data-theme="dark"] .monaco-component {
+  --vscode-editor-background: var(--editor-surface) !important;
+  --vscode-editorGutter-background: var(--editor-surface) !important;
+  --vscode-editorStickyScroll-background: var(--editor-surface) !important;
+  --vscode-editorStickyScroll-border: var(--border) !important;
+  --vscode-editorStickyScroll-shadow: var(--border) !important;
   --vscode-editor-selectionBackground: rgba(124, 156, 255, 0.25);
   --vscode-editor-inactiveSelectionBackground: rgba(124, 156, 255, 0.12);
   --vscode-editor-selectionHighlightBackground: rgba(124, 156, 255, 0.06);
@@ -2581,7 +2596,14 @@ html, body, #root {
   --vscode-editor-hoverHighlightBackground: rgba(124, 156, 255, 0.04);
   --vscode-editor-lineHighlightBackground: rgba(124, 156, 255, 0.08);
 }
-[data-theme="light"] .monaco-editor {
+[data-theme="light"] .monaco-editor,
+[data-theme="light"] .monaco-diff-editor,
+[data-theme="light"] .monaco-component {
+  --vscode-editor-background: var(--editor-surface) !important;
+  --vscode-editorGutter-background: var(--editor-surface) !important;
+  --vscode-editorStickyScroll-background: var(--editor-surface) !important;
+  --vscode-editorStickyScroll-border: var(--border) !important;
+  --vscode-editorStickyScroll-shadow: var(--border) !important;
   --vscode-editor-selectionBackground: #ADD6FF;
   --vscode-editor-inactiveSelectionBackground: rgba(173, 214, 255, 0.50);
   --vscode-editor-selectionHighlightBackground: rgba(173, 214, 255, 0.30);
@@ -2596,7 +2618,14 @@ html, body, #root {
 }
 
 /* Mineral 家族：Monaco 选中色改用琥珀暖橙调 */
-[data-theme-family="mineral"][data-theme="dark"] .monaco-editor {
+[data-theme-family="mineral"][data-theme="dark"] .monaco-editor,
+[data-theme-family="mineral"][data-theme="dark"] .monaco-diff-editor,
+[data-theme-family="mineral"][data-theme="dark"] .monaco-component {
+  --vscode-editor-background: var(--editor-surface) !important;
+  --vscode-editorGutter-background: var(--editor-surface) !important;
+  --vscode-editorStickyScroll-background: var(--editor-surface) !important;
+  --vscode-editorStickyScroll-border: var(--border) !important;
+  --vscode-editorStickyScroll-shadow: var(--border) !important;
   --vscode-editor-selectionBackground: rgba(217, 119, 6, 0.22);
   --vscode-editor-inactiveSelectionBackground: rgba(217, 119, 6, 0.10);
   --vscode-editor-selectionHighlightBackground: rgba(217, 119, 6, 0.06);
