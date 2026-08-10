@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.0.9 (2026-08-11)
+
+### 新功能
+
+- **Git 面板从只读升级为完整 Git 工具** — 仿 VS Code Source Control 视图，支持暂存/取消暂存（文件级 + 批量）、提交（Stage All / Amend / Sign-off / 空树提交）、撤销修改（Revert / Clean）、分支管理（创建/切换/删除/重命名 + 分支选择器）、远程同步（Sync / Pull / Push / Fetch）。新增操作队列（OperationManager）控制并发、写操作进度动画、800ms 防抖实时刷新、路径穿越安全检查。
+
+- **Git 提交历史改为可展开的「图表」交互（对齐 VS Code）** — 点击历史提交 → 展开该提交的变更文件子列表（M/A/D/R/C 状态徽章）→ 点击文件打开左右分栏的 Monaco diff 视图 tab。
+
+- **Git diff 页面重构为左右分栏对比视图** — 使用 `@monaco-editor/react` 内置 DiffEditor（`renderSideBySide`），对齐 VS Code Diff Editor 视觉与交互。
+
+- **Monaco 编辑器行号旁 Git 变更标记** — 编辑器行号左侧显示新增/修改的绿/红竖条（VS Code gutter decoration 风格），点击弹出该行所在 diff 的浮动弹窗（DiffPopup）。
+
+- **Git 面板文件点击即打开编辑器** — 点击 Staged / Changes / Untracked 分组中的文件行，直接在中间区打开该文件（对齐 VS Code Source Control）。
+
+- **tab 栏新建 pi 会话按钮 + tab 右键分屏菜单** — 分屏交互增强。
+
+- **Monaco 编辑器体验优化** — 光标默认 block 样式 + 平滑动画；修复 TS worker「Could not find source file」报错；背景色跟随主题 `--editor-surface` 变量。
+
+### 修复
+
+- **Git 面板在干净仓库误显示变更** — 根因：`parseResources` 未跳过 `git status --porcelain -b` 输出的 `## branch...` 头行，`xMap['#']` 查不到值触发 `?? 'M'` 回退，把 `main` 误解析为变更文件。修复：跳过 `## ` 开头行，并修正冲突文件（UU/AA/DD）重复显示。
+
+- **分支选择器点击分支名无法收起** — 根因：点击外部关闭用 `mousedown` 事件、分支名按钮用 `click` 事件，mousedown 先触发关闭、click 再触发 toggle 重新打开。修复：点击外部关闭 handler 排除分支名切换按钮本身，把收/展开交由 toggle 单独处理。
+
+- **文件树底部留白回归** — 滚动到底时最后一项下方预留 28px（一行文件高度）空位，支持右键唤出空白区菜单。
+
+---
+
 ## v1.0.8 (2026-08-11)
 
 ### 修复
