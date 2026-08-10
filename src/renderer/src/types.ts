@@ -112,6 +112,22 @@ export interface AppConfig {
   customGlyphs: boolean;
   // 终端 GPU 加速模式：'auto' 自动探测，'on' 强制开启，'off' 强制关闭。
   gpuAcceleration: 'auto' | 'on' | 'off';
+
+  // ── Git 配置 ──
+  /** 文件变更自动刷新开关。 */
+  gitAutorefresh: boolean;
+  /** 无暂存变更时提交自动包含全部。 */
+  gitSmartCommit: boolean;
+  /** 提交前提示保存未保存文件。 */
+  gitPromptToSave: boolean;
+  /** 启用提交签名。 */
+  gitEnableCommitSigning: boolean;
+  /** 始终在提交消息后追加 Signed-off-by。 */
+  gitAlwaysSignOff: boolean;
+  /** 允许 force push。 */
+  gitAllowForcePush: boolean;
+  /** 后台自动 fetch。 */
+  gitAutofetch: boolean;
 }
 
 export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';

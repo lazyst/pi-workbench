@@ -68,6 +68,15 @@ export function defaultConfig(): AppConfig {
     // 终端字形与渲染
     customGlyphs: true,
     gpuAcceleration: 'auto',
+
+    // Git 配置
+    gitAutorefresh: true,
+    gitSmartCommit: true,
+    gitPromptToSave: true,
+    gitEnableCommitSigning: false,
+    gitAlwaysSignOff: false,
+    gitAllowForcePush: false,
+    gitAutofetch: false,
   };
 }
 

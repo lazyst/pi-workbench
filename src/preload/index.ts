@@ -136,13 +136,62 @@ contextBridge.exposeInMainWorld('pi', {
       ipcRenderer.send('fs:unwatchFile', { root, path });
     };
   },
-  // ── Git 只读查看（D）──
+  // ── Git 查看（D）──
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),
   gitDiff: (cwd: string, ref?: string): Promise<string> => ipcRenderer.invoke('git:diff', { cwd, ref }),
   gitFileStatusMap: (cwd: string): Promise<Record<string, any>> => ipcRenderer.invoke('git:fileStatusMap', { cwd }),
-  // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用）
   gitIgnoredPaths: (cwd: string): Promise<string[]> => ipcRenderer.invoke('git:ignoredPaths', { cwd }),
+
+  // ── Git 写操作 ──
+  gitStage: (cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:stage', { cwd, paths, all }),
+  gitUnstage: (cwd: string, paths?: string[]): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:unstage', { cwd, paths }),
+  gitCommit: (cwd: string, message: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:commit', { cwd, message, opts }),
+  gitRevert: (cwd: string, paths: string[]): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:revert', { cwd, paths }),
+  gitClean: (cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:clean', { cwd, paths, all }),
+
+  // ── 分支 ──
+  gitCurrentBranch: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:currentBranch', { cwd }),
+  gitBranches: (cwd: string): Promise<any[]> => ipcRenderer.invoke('git:branches', { cwd }),
+  gitCreateBranch: (cwd: string, name: string, from?: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:createBranch', { cwd, name, from }),
+  gitCheckout: (cwd: string, ref: string, create?: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:checkout', { cwd, ref, create }),
+  gitDeleteBranch: (cwd: string, name: string, force?: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:deleteBranch', { cwd, name, force }),
+  gitRenameBranch: (cwd: string, newName: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:renameBranch', { cwd, newName }),
+
+  // ── 远程同步 ──
+  gitRemotes: (cwd: string): Promise<any[]> => ipcRenderer.invoke('git:remotes', { cwd }),
+  gitAddRemote: (cwd: string, name: string, url: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:addRemote', { cwd, name, url }),
+  gitRemoveRemote: (cwd: string, name: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:removeRemote', { cwd, name }),
+  gitFetch: (cwd: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:fetch', { cwd }),
+  gitPull: (cwd: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:pull', { cwd, opts }),
+  gitPush: (cwd: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:push', { cwd, opts }),
+  gitSync: (cwd: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:sync', { cwd, opts }),
+  gitLogAdvanced: (cwd: string, query?: any): Promise<any[]> =>
+    ipcRenderer.invoke('git:logAdvanced', { cwd, query }),
+  // 操作状态事件：
+  onGitOperation: (cb: (payload: { cwd: string; kind: string; running: boolean }) => void) => {
+    const handler = (_e: unknown, m: { cwd: string; kind: string; running: boolean }) => cb(m);
+    ipcRenderer.on('git:operation', handler);
+    return () => ipcRenderer.removeListener('git:operation', handler);
+  },
+  // 高级日志：
+  gitSearchLog: (cwd: string, query?: any): Promise<any[]> => ipcRenderer.invoke('git:logAdvanced', { cwd, query }),
+  gitLogPage: (cwd: string, opts?: any): Promise<any[]> => ipcRenderer.invoke('git:logAdvanced', { cwd, query: opts }),
   // 工作区实时监听：订阅某仓库 cwd，主进程经 'git:change' 推送变更；返回取消订阅函数。
   gitWatch: (cwd: string, cb: () => void): (() => void) => {
     const handler = (_e: unknown, m: { cwd: string }) => {

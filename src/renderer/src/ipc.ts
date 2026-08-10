@@ -63,8 +63,36 @@ export interface PiApi {
   gitFileStatusMap(cwd: string): Promise<Record<string, GitFileStatusEntry>>;
   // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用）
   gitIgnoredPaths(cwd: string): Promise<string[]>;
+  // 高级日志：支持搜索与分页。
+  gitLogAdvanced(cwd: string, query?: { limit?: number; skip?: number; query?: string; author?: string; ref?: string }): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;
   // 工作区实时监听：订阅某仓库 cwd，变更时回调；返回取消订阅函数。
   gitWatch(cwd: string, cb: () => void): () => void;
+
+  // ── Git 写操作 ──
+  gitStage(cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }>;
+  gitUnstage(cwd: string, paths?: string[]): Promise<{ success: boolean; error?: string }>;
+  gitCommit(cwd: string, message: string, opts?: { all?: boolean; amend?: boolean; signOff?: boolean; noVerify?: boolean; allowEmpty?: boolean; allowEmptyMessage?: boolean }): Promise<{ success: boolean; error?: string }>;
+  gitRevert(cwd: string, paths: string[]): Promise<{ success: boolean; error?: string }>;
+  gitClean(cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }>;
+
+  // ── 分支 ──
+  gitCurrentBranch(cwd: string): Promise<string | null>;
+  gitBranches(cwd: string): Promise<Array<{ name: string; current: boolean; remote: boolean; tracking?: string }>>;
+  gitCreateBranch(cwd: string, name: string, from?: string): Promise<{ success: boolean; error?: string }>;
+  gitCheckout(cwd: string, ref: string, create?: boolean): Promise<{ success: boolean; error?: string }>;
+  gitDeleteBranch(cwd: string, name: string, force?: boolean): Promise<{ success: boolean; error?: string }>;
+  gitRenameBranch(cwd: string, newName: string): Promise<{ success: boolean; error?: string }>;
+
+  // ── 远程同步 ──
+  gitRemotes(cwd: string): Promise<Array<{ name: string; url?: string }>>;
+  gitAddRemote(cwd: string, name: string, url: string): Promise<{ success: boolean; error?: string }>;
+  gitRemoveRemote(cwd: string, name: string): Promise<{ success: boolean; error?: string }>;
+  gitFetch(cwd: string): Promise<{ success: boolean; error?: string }>;
+  gitPull(cwd: string, opts?: { rebase?: boolean }): Promise<{ success: boolean; error?: string }>;
+  gitPush(cwd: string, opts?: { force?: boolean }): Promise<{ success: boolean; error?: string }>;
+  gitSync(cwd: string, opts?: { rebase?: boolean; force?: boolean }): Promise<{ success: boolean; error?: string }>;
+  // 操作状态事件：写操作开始/结束。
+  onGitOperation(cb: (payload: { cwd: string; kind: string; running: boolean }) => void): () => void;
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone(): void;
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。

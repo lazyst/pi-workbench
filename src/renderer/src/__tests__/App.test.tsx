@@ -192,8 +192,9 @@ describe('App', () => {
       openSession: vi.fn().mockResolvedValue({ key: 'k1', name: 's1', cwd }),
       getConfig: vi.fn().mockResolvedValue(cfgWithDir),
       gitDiff: vi.fn().mockResolvedValue(''),
-      gitStatus: vi.fn().mockResolvedValue({ isGit: true, branch: 'main', additions: 0, deletions: 0, ahead: 0, behind: 0 }),
+      gitStatus: vi.fn().mockResolvedValue({ isGit: true, branch: 'main', additions: 0, deletions: 0, ahead: 0, behind: 0, porcelain: '' }),
       gitLog: vi.fn().mockResolvedValue([]),
+      gitBranches: vi.fn().mockResolvedValue([]),
     });
     render(<App />);
     // 等会话加载出（addedDirs 含 cwd，右栏根目录下拉可选 cwd，无需打开会话 tab）
@@ -208,17 +209,13 @@ describe('App', () => {
     ) as HTMLElement;
     expect(gitTab).toBeTruthy();
     fireEvent.click(gitTab);
-    // 点击「工作区改动」按钮（位于右栏 Git 面板内）→ 中间区新增 diff tab。
-    // gitStatus 异步返回后才渲染按钮；用 within 限定在右栏容器内点击，
-    // 避免与随后打开的 diff tab 标题「工作区改动」重名冲突。
+    // Git 面板异步渲染：等待提交输入框出现（gitStatus 异步返回）
     const rightPanel = document.querySelector('.right-panel') as HTMLElement;
-    const gitBtn = await within(rightPanel).findByText('工作区改动');
-    fireEvent.click(gitBtn);
-    // 中间区出现 .diff-tab（替代旧式 GitDiffDrawer 抽屉）
-    const diffTab = document.querySelector('.center-pane .diff-tab') as HTMLElement;
-    expect(diffTab).toBeTruthy();
-    // diff tab 标题为「工作区改动」（限定在 .diff-tab 内，避免与中间区 TabBar 的 tab 标题重名）
-    expect(within(diffTab).getByText('工作区改动')).toBeTruthy();
+    // 等待 git-view 容器出现（gitStatus 异步完成后渲染）
+    const gitView = await within(rightPanel).findByPlaceholderText('Message (Ctrl+Enter to commit)');
+    expect(gitView).toBeTruthy();
+    // 验证提交历史标题存在
+    expect(within(rightPanel).queryByText('Commit History')).toBeTruthy();
   });
 
   it('点击文件树文件 → 中间区出现 .preview-tab（预览变 tab）', async () => {
