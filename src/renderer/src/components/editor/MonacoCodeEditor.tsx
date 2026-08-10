@@ -117,9 +117,10 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
         renderWhitespace: 'none',
         // 以下选项参考 orca MonacoEditor，优化编辑体验
         lineNumbers: 'on',
+        cursorStyle: 'block', // 默认使用块状光标
         renderLineHighlight: 'line', // 仅高亮当前行（而非全行+左边距），减少视觉噪声
         smoothScrolling: true, // 滚动平滑
-        cursorSmoothCaretAnimation: 'off',
+        cursorSmoothCaretAnimation: 'on',
         padding: { top: 0 },
         find: {
           addExtraSpaceOnTop: false,

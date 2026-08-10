@@ -65,6 +65,7 @@ export function MonacoDiffEditor({ original, modified, language }: Props) {
         originalAriaLabel: '原始内容',
         modifiedAriaLabel: '修改后内容',
         // 以下选项参考 orca，对齐代码编辑器的编辑体验
+        cursorStyle: 'block', // 默认使用块状光标
         renderLineHighlight: 'line',
         smoothScrolling: true,
         padding: { top: 0 },
