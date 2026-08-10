@@ -3485,15 +3485,6 @@ html, body, #root {
   overflow-x: auto;
 }
 
-/* 文件树底部留白：点击空白区域可取消选中，右键唤出工作目录空位菜单 */
-.file-tree-spacer {
-  height: 48px;
-  flex-shrink: 0;
-}
-.file-tree-spacer:hover {
-  background: var(--bg-hover, rgba(128,128,128,0.06));
-}
-
 /* ── 右栏（文件树 / Git）Tab 容器 ── */
 .right-panel {
   flex: none;

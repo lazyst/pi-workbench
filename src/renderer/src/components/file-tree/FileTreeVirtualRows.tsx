@@ -5,6 +5,9 @@
 
 import React, { useRef, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+
+/** 滚动到底部时，最后一项下方预留的空位高度（对齐一行文件高度）。 */
+const BOTTOM_PAD = 28;
 import { FileTreeRow } from './FileTreeRow';
 import type { VisibleRow, FileNode, GitFileStatusEntry } from './file-tree-types';
 
@@ -139,6 +142,8 @@ export function FileTreeVirtualRows({
             />
           );
         })}
+        {/* 底部留白：滚动到底时最后一项下方预留空位 */}
+        <div style={{ height: BOTTOM_PAD }} />
       </div>
     );
   }
@@ -151,7 +156,7 @@ export function FileTreeVirtualRows({
     >
       <div
         style={{
-          height: virtualizer.getTotalSize(),
+          height: virtualizer.getTotalSize() + BOTTOM_PAD,
           width: '100%',
           position: 'relative',
         }}
