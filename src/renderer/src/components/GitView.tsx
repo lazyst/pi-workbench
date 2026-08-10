@@ -32,10 +32,12 @@ interface Props {
 
 // ── Porcelain parser ──
 
-function parseResources(porcelain: string): GitResource[] {
+export function parseResources(porcelain: string): GitResource[] {
   const resources: GitResource[] = [];
   for (const line of porcelain.split('\n')) {
     if (!line.trim()) continue;
+    // Skip the ## branch header line (e.g. "## main...origin/main [ahead 3]")
+    if (line.startsWith('## ')) continue;
     const xy = line.substring(0, 2);
     const pathPart = line.substring(3).trim();
     const [fromPath, toPath] = pathPart.includes(' -> ') ? pathPart.split(' -> ') : [pathPart, undefined];
@@ -46,6 +48,14 @@ function parseResources(porcelain: string): GitResource[] {
 
     if (xy === '??') {
       resources.push({ path: actualPath, group: 'untracked', badge: '?' });
+      continue;
+    }
+
+    // Conflict detection: U in either XY position indicates a merge conflict
+    const isConflict = x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D');
+    if (isConflict) {
+      // Show conflict files only in the unstaged group with '!' badge
+      resources.push({ path: actualPath, group: 'unstaged', badge: '!' });
       continue;
     }
 
@@ -72,11 +82,10 @@ function parseResources(porcelain: string): GitResource[] {
       });
     }
     if (unstagedBadge) {
-      const isMergeConflict = x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D');
       resources.push({
         path: actualPath,
         group: 'unstaged',
-        badge: isMergeConflict ? '!' : unstagedBadge,
+        badge: unstagedBadge,
       });
     }
   }
