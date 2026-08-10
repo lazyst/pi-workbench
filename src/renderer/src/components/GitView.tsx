@@ -30,6 +30,8 @@ interface Props {
   onOpenCommit: (cwd: string, hash: string) => void;
   /** 点击 Git 文件列表中的文件 → 打开编辑器 */
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
+  /** 打开提交中某文件的 diff tab */
+  onOpenCommitFile?: (cwd: string, hash: string, filePath: string) => void;
 }
 
 // ── Porcelain parser ──
@@ -120,11 +122,15 @@ function Spinner() {
 
 // ── Main component ──
 
-export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile }: Props) {
+export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenCommitFile }: Props) {
   // ── State ──
   const [branches, setBranches] = useState<Array<{ name: string; current: boolean; remote: boolean }>>([]);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // 展开的提交 hash → 该提交的变更文件列表
+  const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
+  const [commitFiles, setCommitFiles] = useState<Array<{ status: string; path: string; oldPath?: string }>>([]);
+  const [commitFilesLoading, setCommitFilesLoading] = useState(false);
   const [status, setStatus] = useState<{
     isGit: boolean; branch: string | null; additions: number; deletions: number;
     ahead: number; behind: number; porcelain: string;
@@ -274,6 +280,30 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile }: Props
     if (!r.success) alert(r.error ?? 'Checkout failed');
     else scheduleRefresh();
   }, [cwd, scheduleRefresh]);
+
+  // 展开/折叠提交，获取变更文件列表
+  const handleToggleCommit = useCallback(async (hash: string) => {
+    if (expandedCommit === hash) {
+      setExpandedCommit(null);
+      setCommitFiles([]);
+      return;
+    }
+    setExpandedCommit(hash);
+    setCommitFilesLoading(true);
+    try {
+      const files = await pi.gitCommitFiles(cwd, hash);
+      setCommitFiles(files);
+    } catch {
+      setCommitFiles([]);
+    } finally {
+      setCommitFilesLoading(false);
+    }
+  }, [cwd, expandedCommit]);
+
+  // 点击提交文件 → 打开该文件的 diff tab
+  const handleOpenCommitFile = useCallback((hash: string, path: string) => {
+    onOpenCommitFile?.(cwd, hash, path);
+  }, [cwd, onOpenCommitFile]);
 
   // ── Derived data ──
 
@@ -525,14 +555,38 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile }: Props
       <div className="git-log">
         {filteredLog.length === 0 && <div className="git-empty">{searchQuery ? 'No matching commits' : 'No commits'}</div>}
         {filteredLog.map((e) => (
-          <div
-            key={e.hash}
-            className="git-log-item"
-            onClick={() => onOpenCommit(cwd, e.hash)}
-            title={`${e.hash}\n${e.author} · ${e.date}\nClick to view changes`}
-          >
-            <span className="git-log-msg">{e.message}</span>
-            <span className="git-log-meta">{e.author}</span>
+          <div key={e.hash} className="git-log-item-wrapper">
+            <div
+              className={`git-log-item${expandedCommit === e.hash ? ' expanded' : ''}`}
+              onClick={() => void handleToggleCommit(e.hash)}
+              title={`${e.hash}\n${e.author} · ${e.date}\nClick to expand files`}
+            >
+              <span className="git-log-chevron">{expandedCommit === e.hash ? '▼' : '▶'}</span>
+              <span className="git-log-msg">{e.message}</span>
+              <span className="git-log-meta">{e.author}</span>
+            </div>
+            {/* 展开的变更文件列表 */}
+            {expandedCommit === e.hash && (
+              <div className="git-commit-files">
+                {commitFilesLoading && <div className="git-commit-files-loading">加载中…</div>}
+                {!commitFilesLoading && commitFiles.length === 0 && <div className="git-commit-files-empty">无文件改动</div>}
+                {!commitFilesLoading && commitFiles.map((f) => (
+                  <div
+                    key={f.path}
+                    className="git-commit-file-row"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleOpenCommitFile(e.hash, f.path);
+                    }}
+                    title={`${f.status === 'A' ? '新增' : f.status === 'D' ? '删除' : f.status === 'M' ? '修改' : f.status} — ${f.path}`}
+                  >
+                    <span className={`git-commit-file-status git-cfs-${f.status.toLowerCase()}`}>{f.status}</span>
+                    <span className="git-commit-file-path">{f.path}</span>
+                    {f.oldPath && <span className="git-commit-file-old">← {f.oldPath}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

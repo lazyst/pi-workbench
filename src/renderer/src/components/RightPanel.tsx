@@ -35,6 +35,7 @@ interface Props {
   // 点击 Git 工作区/提交 diff → 中间区新增 diff tab（由 App 处理）。
   onOpenWorkDiff: (cwd: string) => void;
   onOpenCommit: (cwd: string, hash: string) => void;
+  onOpenCommitFile: (cwd: string, hash: string, filePath: string) => void;
   width: number;
   onResize: (w: number) => void;
   collapsed?: boolean;
@@ -47,6 +48,7 @@ export function RightPanel({
   onOpenFile,
   onOpenWorkDiff,
   onOpenCommit,
+  onOpenCommitFile,
   width,
   onResize,
   collapsed,
@@ -210,7 +212,7 @@ export function RightPanel({
               <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
             </div>
             <div className={`rp-tab-content ${tab === 'git' ? 'active' : 'inactive'}`} data-panel="git">
-              <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} onOpenFile={onOpenFile} />
+              <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} onOpenFile={onOpenFile} onOpenCommitFile={onOpenCommitFile} />
             </div>
           </>
         )}

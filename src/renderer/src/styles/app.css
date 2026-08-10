@@ -2394,19 +2394,74 @@ html, body, #root {
 }
 .git-section-clickable:hover .git-open-hint { color: var(--accent); }
 .git-log { overflow-y: auto; max-height: 30vh; flex: none; }
+.git-log-item-wrapper { border-radius: var(--r-sm); }
 .git-log-item {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 4px;
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r-sm);
   cursor: pointer;
   border-left: 2px solid transparent;
 }
 .git-log-item:hover { background: var(--bg-hover); }
-.git-log-item.active { background: var(--bg-active); border-left-color: var(--accent); }
-.git-log-msg { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.git-log-meta { font-size: var(--fs-xs); color: var(--text-faint); }
+.git-log-item.active,
+.git-log-item.expanded { background: var(--bg-active); border-left-color: var(--accent); }
+.git-log-chevron {
+  font-size: 9px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  width: 12px;
+}
+.git-log-msg { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.git-log-meta { font-size: var(--fs-xs); color: var(--text-faint); flex-shrink: 0; }
+
+/* 展开的提交文件列表 */
+.git-commit-files {
+  margin-left: 14px;
+  border-left: 1px solid var(--border);
+  padding-left: 6px;
+  margin-bottom: 4px;
+}
+.git-commit-files-loading,
+.git-commit-files-empty {
+  padding: 4px 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.git-commit-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: var(--fs-xs);
+}
+.git-commit-file-row:hover { background: var(--bg-hover); color: var(--accent); }
+.git-commit-file-status {
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.git-cfs-m { color: var(--diff-removed, #f87171); }
+.git-cfs-a { color: var(--diff-added, #4ade80); }
+.git-cfs-d { color: var(--text-dim); }
+.git-cfs-r { color: #fbbf24; }
+.git-cfs-c { color: #fbbf24; }
+.git-commit-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.git-commit-file-old {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
 
 /* ── Git 写操作 UI ── */
 .git-commit-box {
@@ -3484,6 +3539,34 @@ html, body, #root {
   color: var(--text);
   overflow-x: auto;
 }
+
+/* ── MonacoDiffView（左右分栏差异编辑器，对齐 VS Code Diff Editor）── */
+.monaco-diff-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.monaco-diff-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.monaco-diff-file {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.monaco-diff-toggle {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+}
+.monaco-diff-toggle:hover { color: var(--text); }
 
 /* ── 右栏（文件树 / Git）Tab 容器 ── */
 .right-panel {

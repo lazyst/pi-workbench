@@ -320,6 +320,62 @@ export async function gitFileDiff(cwd: string, path: string): Promise<string> {
   }
 }
 
+export interface GitCommitFile {
+  status: string;
+  path: string;
+  oldPath?: string;
+}
+
+export async function gitCommitFiles(cwd: string, hash: string): Promise<GitCommitFile[]> {
+  try {
+    const output = await git(cwd, ['show', '--name-status', '--no-color', '--format=', hash]);
+    const files: GitCommitFile[] = [];
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split('\t');
+      const status = parts[0];
+      if (!status || status.startsWith('diff') || status.startsWith('---') || status.startsWith('+++') || status.startsWith('index')) continue;
+      if ((status.startsWith('R') || status.startsWith('C')) && parts.length >= 3) {
+        files.push({ status: status[0], path: parts[2], oldPath: parts[1] });
+      } else if (parts.length >= 2) {
+        files.push({ status, path: parts[1] });
+      }
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+export interface GitFileContent {
+  original: string;
+  modified: string;
+}
+
+export async function gitShowFile(cwd: string, path: string, ref: string): Promise<string> {
+  try {
+    return await git(cwd, ['show', ref + ':' + path]);
+  } catch {
+    return '';
+  }
+}
+
+export async function gitCommitFileDiff(cwd: string, hash: string, path: string): Promise<GitFileContent> {
+  try {
+    let original = '';
+    try {
+      original = await git(cwd, ['show', hash + '^:' + path]);
+    } catch {
+      original = '';
+    }
+    const modified = await gitShowFile(cwd, path, hash);
+    return { original, modified };
+  } catch {
+    return { original: '', modified: '' };
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Write operations
 // ════════════════════════════════════════════════════════════════════════════

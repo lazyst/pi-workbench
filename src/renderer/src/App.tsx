@@ -480,6 +480,9 @@ export default function App() {
         onOpenFile={handleOpenFile}
         onOpenWorkDiff={openWorkDiff}
         onOpenCommit={openCommitDiff}
+        onOpenCommitFile={(cwd, hash, filePath) => {
+          useTabStore.getState().openDiff(cwd, hash, undefined, filePath);
+        }}
         width={rightPanelWidth}
         onResize={handleRightPanelResize}
         collapsed={rightPanelCollapsed}

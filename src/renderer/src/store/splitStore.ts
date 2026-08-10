@@ -49,6 +49,8 @@ export interface DiffTab extends BaseTab {
   location: 'editor';
   cwd: string;
   commitHash: string | null;
+  /** 该提交中的特定文件路径（null 时显示全量 diff）。 */
+  filePath?: string | null;
 }
 
 export interface IntegratedTerminalTab extends BaseTab {
@@ -470,7 +472,7 @@ export interface SplitStore {
   setActiveCwd: (cwd: string) => void;
   openSession: (req: { key?: string; cwd?: string; name?: string }, leafId?: string) => void;
   openPreview: (root: string, path: string, fileName?: string, leafId?: string) => void;
-  openDiff: (cwd: string, commitHash: string | null, leafId?: string) => void;
+  openDiff: (cwd: string, commitHash: string | null, leafId?: string, filePath?: string | null) => void;
   openSessionContent: (sessionKey: string, sessionName: string, cwd: string, leafId?: string) => void;
   openTerminal: (id: string, cwd: string, title: string, leafId?: string) => void;
   selectTab: (id: string) => void;
@@ -784,9 +786,10 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       };
     }),
 
-  openDiff: (cwd, commitHash, leafId) =>
+  openDiff: (cwd, commitHash, leafId, filePath) =>
     set((state) => {
-      const id = `diff:${cwd}//${commitHash ?? 'work'}`;
+      const fp = filePath ?? '';
+      const id = `diff:${cwd}//${commitHash ?? 'work'}` + (fp ? `/${fp}` : '');
 
       const existing = findTabById(state.cwdTrees, id);
       if (existing) {
@@ -839,11 +842,12 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         id,
         kind: 'diff',
         location: 'editor',
-        title: commitHash ? commitHash.slice(0, 8) : '工作区改动',
+        title: filePath ? filePath.split('/').pop() ?? filePath : (commitHash ? commitHash.slice(0, 8) : '工作区改动'),
         hidden: false,
         order: nextOrder(targetLeaf.tabs),
         cwd,
         commitHash,
+        filePath,
       };
 
       const updatedLeaf: SplitLeaf = {

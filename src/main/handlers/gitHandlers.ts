@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import { ReferenceCountedWatcher } from '../shared/ReferenceCountedWatcher';
 import {
-  gitStatus, gitLog, gitDiff, gitFileDiff, gitFileStatusMap, gitIgnoredPaths,
+  gitStatus, gitLog, gitDiff, gitFileDiff, gitCommitFiles, gitCommitFileDiff, gitFileStatusMap, gitIgnoredPaths,
   gitStage, gitUnstage, gitCommit, gitRevert, gitClean,
   gitCurrentBranch, gitBranches, gitCreateBranch, gitCheckout, gitDeleteBranch, gitRenameBranch,
   gitRemotes, gitAddRemote, gitRemoveRemote,
@@ -34,6 +34,8 @@ export function registerGitHandlers(
   ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
   ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
   ipcMain.handle('git:fileDiff', (_e, req: { cwd: string; path: string }) => gitFileDiff(req.cwd, req.path));
+  ipcMain.handle('git:commitFiles', (_e, req: { cwd: string; hash: string }) => gitCommitFiles(req.cwd, req.hash));
+  ipcMain.handle('git:commitFileDiff', (_e, req: { cwd: string; hash: string; path: string }) => gitCommitFileDiff(req.cwd, req.hash, req.path));
   ipcMain.handle('git:fileStatusMap', async (_e, req: { cwd: string }) => {
     gitCooldownUntil.set(req.cwd, Date.now() + 2000);
     try {
