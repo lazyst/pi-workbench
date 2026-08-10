@@ -436,6 +436,104 @@ describe('splitStore — 数据模型与基础操作', () => {
     });
   });
 
+  describe('splitPaneWithTab — 分屏并移动 tab', () => {
+    beforeEach(() => {
+      // 创建两个 session tab，确保源 leaf 有多个 tab
+      getState().openSession({ key: '/a/s1.jsonl', cwd: '/a', name: 's1' });
+      getState().openSession({ key: '/a/s2.jsonl', cwd: '/a', name: 's2' });
+    });
+
+    it('水平分屏后被移动的 tab 在新 leaf 中', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'horizontal');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      expect(tree.type).toBe('split');
+      if (tree.type === 'split') {
+        expect(tree.direction).toBe('horizontal');
+        expect(tree.children).toHaveLength(2);
+
+        const leftLeaf = tree.children[0];
+        const rightLeaf = tree.children[1];
+        expect(leftLeaf.type).toBe('leaf');
+        expect(rightLeaf.type).toBe('leaf');
+
+        if (leftLeaf.type === 'leaf' && rightLeaf.type === 'leaf') {
+          // 源 leaf 应保留 s2
+          expect(leftLeaf.tabs).toHaveLength(1);
+          expect(leftLeaf.tabs[0].id).toBe('/a/s2.jsonl');
+          // 新 leaf 应有 s1
+          expect(rightLeaf.tabs).toHaveLength(1);
+          expect(rightLeaf.tabs[0].id).toBe('/a/s1.jsonl');
+          // 新 leaf 的 activeTabId 指向被移动的 tab
+          expect(rightLeaf.activeTabId).toBe('/a/s1.jsonl');
+        }
+      }
+    });
+
+    it('垂直分屏后 direction 为 vertical', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'vertical');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        expect(tree.direction).toBe('vertical');
+      }
+    });
+
+    it('分屏后 activeLeafId 指向新 leaf', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'horizontal');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const newLeafId = tree.children[1].id;
+        expect(s.activeLeafId).toBe(newLeafId);
+      }
+    });
+
+    it('被移 tab 是 active 时，源 leaf 自动选下一个 tab 激活', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      // s2 是最后创建的，自动成为 activeTabId
+
+      store.splitPaneWithTab(leafId, '/a/s2.jsonl', 'horizontal');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leftLeaf = tree.children[0];
+        if (leftLeaf.type === 'leaf') {
+          // 源 leaf 的 activeTabId 应切到 s1
+          expect(leftLeaf.activeTabId).toBe('/a/s1.jsonl');
+        }
+      }
+    });
+
+    it('源 leaf 只有一个 tab 时，不执行分屏（防御性检查）', () => {
+      // 先删除 s2，只剩 s1
+      const store = getState();
+      store.closeTab('/a/s2.jsonl');
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'horizontal');
+
+      const s = getState();
+      // 树结构不应改变
+      const tree = s.cwdTrees['/a'];
+      expect(tree.type).toBe('leaf');
+    });
+  });
+
   describe('closeLeaf — 关闭 leaf', () => {
     beforeEach(() => {
       getState().openSession({ key: '/a/session.jsonl', cwd: '/a', name: 'sess-a' });

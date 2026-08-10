@@ -34,6 +34,8 @@ import {
 } from '@dnd-kit/sortable';
 import { TabBar } from './TabBar';
 import { SplitDivider } from './SplitDivider';
+import { ContextMenu } from './ContextMenu';
+import type { ContextMenuItem } from './ContextMenu';
 import { useSplitStore, findTabById, findLeaf, canMoveTabToLeaf } from '../store/splitStore';
 import type { SplitTree, SplitLeaf, SplitNode, Tab, SessionContentTab } from '../store/splitStore';
 import type { TabKind } from './TabBar';
@@ -44,6 +46,12 @@ import { DiffTab } from './DiffTab';
 import { SessionContentView } from './SessionContentView';
 import { restorePaneScrollState, schedulePaneResize, setPaneActive } from './paneManager';
 
+interface SplitTabContextMenuState {
+  x: number;
+  y: number;
+  tabId: string;
+}
+
 interface Props {
   tree: SplitTree;
   cwd: string;
@@ -51,7 +59,7 @@ interface Props {
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
   onDestroyTerminal?: (id: string) => void;
   onDestroySession?: (id: string) => void;
-  onOpen?: (req: { key?: string; cwd?: string; name?: string }) => void;
+  onOpen?: (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => void;
   onNewTerminal?: () => void;
   onNewTerminalWithProfile?: (profileId: string) => void;
   terminalProfiles?: Array<{ id: string; label: string }>;
@@ -491,7 +499,43 @@ function SplitPaneLeaf({
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
   const setActiveLeaf = useSplitStore((s) => s.setActiveLeaf);
   const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
+  const splitPaneWithTab = useSplitStore((s) => s.splitPaneWithTab);
   const { toast } = useToast();
+
+  // tab 右键菜单状态
+  const [tabContextMenu, setTabContextMenu] = useState<SplitTabContextMenuState | null>(null);
+
+  // 右键菜单项：分屏项在源 leaf 只剩一个可见 tab 时禁用（避免产生空窗格）
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!tabContextMenu) return [];
+    const visibleTabCount = leaf.tabs.filter((t) => !t.hidden).length;
+    const canSplit = visibleTabCount > 1;
+    const doSplit = (direction: 'horizontal' | 'vertical') => {
+      splitPaneWithTab(leaf.id, tabContextMenu.tabId, direction);
+    };
+    return [
+      {
+        label: '向右分屏',
+        disabled: !canSplit,
+        onClick: () => doSplit('horizontal'),
+      },
+      {
+        label: '向下分屏',
+        disabled: !canSplit,
+        onClick: () => doSplit('vertical'),
+      },
+    ];
+  }, [tabContextMenu, leaf.id, leaf.tabs, splitPaneWithTab]);
+
+  const handleTabContextMenu = useCallback((tabId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 先关闭旧菜单，再下一帧打开新菜单，避免旧菜单 onClose 回调覆盖新状态
+    setTabContextMenu(null);
+    setTimeout(() => {
+      setTabContextMenu({ x: e.clientX, y: e.clientY, tabId });
+    }, 0);
+  }, []);
 
   // 从 DragContext 获取 leaf 的动态 items
   const { leafItems, hoveredLeafId, canDrop } = useDragContext();
@@ -562,12 +606,13 @@ function SplitPaneLeaf({
         onSelect={handleSelectTab}
         onClose={requestCloseTab}
         onReorder={handleReorder}
-        showNew={false}
+        onNew={() => onOpen?.({ cwd, leafId: leaf.id })}
         onNewTerminal={onNewTerminal}
         onNewTerminalWithProfile={onNewTerminalWithProfile}
         terminalProfiles={terminalProfiles}
         onSplitPane={onSplitPane}
         sortableItems={sortableItems}
+        onTabContextMenu={handleTabContextMenu}
       />
       <div className="center-pane-body">
         {/* keep-alive：所有 tab 内容永久挂载，非 active 用 opacity:0 隐藏 */}
@@ -682,6 +727,14 @@ function SplitPaneLeaf({
           </div>
         )}
       </div>
+      {tabContextMenu && (
+        <ContextMenu
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+          items={contextMenuItems}
+          onClose={() => setTabContextMenu(null)}
+        />
+      )}
     </div>
   );
 }

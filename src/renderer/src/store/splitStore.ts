@@ -490,6 +490,8 @@ export interface SplitStore {
 
   // 分屏专用 action
   splitPane: (leafId: string, direction: SplitDirection) => void;
+  /** 分屏并将指定 tab 移到新 leaf（不自动创建终端）。 */
+  splitPaneWithTab: (leafId: string, tabId: string, direction: SplitDirection) => void;
   closeLeaf: (leafId: string) => void;
   setRatios: (nodeId: string, ratios: number[]) => void;
   setActiveLeaf: (leafId: string) => void;
@@ -1631,6 +1633,76 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         cwdTrees: { ...state.cwdTrees, [cwd]: newTree },
         activeLeafId: newLeaf.id,
         cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: newLeaf.id },
+      };
+    }),
+
+  splitPaneWithTab: (leafId, tabId, direction) =>
+    set((state) => {
+      const found = findLeaf(state.cwdTrees, leafId);
+      if (!found) return {};
+      const { cwd, leaf } = found;
+
+      const tab = leaf.tabs.find((t) => t.id === tabId);
+      if (!tab) return {};
+
+      // 保存滚动位置（终端/会话类 tab）
+      if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
+        capturePaneScrollState(tab.id);
+      }
+
+      // 从源 leaf 移除 tab
+      const remainingTabs = leaf.tabs.filter((t) => t.id !== tabId);
+      // 源 leaf 不应为空（UI 侧已禁用单 tab 分屏）
+      if (remainingTabs.length === 0) return {};
+
+      // 更新源 leaf
+      let updatedLeaf: SplitLeaf = { ...leaf, tabs: remainingTabs };
+      let nextCwdActiveTab = state.cwdActiveTab;
+      let nextCwdTabHistory = state.cwdTabHistory;
+
+      if (leaf.activeTabId === tabId) {
+        const next = selectNextTabOnClose(
+          remainingTabs, tabId, cwd,
+          leaf.activeTabId, state.activeCwd,
+          state.cwdActiveTab, state.cwdTabHistory,
+        );
+        if (next) {
+          updatedLeaf = { ...updatedLeaf, activeTabId: next.activeTabId };
+          nextCwdActiveTab = next.cwdActiveTab;
+          nextCwdTabHistory = next.cwdTabHistory;
+        }
+      }
+
+      // 创建新 leaf 并放入被移动的 tab
+      const newLeaf = createLeaf();
+      newLeaf.tabs = [{ ...tab }];
+      newLeaf.activeTabId = tabId;
+
+      // 构建 split node：源 leaf（已移除 tab）+ 新 leaf
+      const nodeId = uid();
+      const splitNode: SplitNode = {
+        type: 'split',
+        id: nodeId,
+        direction,
+        ratios: [0.5, 0.5],
+        children: [updatedLeaf, newLeaf],
+      };
+
+      // 替换树中的 leaf
+      const newTree = replaceLeafWithNode(state.cwdTrees[cwd], leafId, splitNode);
+      if (!newTree) return {};
+
+      // 更新历史
+      nextCwdTabHistory = pushTabHistory(nextCwdTabHistory, cwd, tabId);
+      const allTabs = collectAllTabs({ [cwd]: newTree });
+      nextCwdActiveTab = updateCwdActiveTab(nextCwdActiveTab, allTabs, cwd, tabId);
+
+      return {
+        cwdTrees: { ...state.cwdTrees, [cwd]: newTree },
+        activeLeafId: newLeaf.id,
+        cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: newLeaf.id },
+        cwdTabHistory: nextCwdTabHistory,
+        cwdActiveTab: nextCwdActiveTab,
       };
     }),
 

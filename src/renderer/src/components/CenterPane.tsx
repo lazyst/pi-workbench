@@ -19,7 +19,7 @@ interface Props {
   /** 已添加到左侧栏的工作目录列表（供下拉切换）。 */
   addedDirs?: string[];
   /** 新建会话（来自空状态按钮）。 */
-  onOpen?: (req: { key?: string; cwd?: string; name?: string }) => void;
+  onOpen?: (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => void;
   /** 新建终端（默认 profile） */
   onNewTerminal?: () => void;
   /** 新建终端（指定 profile） */

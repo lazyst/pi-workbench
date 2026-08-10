@@ -52,6 +52,8 @@ interface Props {
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
   // 跨 leaf 拖拽时，由 SplitPaneDragProvider 提供的 SortableContext items（动态管理）
   sortableItems?: string[];
+  // tab 右键回调：参数为被右键的 tab id 与鼠标事件（用于定位右键菜单）。
+  onTabContextMenu?: (tabId: string, e: React.MouseEvent) => void;
 }
 
 const renderKindIcon = (kind: TabKind) => {
@@ -79,12 +81,14 @@ function SortableTab({
   onSelect,
   onClose,
   dirty,
+  onContextMenu,
 }: {
   item: TabBarItem;
   activeId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   dirty?: boolean;
+  onContextMenu?: (tabId: string, e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id });
@@ -109,6 +113,7 @@ function SortableTab({
       aria-selected={item.id === activeId}
       className={item.id === activeId ? 'terminal-tab active' : 'terminal-tab'}
       onClick={() => onSelect(item.id)}
+      onContextMenu={(e) => onContextMenu?.(item.id, e)}
       title={item.title}
     >
       <span className="terminal-tab-icon">{renderKindIcon(item.kind)}</span>
@@ -406,7 +411,7 @@ function TabBarActions({
 //
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane, sortableItems }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane, sortableItems, onTabContextMenu }: Props) {
   // 分组展示行（TabAutoGroup）：纯展示归类，不影响 tabs 数据顺序。
   const rows = buildGroupedRows(tabs, groupBy);
 
@@ -426,6 +431,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
         aria-selected={row.item.id === activeId}
         className={row.item.id === activeId ? 'terminal-tab active' : 'terminal-tab'}
         onClick={() => onSelect(row.item.id)}
+        onContextMenu={(e) => onTabContextMenu?.(row.item.id, e)}
         title={row.item.title}
       >
         <span className="terminal-tab-icon">{renderKindIcon(row.item.kind)}</span>
@@ -461,6 +467,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
         onSelect={onSelect}
         onClose={onClose}
         dirty={tabDirty?.[row.item.id]}
+        onContextMenu={onTabContextMenu}
       />
     ),
   );

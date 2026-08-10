@@ -150,7 +150,7 @@ export default function App() {
   // 不会出现在 liveToDisk 映射里——若只用 !promoted[key] 判定，会把已存在
   // 的磁盘会话误当成“未保存”的 live 会话重复显示并打上“未保存”徽标（见修复）。
 
-  const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
+  const handleOpen = async (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => {
     setError(null);
     try {
       // 虚拟 session（pi-<uuid>）：通过 IPC 查询 PtyOwnershipRegistry
@@ -167,7 +167,7 @@ export default function App() {
             key: ptyId,
             cwd: existing?.cwd ?? req.cwd,
             name: existing?.name ?? req.name,
-          });
+          }, req.leafId);
         }
         return;
       }
@@ -178,7 +178,7 @@ export default function App() {
         const reassignedPtyIds = result?.virtual ? new Set([result.virtual]) : new Set();
         if (reassignedPtyIds.has(req.key)) {
           const info = await pi.openSession({ cwd: req.cwd, name: req.name });
-          useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name });
+          useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name }, req.leafId);
           ptyOwnersRef.current = new Map(ptyOwnersRef.current).set(info.key, info.key);
           pi.registerPtyOwner?.(info.key, info.key);
           return;
@@ -187,7 +187,7 @@ export default function App() {
       const info = await pi.openSession(req.key ? { key: req.key } : { cwd: req.cwd, name: req.name });
       // 新增或激活 session tab 统一收编进 store（openSession action 已封装「已存在则
       // 取消隐藏并激活、不存在则新增并激活」逻辑，与「关闭=隐藏、重开=恢复」语义一致）。
-      useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name });
+      useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name }, req.leafId);
       // 注册 PTY 初始 owner（自身 key 为初始 owner，/new 时转移给新 session）
       ptyOwnersRef.current = new Map(ptyOwnersRef.current).set(info.key, info.key);
       pi.registerPtyOwner?.(info.key, info.key);
