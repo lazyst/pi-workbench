@@ -9,8 +9,6 @@ import { CSS } from '@dnd-kit/utilities';
 import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal, IconArrowDown, IconSplitHorizontal, IconSplitVertical } from './icons';
 import { buildGroupedRows } from './tabGrouping';
 import { useDragContext } from './SplitPane';
-export type { RenderedRow } from './tabGrouping';
-
 export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal' | 'session-content';
 
 export interface TabBarItem {

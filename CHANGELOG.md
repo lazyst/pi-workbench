@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.1.0 (2026-08-11)
+
+### 新功能
+
+- **Git 面板重构为 IDEA Commit Dialog 风格** — 替代原 VS Code 风格，改为三区（Changes to be committed / Unversioned Files / Modified (not staged)）文件树 + 底部提交信息区。文件按目录树分组，可展开/折叠；目录 checkbox 支持级联全选/半选（indeterminate）；新增右键菜单（显示差异/撤销更改/添加到 .gitignore/复制路径/在文件管理器中显示）。
+
+- **Git 提交历史（右侧栏 inline）** — 可折叠的「提交历史」section，展开后显示最近 50 条提交。点击提交展开该次提交的改动文件列表（M/A/D/R/C 状态徽章），点击文件打开中间区单栏 Monaco unified diff（只读，`renderSideBySide: false`）。支持搜索过滤（防抖 300ms）+ 无限滚动加载。
+
+- **悬浮预览卡片** — hover 提交行 300ms 后弹出紧凑卡片（类似右键菜单），显示短 hash、提交信息、作者、日期。Portal 渲染到 `document.body` 避免右侧栏 `transform` 影响 fixed 定位。
+
+- **全部分支/当前分支切换** — 提交历史可切换显示当前分支（`git log`）或全部分支（`git log --all`），切换分支时历史自动刷新。`gitLogAdvanced` 新增 `allBranches` 参数。
+
+- **分支选择器下拉菜单优化** — 弹出列表改为绝对定位下拉菜单（`top: 100%`），不推开下方布局；hover 指针变化 + accent 高亮。
+
+### 视觉优化
+
+- **Checkbox 美化** — 自定义样式（`appearance: none`），15px 大小、1px 细边框、3px 圆角；勾选态 accent 填充 + 白色对勾，目录半选态白色短横线。
+- **CSS 过渡动画** — hover 背景 0.18s、chevron 旋转 0.2s（改为 CSS border 三角形，旋转中心居中）、展开/收起 0.25s max-height 动画。
+- **MonacoDiffView 对齐主编辑器配置** — 补齐 `cursorStyle: 'block'`、`smoothScrolling: true`、`diffWordWrap: 'on'`、`renderLineHighlight: 'line'`。
+
+### 修复
+
+- **中文路径 git 操作失败** — 修复 `core.quotepath` 导致中文路径被八进制转义，所有 git 命令添加 `-c core.quotepath=false`。
+- **无提交仓库 revert 报 invalid reference: HEAD** — revert 改为 `git checkout HEAD -- <path>` 后在无 HEAD 仓库中容错降级。
+- **fsReadFile 目录返回 EISDIR** — 点击目录时不再创建空 tab，改用系统默认程序打开。
+- **Git 面板 '+' 按钮事件冒泡** — 点击暂存/取消暂存/撤销/删除按钮时调用 `e.stopPropagation()` 防止同时打开文件。
+- **切换分支后提交历史不刷新** — 新增 `useEffect` 监听 `status?.branch` 自动刷新。
+
+### 清理
+
+- 删除无引用文件：`SingleDiffView.tsx`、`use-terminal-container-fit-sync.ts`
+- 删除 ~280 行旧 VS Code 风格 Git 面板 CSS（已全部被 IDEA 风格替代）
+- 移除未使用的重导出 `RenderedRow`、`LogTab`/`openLog` store 类型和通道
+
+---
+
 ## v1.0.9 (2026-08-11)
 
 ### 新功能
