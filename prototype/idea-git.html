@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE — 三个 IDEA 风格 Git 面板变体
+  问题：当前 VS Code 风格的 Git 侧栏交互不够好，想改成 IntelliJ IDEA 风格
+  变体切换：底部浮动栏 ← → 或按键盘左右箭头
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDEA Git 交互原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #1e1e1e; color: #ccc; display: flex; height: 100vh; }
+  
+  /* --- 模拟 IDE 布局 --- */
+  #sidebar { width: 360px; min-width: 360px; background: #252526; border-right: 1px solid #333; display: flex; flex-direction: column; height: 100vh; }
+  #main { flex: 1; display: flex; align-items: center; justify-content: center; color: #555; font-size: 14px; }
+  
+  /* --- 通用 Git 面板样式 --- */
+  .git-panel { display: flex; flex-direction: column; height: 100%; font-size: 13px; }
+  .git-panel-header { padding: 8px 12px; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 8px; }
+  .git-panel-header h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; color: #888; letter-spacing: 0.5px; }
+  .git-panel-body { flex: 1; overflow-y: auto; }
+  
+  /* --- 状态图标 --- */
+  .status-icon { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; flex-shrink: 0; font-size: 10px; font-weight: 700; border-radius: 3px; }
+  .status-modified { color: #4a9eff; }  /* 蓝色 */
+  .status-new { color: #59a869; }       /* 绿色 */
+  .status-deleted { color: #e06c75; }   /* 红色 */
+  .status-untracked { color: #999; }    /* 灰色 */
+  .status-conflict { color: #d19a66; }  /* 橙色 */
+  
+  /* IDEA 风格：圆点图标 */
+  .idea-icon { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .idea-icon.modified { background: #4a9eff; }
+  .idea-icon.new { background: #59a869; }
+  .idea-icon.deleted { background: #e06c75; }
+  .idea-icon.untracked { background: #999; }
+  .idea-icon.conflict { background: #d19a66; }
+  
+  /* --- 按钮 --- */
+  .btn { padding: 4px 12px; border: 1px solid #444; background: #2d2d2d; color: #ccc; border-radius: 3px; cursor: pointer; font-size: 12px; }
+  .btn:hover { background: #3a3a3a; }
+  .btn-primary { background: #0a7ef5; border-color: #0a7ef5; color: #fff; }
+  .btn-primary:hover { background: #0969d9; }
+  .btn-success { background: #238636; border-color: #238636; color: #fff; }
+  .btn-success:hover { background: #2ea043; }
+  .btn-sm { padding: 2px 8px; font-size: 11px; }
+  .btn-icon { width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 3px; }
+  .btn-ghost { background: transparent; border: none; color: #888; }
+  .btn-ghost:hover { color: #ccc; background: #333; }
+  
+  /* --- 浮动变体切换器 --- */
+  #switcher { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 16px; background: #333; border: 1px solid #555; border-radius: 20px; padding: 6px 20px; font-size: 13px; color: #ccc; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  #switcher button { background: none; border: none; color: #aaa; font-size: 18px; cursor: pointer; padding: 2px 8px; border-radius: 4px; }
+  #switcher button:hover { color: #fff; background: #444; }
+  #switcher .label { font-weight: 600; min-width: 200px; text-align: center; }
+  #switcher .desc { font-size: 11px; color: #888; }
+  
+  /* ========== VARIANT A ========== */
+  .variant-a .changelist-bar { display: flex; align-items: center; padding: 6px 12px; border-bottom: 1px solid #333; gap: 4px; }
+  .variant-a .changelist-bar .cl-tab { padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; color: #888; }
+  .variant-a .changelist-bar .cl-tab.active { background: #37373d; color: #ccc; }
+  .variant-a .changelist-bar .cl-tab:hover { color: #ccc; }
+  .variant-a .changelist-bar .cl-add { color: #888; cursor: pointer; padding: 2px 6px; font-size: 14px; }
+  .variant-a .changelist-bar .cl-add:hover { color: #ccc; }
+  
+  .variant-a .file-tree { padding: 4px 0; }
+  .variant-a .ft-dir { padding: 2px 12px 2px 8px; cursor: default; display: flex; align-items: center; gap: 4px; color: #888; font-size: 12px; }
+  .variant-a .ft-dir:hover { background: #2a2d2e; }
+  .variant-a .ft-dir .chevron { width: 12px; font-size: 10px; flex-shrink: 0; }
+  .variant-a .ft-dir .dir-name { color: #aaa; }
+  .variant-a .ft-file { padding: 2px 12px 2px 24px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .variant-a .ft-file:hover { background: #2a2d2e; }
+  .variant-a .ft-file .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .variant-a .ft-file .file-path { font-size: 10px; color: #666; margin-left: 4px; }
+  
+  .variant-a .git-toolbar { padding: 6px 12px; border-top: 1px solid #333; display: flex; gap: 4px; align-items: center; }
+  .variant-a .git-toolbar .spacer { flex: 1; }
+  .variant-a .git-toolbar .info-text { font-size: 11px; color: #666; }
+  
+  /* ========== VARIANT B ========== */
+  .variant-b .commit-dialog { padding: 0; display: flex; flex-direction: column; height: 100%; }
+  .variant-b .commit-header { padding: 8px 12px; border-bottom: 1px solid #333; }
+  .variant-b .commit-header h3 { font-size: 13px; color: #ccc; }
+  .variant-b .commit-header .repo { font-size: 11px; color: #888; margin-top: 2px; }
+  
+  .variant-b .commit-body { flex: 1; overflow-y: auto; }
+  
+  .variant-b .file-section { }
+  .variant-b .file-section-title { padding: 4px 12px; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #2d2d2d; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .variant-b .file-section-title:hover { background: #2a2d2e; }
+  .variant-b .file-section-title .count { color: #555; font-size: 11px; }
+  
+  .variant-b .cb-file { padding: 2px 12px 2px 12px; display: flex; align-items: center; gap: 6px; cursor: default; }
+  .variant-b .cb-file:hover { background: #2a2d2e; }
+  .variant-b .cb-file input[type="checkbox"] { accent-color: #0a7ef5; }
+  .variant-b .cb-file .file-name { flex: 1; }
+  .variant-b .cb-file .file-dir { font-size: 10px; color: #666; }
+  .variant-b .cb-dir { cursor: pointer; }
+  .variant-b .cb-dir:hover { background: #2a2d2e; }
+  
+  .variant-b .commit-message-area { padding: 8px 12px; border-top: 1px solid #333; }
+  .variant-b .commit-message-area textarea { width: 100%; height: 60px; background: #1e1e1e; border: 1px solid #444; border-radius: 3px; color: #ccc; padding: 6px 8px; font-size: 13px; resize: vertical; font-family: inherit; }
+  .variant-b .commit-message-area textarea:focus { outline: none; border-color: #0a7ef5; }
+  .variant-b .commit-message-area .author { margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+  .variant-b .commit-message-area .author input { background: #1e1e1e; border: 1px solid #444; border-radius: 3px; color: #ccc; padding: 2px 6px; font-size: 12px; flex: 1; }
+  
+  .variant-b .commit-actions { padding: 8px 12px; border-top: 1px solid #333; display: flex; gap: 6px; align-items: center; }
+  .variant-b .commit-actions .spacer { flex: 1; }
+  .variant-b .commit-actions .amend label { font-size: 12px; color: #888; cursor: pointer; }
+  .variant-b .commit-actions .amend input { accent-color: #0a7ef5; }
+  
+  /* ========== VARIANT C ========== */
+  .variant-c .cl-tabs { display: flex; align-items: center; padding: 0; border-bottom: 1px solid #333; }
+  .variant-c .cl-tab { padding: 6px 14px; cursor: pointer; font-size: 12px; color: #888; border-bottom: 2px solid transparent; }
+  .variant-c .cl-tab.active { color: #ccc; border-bottom-color: #0a7ef5; }
+  .variant-c .cl-tab:hover { color: #ccc; }
+  .variant-c .cl-tab .count { margin-left: 4px; background: #37373d; padding: 0 5px; border-radius: 8px; font-size: 10px; }
+  .variant-c .cl-tab.active .count { background: #0a7ef5; color: #fff; }
+  .variant-c .cl-add-tab { padding: 6px 10px; cursor: pointer; color: #888; font-size: 16px; }
+  .variant-c .cl-add-tab:hover { color: #ccc; }
+  
+  .variant-c .cl-actions { padding: 4px 12px; display: flex; gap: 4px; border-bottom: 1px solid #2d2d2d; }
+  .variant-c .cl-actions .spacer { flex: 1; }
+  
+  .variant-c .file-list { padding: 4px 0; }
+  .variant-c .fl-item { padding: 3px 12px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .variant-c .fl-item:hover { background: #2a2d2e; }
+  .variant-c .fl-item .file-name { flex: 1; }
+  .variant-c .fl-item .file-dir { font-size: 10px; color: #666; }
+  .variant-c .fl-item .quick-actions { display: none; gap: 2px; }
+  .variant-c .fl-item:hover .quick-actions { display: flex; }
+  .variant-c .fl-item .qa-btn { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: 1px solid #444; border-radius: 3px; background: transparent; color: #888; font-size: 10px; cursor: pointer; }
+  .variant-c .fl-item .qa-btn:hover { border-color: #0a7ef5; color: #0a7ef5; }
+  
+  .variant-c .commit-bar { padding: 6px 12px; border-top: 1px solid #333; display: flex; gap: 6px; align-items: center; }
+  .variant-c .commit-bar input { flex: 1; background: #1e1e1e; border: 1px solid #444; border-radius: 3px; color: #ccc; padding: 4px 8px; font-size: 12px; }
+  .variant-c .commit-bar input:focus { outline: none; border-color: #0a7ef5; }
+  
+  /* --- 滚动条 --- */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #555; }
+  
+  /* --- 隐藏/显示变体 --- */
+  .variant { display: none; }
+  .variant.active { display: flex; flex-direction: column; height: 100%; }
+</style>
+</head>
+<body>
+
+<!-- 侧边栏：Git 面板 -->
+<div id="sidebar">
+  <div id="variant-a" class="variant active">
+    <div class="git-panel variant-a">
+      <div class="git-panel-header">
+        <h3>Local Changes</h3>
+        <span style="flex:1"></span>
+        <button class="btn btn-sm" onclick="alert('打开提交对话框')" title="Commit Changes">Commit…</button>
+        <button class="btn-icon btn-ghost" title="Settings">⚙</button>
+      </div>
+      
+      <!-- Changelist 栏 -->
+      <div class="changelist-bar">
+        <span class="cl-tab active">Default Changelist</span>
+        <span class="cl-tab">Bugfix</span>
+        <span class="cl-add" title="New Changelist">+</span>
+        <span style="flex:1"></span>
+        <span class="info-text" style="font-size:11px;color:#666">4 files changed</span>
+      </div>
+      
+      <!-- 文件树 -->
+      <div class="git-panel-body">
+        <div class="file-tree">
+          <div class="ft-dir" onclick="toggleDir(this)">
+            <span class="chevron">▼</span>
+            <span class="idea-icon modified"></span>
+            <span class="dir-name">auth-system</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: auth-system/login.js')">
+            <span class="idea-icon modified" style="margin-left:16px"></span>
+            <span class="file-name">login.js</span>
+            <span class="file-path">auth-system/</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: auth-system/register.js')">
+            <span class="idea-icon new" style="margin-left:16px"></span>
+            <span class="file-name">register.js</span>
+            <span class="file-path">auth-system/</span>
+          </div>
+          
+          <div class="ft-dir" onclick="toggleDir(this)">
+            <span class="chevron">▼</span>
+            <span class="idea-icon new"></span>
+            <span class="dir-name">桌面运维工程师课程笔记</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: 桌面运维工程师课程笔记/第一章.md')">
+            <span class="idea-icon new" style="margin-left:16px"></span>
+            <span class="file-name">第一章.md</span>
+            <span class="file-path">桌面运维工程师课程笔记/</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: 桌面运维工程师课程笔记/第二章.md')">
+            <span class="idea-icon new" style="margin-left:16px"></span>
+            <span class="file-name">第二章.md</span>
+            <span class="file-path">桌面运维工程师课程笔记/</span>
+          </div>
+          
+          <div class="ft-file" onclick="alert('打开 Diff 视图: 桌面运维工程师岗位全景指南.md')">
+            <span class="idea-icon modified"></span>
+            <span class="file-name">桌面运维工程师岗位全景指南.md</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: 软件测试岗位技能分析报告_v2.md')">
+            <span class="idea-icon modified"></span>
+            <span class="file-name">软件测试岗位技能分析报告_v2.md</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: 软件测试岗位技能需求分析报告_v2.xlsx')">
+            <span class="idea-icon new"></span>
+            <span class="file-name">软件测试岗位技能需求分析报告_v2.xlsx</span>
+          </div>
+          <div class="ft-file" onclick="alert('打开 Diff 视图: bilingual-system-context.html')">
+            <span class="idea-icon untracked"></span>
+            <span class="file-name">bilingual-system-context.html</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 底部工具栏 -->
+      <div class="git-toolbar">
+        <button class="btn btn-sm" onclick="alert('Rollback 选中的文件')">Rollback</button>
+        <button class="btn btn-sm" onclick="alert('打开 Diff 视图')">Show Diff</button>
+        <span class="spacer"></span>
+        <span class="info-text">Default Changelist · 4 files</span>
+      </div>
+    </div>
+  </div>
+  
+  <div id="variant-b" class="variant">
+    <div class="git-panel variant-b">
+      <div class="commit-dialog">
+        <div class="commit-header">
+          <h3>Commit Changes</h3>
+          <div class="repo">D:\tmp</div>
+        </div>
+        
+        <!-- 文件列表（带 checkbox） -->
+        <div class="commit-body">
+          <div class="file-section">
+            <div class="file-section-title" onclick="toggleSection(this)">
+              <span>▼</span>
+              <span>Changes to be committed</span>
+              <span class="count">(3)</span>
+            </div>
+            <div class="cb-file"><input type="checkbox" checked><span class="idea-icon modified"></span><span class="file-name">桌面运维工程师岗位全景指南.md</span></div>
+            <div class="cb-file"><input type="checkbox" checked><span class="idea-icon new"></span><span class="file-name">bilingual-system-context.html</span></div>
+            <div class="cb-file"><input type="checkbox" checked><span class="idea-icon new"></span><span class="file-name">软件测试岗位技能需求分析报告_v2.xlsx</span></div>
+          </div>
+          
+          <div class="file-section">
+            <div class="file-section-title" onclick="toggleSection(this)">
+              <span>▼</span>
+              <span>Unversioned Files</span>
+              <span class="count">(6)</span>
+            </div>
+            <!-- 可展开目录: auth-system -->
+            <div class="cb-file cb-dir" onclick="toggleDirCB(this)">
+              <span class="dir-chevron" style="width:14px;font-size:10px;color:#666;cursor:pointer">▶</span>
+              <span class="idea-icon untracked" style="margin-left:0"></span>
+              <span class="file-name">auth-system</span>
+              <span class="file-dir">/</span>
+            </div>
+            <div class="cb-file" style="display:none"><input type="checkbox" style="margin-left:14px"><span class="idea-icon untracked"></span><span class="file-name">login.js</span><span class="file-dir">auth-system/</span></div>
+            <div class="cb-file" style="display:none"><input type="checkbox" style="margin-left:14px"><span class="idea-icon untracked"></span><span class="file-name">register.js</span><span class="file-dir">auth-system/</span></div>
+            <!-- 可展开目录: 桌面运维工程师课程笔记 -->
+            <div class="cb-file cb-dir" onclick="toggleDirCB(this)">
+              <span class="dir-chevron" style="width:14px;font-size:10px;color:#666;cursor:pointer">▶</span>
+              <span class="idea-icon new" style="margin-left:0"></span>
+              <span class="file-name">桌面运维工程师课程笔记</span>
+              <span class="file-dir">/</span>
+            </div>
+            <div class="cb-file" style="display:none"><input type="checkbox" style="margin-left:14px"><span class="idea-icon new"></span><span class="file-name">第一章.md</span><span class="file-dir">桌面运维工程师课程笔记/</span></div>
+            <div class="cb-file" style="display:none"><input type="checkbox" style="margin-left:14px"><span class="idea-icon new"></span><span class="file-name">第二章.md</span><span class="file-dir">桌面运维工程师课程笔记/</span></div>
+            <!-- 根目录文件 -->
+            <div class="cb-file"><input type="checkbox"><span class="idea-icon untracked"></span><span class="file-name">nul</span></div>
+            <div class="cb-file"><input type="checkbox"><span class="idea-icon untracked"></span><span class="file-name">null</span></div>
+            <div class="cb-file"><input type="checkbox"><span class="idea-icon modified"></span><span class="file-name">软件测试岗位技能分析报告_v2.md</span></div>
+          </div>
+          
+          <div class="file-section">
+            <div class="file-section-title" onclick="toggleSection(this)">
+              <span>▼</span>
+              <span>Modified (not staged)</span>
+              <span class="count">(2)</span>
+            </div>
+            <div class="cb-file cb-dir" onclick="toggleDirCB(this)">
+              <span class="dir-chevron" style="width:14px;font-size:10px;color:#666;cursor:pointer">▶</span>
+              <span class="idea-icon modified" style="margin-left:0"></span>
+              <span class="file-name">auth-system</span>
+              <span class="file-dir">/</span>
+            </div>
+            <div class="cb-file" style="display:none"><input type="checkbox" style="margin-left:14px"><span class="idea-icon modified"></span><span class="file-name">login.js</span><span class="file-dir">auth-system/</span></div>
+          </div>
+        </div>
+        
+        <!-- 提交信息 -->
+        <div class="commit-message-area">
+          <textarea placeholder="Commit message (Ctrl+Enter to commit)"></textarea>
+          <div class="author">
+            <span>Author:</span>
+            <input type="text" value="hcz" placeholder="Author name">
+          </div>
+        </div>
+        
+        <!-- 提交按钮 -->
+        <div class="commit-actions">
+          <div class="amend">
+            <input type="checkbox" id="amend-b">
+            <label for="amend-b">Amend</label>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn btn-sm" onclick="alert('只是查看，不提交')">Show Diff</button>
+          <button class="btn btn-primary btn-sm" onclick="alert('提交变更')">Commit</button>
+          <button class="btn btn-success btn-sm" onclick="alert('提交并推送')">Commit and Push…</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="variant-c" class="variant">
+    <div class="git-panel variant-c">
+      <div class="git-panel-header">
+        <h3>Changes</h3>
+        <span style="flex:1"></span>
+        <button class="btn-icon btn-ghost" title="展开/折叠所有" onclick="alert('展开/折叠所有')">≡</button>
+      </div>
+      
+      <!-- Changelist tabs -->
+      <div class="cl-tabs">
+        <span class="cl-tab active" onclick="switchCL(this)">
+          Default <span class="count">4</span>
+        </span>
+        <span class="cl-tab" onclick="switchCL(this)">
+          Bugfix <span class="count">1</span>
+        </span>
+        <span class="cl-tab" onclick="switchCL(this)">
+          Feature <span class="count">2</span>
+        </span>
+        <span class="cl-add-tab" title="New Changelist">+</span>
+      </div>
+      
+      <!-- Changelist 操作 -->
+      <div class="cl-actions">
+        <button class="btn btn-sm" onclick="alert('Rollback 当前 changelist 中所有文件')">Rollback</button>
+        <button class="btn btn-sm" onclick="alert('打开 Diff 视图')">Diff</button>
+        <span class="spacer"></span>
+        <span style="font-size:11px;color:#666">Drag files to move between changelists</span>
+      </div>
+      
+      <!-- 文件列表 -->
+      <div class="git-panel-body">
+        <div class="file-list" id="cl-default">
+          <!-- 目录头 -->
+          <div class="fl-item" style="color:#666;font-size:11px;cursor:pointer" onclick="toggleDir(this)">
+            <span>▼</span>
+            <span class="file-name">auth-system</span>
+          </div>
+          <div class="fl-item" style="padding-left:24px">
+            <span class="idea-icon modified"></span>
+            <span class="file-name">login.js</span>
+            <span class="file-dir">auth-system/</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: login.js')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: login.js')">↩</span>
+            </span>
+          </div>
+          <div class="fl-item" style="padding-left:24px">
+            <span class="idea-icon new"></span>
+            <span class="file-name">register.js</span>
+            <span class="file-dir">auth-system/</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: register.js')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: register.js')">↩</span>
+            </span>
+          </div>
+          
+          <div class="fl-item" style="color:#666;font-size:11px;cursor:pointer" onclick="toggleDir(this)">
+            <span>▼</span>
+            <span class="file-name">桌面运维工程师课程笔记</span>
+          </div>
+          <div class="fl-item" style="padding-left:24px">
+            <span class="idea-icon new"></span>
+            <span class="file-name">第一章.md</span>
+            <span class="file-dir">桌面运维工程师课程笔记/</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: 第一章.md')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: 第一章.md')">↩</span>
+            </span>
+          </div>
+          <div class="fl-item" style="padding-left:24px">
+            <span class="idea-icon new"></span>
+            <span class="file-name">第二章.md</span>
+            <span class="file-dir">桌面运维工程师课程笔记/</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: 第二章.md')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: 第二章.md')">↩</span>
+            </span>
+          </div>
+          
+          <div class="fl-item">
+            <span class="idea-icon modified"></span>
+            <span class="file-name">桌面运维工程师岗位全景指南.md</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: 岗位全景指南.md')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: 岗位全景指南.md')">↩</span>
+            </span>
+          </div>
+          <div class="fl-item">
+            <span class="idea-icon modified"></span>
+            <span class="file-name">软件测试岗位技能分析报告_v2.md</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: 分析报告_v2.md')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: 分析报告_v2.md')">↩</span>
+            </span>
+          </div>
+          <div class="fl-item">
+            <span class="idea-icon new"></span>
+            <span class="file-name">软件测试岗位技能需求分析报告_v2.xlsx</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: 需求分析报告_v2.xlsx')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: 需求分析报告_v2.xlsx')">↩</span>
+            </span>
+          </div>
+          <div class="fl-item">
+            <span class="idea-icon untracked"></span>
+            <span class="file-name">bilingual-system-context.html</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff" onclick="event.stopPropagation();alert('Diff: bilingual-system-context.html')">D</span>
+              <span class="qa-btn" title="Rollback" onclick="event.stopPropagation();alert('Rollback: bilingual-system-context.html')">↩</span>
+            </span>
+          </div>
+        </div>
+        
+        <!-- Bugfix changelist (hidden by default) -->
+        <div class="file-list" id="cl-bugfix" style="display:none">
+          <div class="fl-item">
+            <span class="idea-icon modified"></span>
+            <span class="file-name">auth-system/login.js</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff">D</span>
+              <span class="qa-btn" title="Rollback">↩</span>
+            </span>
+          </div>
+        </div>
+        
+        <!-- Feature changelist (hidden by default) -->
+        <div class="file-list" id="cl-feature" style="display:none">
+          <div class="fl-item">
+            <span class="idea-icon new"></span>
+            <span class="file-name">桌面运维工程师课程笔记/第一章.md</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff">D</span>
+              <span class="qa-btn" title="Rollback">↩</span>
+            </span>
+          </div>
+          <div class="fl-item">
+            <span class="idea-icon new"></span>
+            <span class="file-name">桌面运维工程师课程笔记/第二章.md</span>
+            <span class="quick-actions">
+              <span class="qa-btn" title="Show Diff">D</span>
+              <span class="qa-btn" title="Rollback">↩</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 紧凑提交栏 -->
+      <div class="commit-bar">
+        <input type="text" placeholder="Commit message (Ctrl+Enter to commit)">
+        <button class="btn btn-sm" onclick="alert('Commit 当前 changelist')">Commit</button>
+        <button class="btn btn-sm" onclick="alert('提交并推送')">Commit & Push</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 主区域（模拟编辑器） -->
+<div id="main">
+  <div style="text-align:center">
+    <div style="font-size:36px;margin-bottom:12px">📄</div>
+    <div>编辑器区域 — 点击 Git 文件将在此处打开 Diff 视图</div>
+    <div style="color:#444;font-size:12px;margin-top:6px">D:\tmp</div>
+  </div>
+</div>
+
+<!-- 浮动变体切换器 -->
+<div id="switcher">
+  <button id="prev-btn" onclick="prevVariant()" title="Previous variant">◀</button>
+  <span>
+    <span class="label" id="variant-label">A — IDEA Local Changes</span>
+    <br>
+    <span class="desc" id="variant-desc">文件树 + 状态图标 + 无内联提交</span>
+  </span>
+  <button id="next-btn" onclick="nextVariant()" title="Next variant">▶</button>
+</div>
+
+<script>
+  const VARIANTS = [
+    { id: 'variant-a', label: 'A — IDEA Local Changes', desc: '文件树 + 状态图标 + 无内联提交，Changelist 分组，单击打开 Diff' },
+    { id: 'variant-b', label: 'B — IDEA Commit Dialog', desc: '独立提交对话框风格，带 checkbox 的文件列表，Unversioned Files 分区' },
+    { id: 'variant-c', label: 'C — Changelist + 紧凑提交', desc: '多 Changelist Tab + 紧凑提交栏 + 悬停快速操作按钮' },
+  ];
+  let current = 0;
+  
+  function showVariant(idx) {
+    // 隐藏所有
+    document.querySelectorAll('.variant').forEach(v => v.classList.remove('active'));
+    // 显示当前
+    const el = document.getElementById(VARIANTS[idx].id);
+    if (el) el.classList.add('active');
+    // 更新标签
+    document.getElementById('variant-label').textContent = VARIANTS[idx].label;
+    document.getElementById('variant-desc').textContent = VARIANTS[idx].desc;
+    current = idx;
+  }
+  
+  function nextVariant() { showVariant((current + 1) % VARIANTS.length); }
+  function prevVariant() { showVariant((current - 1 + VARIANTS.length) % VARIANTS.length); }
+  
+  // 键盘快捷键
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prevVariant(); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); nextVariant(); }
+  });
+  
+  // 辅助功能
+  function toggleDir(el) {
+    const chevron = el.querySelector('.chevron');
+    if (chevron) {
+      chevron.textContent = chevron.textContent === '▼' ? '▶' : '▼';
+    }
+    // 切换子元素的显示
+    let next = el.nextElementSibling;
+    while (next && next.classList.contains('ft-file')) {
+      next.style.display = next.style.display === 'none' ? '' : 'none';
+      next = next.nextElementSibling;
+    }
+  }
+  
+  function toggleSection(el) {
+    const chevron = el.querySelector('span:first-child');
+    if (chevron) {
+      chevron.textContent = chevron.textContent === '▼' ? '▶' : '▼';
+    }
+    let next = el.nextElementSibling;
+    while (next && next.classList.contains('cb-file')) {
+      next.style.display = next.style.display === 'none' ? '' : 'none';
+      next = next.nextElementSibling;
+    }
+  }
+  
+  function toggleDirCB(el) {
+    const chevron = el.querySelector('.dir-chevron');
+    if (chevron) {
+      chevron.textContent = chevron.textContent === '▼' ? '▶' : '▼';
+    }
+    // 展开/折叠目录下的子文件
+    let next = el.nextElementSibling;
+    while (next && next.classList.contains('cb-file')) {
+      // 如果遇到另一个目录，停止
+      if (next.classList.contains('cb-dir')) break;
+      next.style.display = next.style.display === 'none' ? '' : 'none';
+      next = next.nextElementSibling;
+    }
+  }
+  
+  function switchCL(el) {
+    document.querySelectorAll('.cl-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    // 切换 changelist 内容
+    const idx = Array.from(el.parentElement.children).indexOf(el);
+    document.querySelectorAll('.variant-c .file-list').forEach((fl, i) => {
+      fl.style.display = i === idx ? '' : 'none';
+    });
+  }
+</script>
+</body>
+</html>

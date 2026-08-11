@@ -196,8 +196,26 @@ export default function App() {
     }
   };
 
-  // 点击文件树中的文件 → 中间区新增/激活预览 tab（单文件）。
-  const handleOpenFile = (relPath: string, fileName: string, root: string) => {
+  // 点击文件树/Git 面板中的文件 → 中间区新增/激活预览 tab（单文件）。
+  // 非文本文件（二进制/不可预览）→ 直接用系统默认程序打开，不创建空 tab。
+  const handleOpenFile = async (relPath: string, fileName: string, root: string) => {
+    try {
+      const res = await pi.fsReadFile(root, relPath);
+      if (res?.isDirectory) {
+        // 目录：用系统默认程序打开（文件管理器），不创建 tab
+        const abs = `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[\\/]+/, '')}`;
+        await pi.fsOpenWithSystem(abs).catch(() => {});
+        return;
+      }
+      if (res?.isBinary) {
+        // 二进制文件（如 exe/pdf/zip 等）无内置预览器，交系统默认程序打开
+        const abs = `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[\\/]+/, '')}`;
+        await pi.fsOpenWithSystem(abs);
+        return;
+      }
+    } catch {
+      // 读取失败（如 ENOENT）降级创建 tab，由 PreviewTab 显示错误提示
+    }
     // 统一收编进 store（openPreview action 封装「已存在则激活、不存在则新增」）。
     // title 由 store 按 fileName 或 path 末段计算，对应用户可见的文件名。
     useTabStore.getState().openPreview(root, relPath, fileName);

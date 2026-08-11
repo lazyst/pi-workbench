@@ -195,6 +195,26 @@ describe('gitBridge — revert / clean', () => {
     expect(r.success).toBe(false);
   });
 
+  it('reverts a staged file in a repo with no commits (fallback to unstage)', async () => {
+    // 无提交（无 HEAD）仓库：git checkout HEAD -- <path> 会报 invalid reference: HEAD
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbridge-nocommit-'));
+    try {
+      gitInit(emptyDir);
+      writeFile(emptyDir, 'new.txt', 'hello');
+      gitAdd(emptyDir, 'new.txt');
+      // 确认已暂存
+      expect(gitRaw(emptyDir, 'status', '--porcelain')).toContain('A  new.txt');
+      // revert 不应报错，应回退为取消暂存
+      const r = await gitRevert(emptyDir, ['new.txt']);
+      expect(r.success).toBe(true);
+      // 文件回到未跟踪状态，工作区文件仍保留
+      expect(gitRaw(emptyDir, 'status', '--porcelain')).toContain('?? new.txt');
+      expect(fileExists(emptyDir, 'new.txt')).toBe(true);
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
   it('cleans untracked files', async () => {
     const r = await gitClean(dir, ['untracked.txt']);
     expect(r.success).toBe(true);

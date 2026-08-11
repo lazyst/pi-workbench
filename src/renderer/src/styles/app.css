@@ -2804,6 +2804,226 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
+/* ── Git IDEA 风格 ── */
+.git-view-idea {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 头部：仓库名 + 分支 */
+.git-idea-header {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  padding: var(--sp-2) var(--sp-2) 0;
+}
+.git-idea-repo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 var(--sp-1);
+}
+.git-idea-repo-icon { font-size: 14px; }
+.git-idea-repo-name {
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 全选/取消栏 */
+.git-idea-select-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.git-idea-change-count { flex: 1; }
+.git-idea-spacer { flex: 1; }
+.git-idea-link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  padding: 0;
+}
+.git-idea-link-btn:hover { text-decoration: underline; }
+.git-idea-sep { color: var(--border); }
+
+/* 文件分区 */
+.git-idea-files {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.git-file-section { }
+.git-file-section-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  letter-spacing: var(--ls-label);
+}
+.git-file-section-title:hover { background: var(--bg-hover); }
+.git-section-chevron { font-size: 9px; width: 12px; color: var(--text-faint); flex-shrink: 0; }
+.git-section-label { flex: 1; }
+.git-section-count {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+.git-file-section-body { }
+.git-section-empty {
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 24px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+/* IDEA 圆点图标 */
+.git-idea-icon {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.git-tree-dir-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.git-idea-icon.modified { background: #4a9eff; }
+.git-idea-icon.new { background: #59a869; }
+.git-idea-icon.deleted { background: #e06c75; }
+.git-idea-icon.untracked { background: #888; }
+.git-idea-icon.conflict { background: #d19a66; }
+
+/* 文件树 */
+.git-tree-dir {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px 2px 8px;
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+.git-tree-dir:hover { background: var(--bg-hover); }
+.git-dir-checkbox { margin-left: 0; }
+.git-tree-chevron { font-size: 9px; width: 12px; color: var(--text-faint); flex-shrink: 0; }
+.git-tree-dir-name { color: var(--text); }
+.git-tree-dir-count { color: var(--text-faint); font-size: var(--fs-xs); }
+
+.git-tree-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px 2px 8px;
+  font-size: var(--fs-xs);
+}
+.git-tree-file:hover { background: var(--bg-hover); }
+.git-file-checkbox {
+  accent-color: var(--accent);
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.git-tree-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: pointer;
+}
+.git-tree-file-name:hover { color: var(--accent); }
+.git-tree-file-dir {
+  font-size: 10px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+/* 底部提交区 */
+.git-idea-commit-area {
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding: var(--sp-2);
+  background: var(--bg-surface);
+}
+.git-idea-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--sp-1) 0;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.git-idea-author-label { flex-shrink: 0; }
+.git-idea-author-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 2px 6px;
+  font-size: var(--fs-xs);
+}
+.git-idea-author-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.git-idea-commit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--sp-1);
+}
+.git-idea-amend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.git-idea-amend input { accent-color: var(--accent); }
+.git-idea-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.git-idea-btn:disabled { opacity: 0.5; cursor: default; }
+.git-idea-btn-commit {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.git-idea-btn-commit:hover:not(:disabled) { filter: brightness(1.1); }
+.git-idea-btn-push {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+.git-idea-btn-push:hover:not(:disabled) { filter: brightness(1.1); }
+
 .git-diff { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
 /* ── Git diff 右侧抽屉 ── */

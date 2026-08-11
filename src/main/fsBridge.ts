@@ -141,6 +141,8 @@ export interface ReadResult {
   size: number;
   isBinary: boolean;
   isImage: boolean;
+  /** 是否为目录（目录无法作为文件读取，需用系统默认程序打开）。 */
+  isDirectory?: boolean;
   /** base64 data URI for images, when the file is an image and within size cap. */
   dataUrl?: string;
 }
@@ -190,6 +192,10 @@ export async function readFile(
 ): Promise<ReadResult> {
   const abs = path.resolve(root, relPath);
   const stat = await fsp.stat(abs);
+  // 目录无法作为文件读取：直接返回 isDirectory 标记，避免抛出 EISDIR 触发 IPC 错误日志。
+  if (stat.isDirectory()) {
+    return { content: '', language: '', size: 0, isBinary: true, isImage: false, isDirectory: true };
+  }
   const name = path.basename(abs);
   const ext = extOf(name);
 

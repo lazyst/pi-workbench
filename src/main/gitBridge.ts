@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +16,46 @@ const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT = 15_000;
 const PATH_TRAVERSAL_RE = /(?:^|[\/\\])\.\.(?:[\/\\]|$)/;
+
+/**
+ * 解码 Git 的 C 风格引用路径（如 `"\346\265\213\350\257\225\346\226\207\344\273\266.txt"`）。
+ * 若未用引号包裹则原样返回（兼容 `-c core.quotepath=false` 的原始 UTF-8 输出）。
+ * 用于 porcelain / name-status 输出中可能出现的转义路径，防止把带引号的字符串误当文件名。
+ */
+function decodeGitPath(p: string): string {
+  if (!p.startsWith('"')) return p;
+  const inner = p.slice(1, -1);
+  const bytes: number[] = [];
+  let i = 0;
+  while (i < inner.length) {
+    const c = inner[i];
+    if (c === '\\' && /^[0-7]/.test(inner[i + 1] ?? '')) {
+      let val = 0;
+      let j = 0;
+      while (j < 3 && /^[0-7]/.test(inner[i + 1 + j] ?? '')) {
+        val = val * 8 + Number(inner[i + 1 + j]);
+        j++;
+      }
+      bytes.push(val);
+      i += 1 + j;
+    } else if (c === '\\') {
+      const map: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "'": 39, '\\': 92 };
+      const next = inner[i + 1];
+      bytes.push(map[next] ?? c.charCodeAt(0));
+      i += 2;
+    } else {
+      if (c.charCodeAt(0) < 0x80) {
+        bytes.push(c.charCodeAt(0));
+      } else {
+        for (const b of new TextEncoder().encode(c)) {
+          bytes.push(b);
+        }
+      }
+      i++;
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
 
 /** Common error-text cleaner: strip ANSI escapes, trim, fallback. */
 function cleanGitError(err: any): string {
@@ -107,7 +148,8 @@ export async function gitStatus(cwd: string): Promise<GitStatus> {
     return { isGit: false, branch: null, additions: 0, deletions: 0, ahead: 0, behind: 0, porcelain: '' };
   }
   try {
-    const porcelain = await git(cwd, ['status', '--porcelain=v1', '-b', '--untracked-files=normal']);
+    // 使用 --untracked-files=all 列出未跟踪目录内的每个文件，使目录在 Git 面板中可展开。
+    const porcelain = await git(cwd, ['-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-b', '--untracked-files=all']);
     const lines = porcelain.split('\n');
     const branchLine = lines[0] ?? '';
     let branch: string | null = null;
@@ -205,7 +247,7 @@ export interface GitFileStatusEntry {
  */
 export async function gitIgnoredPaths(cwd: string): Promise<string[]> {
   try {
-    const out = await git(cwd, ['status', '--ignored', '--short', '--untracked-files=normal']);
+    const out = await git(cwd, ['-c', 'core.quotepath=false', 'status', '--ignored', '--short', '--untracked-files=normal']);
     const paths: string[] = [];
     for (const line of out.split('\n')) {
       if (line.startsWith('!! ')) {
@@ -233,14 +275,15 @@ export async function gitFileStatusMap(cwd: string): Promise<Record<string, GitF
   try {
     // 只运行 git status（不运行 git ls-files --stage 等额外命令，
     // 避免大仓库中列出所有文件造成 CPU 和内存压力）
-    const porcelain = await git(cwd, ['status', '--porcelain=v1', '--untracked-files=normal']);
+    // 使用 --untracked-files=all 列出未跟踪目录内的每个文件，使文件树状态映射完整。
+    const porcelain = await git(cwd, ['-c', 'core.quotepath=false', 'status', '--porcelain=v1', '--untracked-files=all']);
 
     const map: Record<string, GitFileStatusEntry> = {};
     for (const line of porcelain.split('\n')) {
       if (!line.trim()) continue;
       const xy = line.substring(0, 2);
       const pathPart = line.substring(3).trim();
-      const actualPath = pathPart.includes(' -> ') ? pathPart.split(' -> ')[1].trim() : pathPart;
+      const actualPath = decodeGitPath(pathPart.includes(' -> ') ? pathPart.split(' -> ')[1].trim() : pathPart);
 
       const x = xy[0];
       const y = xy[1];
@@ -296,10 +339,10 @@ export async function gitFileStatusMap(cwd: string): Promise<Record<string, GitF
 export async function gitDiff(cwd: string, ref?: string): Promise<string> {
   try {
     if (ref) {
-      return await git(cwd, ['show', '--no-color', ref]);
+      return await git(cwd, ['-c', 'core.quotepath=false', 'show', '--no-color', ref]);
     }
-    const unstaged = await git(cwd, ['diff', '--no-color']);
-    const staged = await git(cwd, ['diff', '--cached', '--no-color']);
+    const unstaged = await git(cwd, ['-c', 'core.quotepath=false', 'diff', '--no-color']);
+    const staged = await git(cwd, ['-c', 'core.quotepath=false', 'diff', '--cached', '--no-color']);
     return (unstaged + '\n' + staged).trim() + '\n';
   } catch {
     return '';
@@ -328,7 +371,7 @@ export interface GitCommitFile {
 
 export async function gitCommitFiles(cwd: string, hash: string): Promise<GitCommitFile[]> {
   try {
-    const output = await git(cwd, ['show', '--name-status', '--no-color', '--format=', hash]);
+    const output = await git(cwd, ['-c', 'core.quotepath=false', 'show', '--name-status', '--no-color', '--format=', hash]);
     const files: GitCommitFile[] = [];
     for (const line of output.split('\n')) {
       const trimmed = line.trim();
@@ -337,9 +380,9 @@ export async function gitCommitFiles(cwd: string, hash: string): Promise<GitComm
       const status = parts[0];
       if (!status || status.startsWith('diff') || status.startsWith('---') || status.startsWith('+++') || status.startsWith('index')) continue;
       if ((status.startsWith('R') || status.startsWith('C')) && parts.length >= 3) {
-        files.push({ status: status[0], path: parts[2], oldPath: parts[1] });
+        files.push({ status: status[0], path: decodeGitPath(parts[2]), oldPath: decodeGitPath(parts[1]) });
       } else if (parts.length >= 2) {
-        files.push({ status, path: parts[1] });
+        files.push({ status, path: decodeGitPath(parts[1]) });
       }
     }
     return files;
@@ -464,7 +507,23 @@ export async function gitRevert(cwd: string, paths: string[]): Promise<GitWriteR
   if (!(await isGitRepo(cwd))) return { success: false, error: 'Not a git repository' };
   if (!paths || paths.length === 0) return { success: false, error: 'No files to revert' };
   const err = validatePaths(cwd, paths); if (err) return { success: false, error: err };
-  return gitTry(cwd, ['checkout', '--', ...paths]);
+  // 无提交（无 HEAD 引用）时，git checkout HEAD -- <path> 会报
+  // "fatal: invalid reference: HEAD"。此时回退为 git reset（取消暂存），
+  // 使已暂存的新文件（A 状态）回到未跟踪状态。
+  let hasHead = true;
+  try {
+    await git(cwd, ['rev-parse', '--verify', 'HEAD'], 3_000);
+  } catch {
+    hasHead = false;
+  }
+  if (hasHead) {
+    // 有 HEAD：同时回退暂存区和工作区到 HEAD。
+    // 已暂存的新文件（A）会被删除（HEAD 中不存在）；未暂存文件效果同
+    // git checkout -- <path>（index == HEAD）。
+    return gitTry(cwd, ['checkout', 'HEAD', '--', ...paths]);
+  }
+  // 无 HEAD：仅取消暂存（文件回到未跟踪状态）。
+  return gitTry(cwd, ['reset', 'HEAD', '--', ...paths]);
 }
 
 /** Delete untracked files. Confirmation required by caller (irreversible). */
@@ -546,6 +605,38 @@ export async function gitRenameBranch(cwd: string, newName: string): Promise<Git
   if (!(await isGitRepo(cwd))) return { success: false, error: 'Not a git repository' };
   if (!newName.trim()) return { success: false, error: 'Branch name is empty' };
   return gitTry(cwd, ['branch', '-m', newName.trim()]);
+}
+
+/** 获取 git user.name（用于提交对话框的 Author 字段）。失败返回 null。 */
+export async function gitConfigUser(cwd: string): Promise<string | null> {
+  try {
+    const out = await git(cwd, ['config', 'user.name']);
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 把路径添加到 .gitignore 中，如果已存在则不重复添加。 */
+export async function gitAddToGitignore(cwd: string, relPath: string, isDir = false): Promise<GitWriteResult> {
+  if (!(await isGitRepo(cwd))) return { success: false, error: 'Not a git repository' };
+  const pattern = isDir && !relPath.endsWith('/') ? relPath + '/' : relPath;
+  const gitignorePath = path.join(cwd, '.gitignore');
+  try {
+    let content = '';
+    if (fs.existsSync(gitignorePath)) {
+      content = fs.readFileSync(gitignorePath, 'utf-8');
+    }
+    const lines = content.split(/\r?\n/);
+    if (lines.some((l) => l.trim() === pattern.trim())) {
+      return { success: true, error: 'Already in .gitignore' };
+    }
+    const addLine = (content.length > 0 && !content.endsWith('\n') ? '\n' : '') + pattern + '\n';
+    fs.writeFileSync(gitignorePath, content + addLine, 'utf-8');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: cleanGitError(err) };
+  }
 }
 
 /** Confirm worktree is clean (no changes that would block a merge/checkout). */

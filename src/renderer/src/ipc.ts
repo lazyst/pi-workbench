@@ -80,6 +80,8 @@ export interface PiApi {
 
   // ── 分支 ──
   gitCurrentBranch(cwd: string): Promise<string | null>;
+  gitConfigUser(cwd: string): Promise<string | null>;
+  gitAddToGitignore(cwd: string, path: string, isDir?: boolean): Promise<{ success: boolean; error?: string }>;
   gitBranches(cwd: string): Promise<Array<{ name: string; current: boolean; remote: boolean; tracking?: string }>>;
   gitCreateBranch(cwd: string, name: string, from?: string): Promise<{ success: boolean; error?: string }>;
   gitCheckout(cwd: string, ref: string, create?: boolean): Promise<{ success: boolean; error?: string }>;

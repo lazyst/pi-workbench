@@ -6,7 +6,7 @@ import {
   gitCurrentBranch, gitBranches, gitCreateBranch, gitCheckout, gitDeleteBranch, gitRenameBranch,
   gitRemotes, gitAddRemote, gitRemoveRemote,
   gitFetch, gitPull, gitPush, gitSync,
-  gitLogAdvanced,
+  gitLogAdvanced, gitConfigUser, gitAddToGitignore,
   type GitCommitOptions, type GitSyncOptions,
 } from '../gitBridge';
 import { getOperationManager, OperationKind } from '../operationManager';
@@ -100,6 +100,12 @@ export function registerGitHandlers(
   // ── 分支 ──
   ipcMain.handle('git:currentBranch', async (_e, req: { cwd: string }) => {
     return await gitCurrentBranch(req.cwd);
+  });
+  ipcMain.handle('git:configUser', async (_e, req: { cwd: string }) => {
+    return await gitConfigUser(req.cwd);
+  });
+  ipcMain.handle('git:addToGitignore', async (_e, req: { cwd: string; path: string; isDir?: boolean }) => {
+    return await gitAddToGitignore(req.cwd, req.path, req.isDir);
   });
   ipcMain.handle('git:branches', async (_e, req: { cwd: string }) => {
     return await gitBranches(req.cwd);

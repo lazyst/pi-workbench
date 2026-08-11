@@ -160,6 +160,9 @@ gitCommitFileDiff: (cwd: string, hash: string, path: string): Promise<{ original
 
   // ── 分支 ──
   gitCurrentBranch: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:currentBranch', { cwd }),
+  gitConfigUser: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:configUser', { cwd }),
+  gitAddToGitignore: (cwd: string, path: string, isDir?: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('git:addToGitignore', { cwd, path, isDir }),
   gitBranches: (cwd: string): Promise<any[]> => ipcRenderer.invoke('git:branches', { cwd }),
   gitCreateBranch: (cwd: string, name: string, from?: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('git:createBranch', { cwd, name, from }),

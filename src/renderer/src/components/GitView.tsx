@@ -1,9 +1,10 @@
-// Git panel — read-only viewer + write operations (stage / unstage / commit / revert / branch / sync)
-// Ported interaction model from VS Code Source Control view.
-// Three groups: Staged Changes, Changes, Untracked Changes.
-// Top: commit message input + branch/sync row.
+// Git panel — IDEA Commit Dialog 风格。
+// 三区：Changes to be committed / Unversioned Files / Modified (not staged)
+// 每个区内的文件按目录组织为可展开的树，每个文件带 checkbox 和 IDEA 彩色圆点图标。
+// 底部：提交信息 + 提交按钮。
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pi } from '../ipc';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 
 // ── Types ──
 
@@ -24,6 +25,14 @@ interface GitResource {
   renameTarget?: string;
 }
 
+interface FileTreeNode {
+  name: string;               // 文件名或目录名
+  path: string;               // 完整相对路径
+  isDir: boolean;
+  status: 'modified' | 'new' | 'deleted' | 'untracked' | 'conflict';
+  children?: FileTreeNode[];  // 目录子节点
+}
+
 interface Props {
   cwd: string;
   onOpenWorkDiff: (cwd: string) => void;
@@ -36,16 +45,49 @@ interface Props {
 
 // ── Porcelain parser ──
 
+function decodeGitPath(p: string): string {
+  if (!p.startsWith('"')) return p;
+  const inner = p.slice(1, -1);
+  const bytes: number[] = [];
+  let i = 0;
+  while (i < inner.length) {
+    const c = inner[i];
+    if (c === '\\' && /^[0-7]/.test(inner[i + 1] ?? '')) {
+      let val = 0;
+      let j = 0;
+      while (j < 3 && /^[0-7]/.test(inner[i + 1 + j] ?? '')) {
+        val = val * 8 + Number(inner[i + 1 + j]);
+        j++;
+      }
+      bytes.push(val);
+      i += 1 + j;
+    } else if (c === '\\') {
+      const map: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "'": 39, '\\': 92 };
+      bytes.push(map[inner[i + 1]] ?? c.charCodeAt(0));
+      i += 2;
+    } else {
+      if (c.charCodeAt(0) < 0x80) {
+        bytes.push(c.charCodeAt(0));
+      } else {
+        for (const b of new TextEncoder().encode(c)) {
+          bytes.push(b);
+        }
+      }
+      i++;
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
 export function parseResources(porcelain: string): GitResource[] {
   const resources: GitResource[] = [];
   for (const line of porcelain.split('\n')) {
     if (!line.trim()) continue;
-    // Skip the ## branch header line (e.g. "## main...origin/main [ahead 3]")
     if (line.startsWith('## ')) continue;
     const xy = line.substring(0, 2);
     const pathPart = line.substring(3).trim();
     const [fromPath, toPath] = pathPart.includes(' -> ') ? pathPart.split(' -> ') : [pathPart, undefined];
-    const actualPath = toPath?.trim() ?? fromPath.trim();
+    const actualPath = decodeGitPath(toPath?.trim() ?? fromPath.trim());
 
     const x = xy[0];
     const y = xy[1];
@@ -55,22 +97,18 @@ export function parseResources(porcelain: string): GitResource[] {
       continue;
     }
 
-    // Conflict detection: U in either XY position indicates a merge conflict
     const isConflict = x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D');
     if (isConflict) {
-      // Show conflict files only in the unstaged group with '!' badge
       resources.push({ path: actualPath, group: 'unstaged', badge: '!' });
       continue;
     }
 
-    // Index (staged) changes
     let stagedBadge = '';
     const xMap: Record<string, string> = { ' ': '', M: 'M', A: 'A', D: 'D', R: 'R', C: 'C', '?': '' };
     if (x !== ' ' && x !== '?') {
       stagedBadge = xMap[x] ?? 'M';
     }
 
-    // Working tree (unstaged) changes
     let unstagedBadge = '';
     const yMap: Record<string, string> = { ' ': '', M: 'M', D: 'D', A: 'A', '?': '' };
     if (y !== ' ' && y !== '?' && y !== '!') {
@@ -82,7 +120,7 @@ export function parseResources(porcelain: string): GitResource[] {
         path: actualPath,
         group: 'staged',
         badge: stagedBadge,
-        renameTarget: toPath?.trim(),
+        renameTarget: toPath ? decodeGitPath(toPath.trim()) : undefined,
       });
     }
     if (unstagedBadge) {
@@ -96,28 +134,261 @@ export function parseResources(porcelain: string): GitResource[] {
   return resources;
 }
 
-// ── UI helpers ──
+// ── 文件树构建 ──
 
-function basename(p: string): string {
-  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
-  return idx >= 0 ? p.slice(idx + 1) : p;
+/** 根据 badge 推导 IDEA 风格的状态分类 */
+function deduceStatus(badge: string): FileTreeNode['status'] {
+  switch (badge) {
+    case 'M': return 'modified';
+    case 'A': case '?': return 'new';
+    case 'D': return 'deleted';
+    case '!': case 'U': return 'conflict';
+    default: return 'untracked';
+  }
 }
 
-function FileIcon({ badge }: { badge: string }) {
-  const icon = badge === 'M' ? '✏️' : badge === 'A' || badge === '?' ? '📄' : badge === 'D' ? '🗑️' : badge === 'R' ? '📎' : badge === '!' ? '⚠️' : '📄';
-  return <span className="git-file-icon">{icon}</span>;
+/** 递归收集目录下所有文件路径。 */
+function getDescendantFiles(node: FileTreeNode): string[] {
+  const files: string[] = [];
+  const walk = (n: FileTreeNode) => {
+    if (!n.isDir) { files.push(n.path); return; }
+    (n.children ?? []).forEach(walk);
+  };
+  walk(node);
+  return files;
 }
 
-function Badge({ badge, group }: { badge: string; group: string }) {
-  const cls = badge === 'M' ? 'git-badge-modified' :
-    badge === 'A' || badge === '?' ? 'git-badge-added' :
-    badge === 'D' ? 'git-badge-deleted' :
-    badge === '!' ? 'git-badge-conflict' : '';
-  return <span className={`git-badge ${cls}`} data-group={group}>{badge}</span>;
+/** 把平铺的 GitResource[] 转为目录树，用于渲染。 */
+export function buildFileTree(resources: GitResource[]): FileTreeNode[] {
+  const root: FileTreeNode[] = [];
+  const dirMap = new Map<string, FileTreeNode>();
+
+  /** 确保目录节点及其所有祖先节点存在，返回该目录节点。 */
+  const ensureDir = (dirPath: string): FileTreeNode | undefined => {
+    if (!dirPath) return undefined;
+    if (dirMap.has(dirPath)) return dirMap.get(dirPath);
+    const dirs = dirPath.split('/');
+    const node: FileTreeNode = {
+      name: dirs[dirs.length - 1] ?? '',
+      path: dirPath,
+      isDir: true,
+      status: 'modified',
+      children: [],
+    };
+    dirMap.set(dirPath, node);
+    const parent = ensureDir(dirs.slice(0, -1).join('/'));
+    if (parent) parent.children?.push(node);
+    else root.push(node);
+    return node;
+  };
+
+  for (const r of resources) {
+    // 路径末尾带 / 表示这是一个目录条目（如 `?? 桌面运维工程师课程笔记/`）。
+    // git status --untracked-files=normal 会把整个未跟踪目录折叠成一个条目，
+    // 不列出内部文件。因此这里创建目录节点（children 为空），但不创建空文件名字节点。
+    if (r.path.endsWith('/')) {
+      ensureDir(r.path.slice(0, -1));
+      continue;
+    }
+
+    const parts = r.path.split('/');
+    const name = parts[parts.length - 1] ?? '';
+    const dirPath = parts.slice(0, -1).join('/');
+
+    // 确保目录节点存在
+    ensureDir(dirPath);
+
+    const fileNode: FileTreeNode = {
+      name,
+      path: r.path,
+      isDir: false,
+      status: deduceStatus(r.badge),
+    };
+
+    if (dirPath) {
+      dirMap.get(dirPath)?.children?.push(fileNode);
+    } else {
+      root.push(fileNode);
+    }
+  }
+
+  // 排序：目录在前，文件在后；各自按名称排序
+  const sortNodes = (nodes: FileTreeNode[]) => {
+    nodes.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
+    for (const n of nodes) {
+      if (n.children) sortNodes(n.children);
+    }
+  };
+  sortNodes(root);
+
+  return root;
 }
+
+// ── UI 组件 ──
 
 function Spinner() {
   return <span className="git-spinner" title="Operation in progress">⟳</span>;
+}
+
+/** IDEA 状态圆点图标 */
+function IdeaIcon({ status }: { status: FileTreeNode['status'] }) {
+  const cls = status === 'modified' ? 'modified' :
+    status === 'new' ? 'new' :
+    status === 'deleted' ? 'deleted' :
+    status === 'conflict' ? 'conflict' : 'untracked';
+  return <span className={`git-idea-icon ${cls}`} />;
+}
+
+/** 文件树节点：目录或文件 */
+function FileTreeRow({
+  node,
+  checkedFiles,
+  onToggleCheck,
+  expandedDirs,
+  onToggleDir,
+  onOpenDiff,
+  onContextMenu,
+  depth = 0,
+}: {
+  node: FileTreeNode;
+  checkedFiles: Set<string>;
+  onToggleCheck: (node: FileTreeNode) => void;
+  expandedDirs: Set<string>;
+  onToggleDir: (path: string) => void;
+  onOpenDiff: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, node: FileTreeNode) => void;
+  depth?: number;
+}) {
+  const indent = depth * 16;
+
+  if (node.isDir) {
+    const descendants = getDescendantFiles(node);
+    const isEmpty = descendants.length === 0;
+    const checkedCount = descendants.filter((f) => checkedFiles.has(f)).length;
+    const allChecked = !isEmpty && checkedCount === descendants.length;
+    const someChecked = checkedCount > 0 && !allChecked;
+    const isExpanded = expandedDirs.has(node.path);
+
+    // 空目录：渲染为文件级条目（无 subpath，checkbox 无级联效果）。
+    if (isEmpty) {
+      return (
+        <div
+          className="git-tree-file"
+          style={{ paddingLeft: 12 + indent }}
+          onContextMenu={(e) => onContextMenu(e, node)}
+        >
+          <input
+            type="checkbox"
+            className="git-file-checkbox"
+            checked={false}
+            onChange={() => onToggleCheck(node)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <span className="git-tree-dir-icon">📁</span>
+          <span className="git-tree-file-name" onClick={() => onOpenDiff(node.path)}>{node.name}</span>
+          <span className="git-tree-file-dir">/</span>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div
+          className="git-tree-dir"
+          style={{ paddingLeft: 12 + indent }}
+          onClick={() => onToggleDir(node.path)}
+          onContextMenu={(e) => onContextMenu(e, node)}
+        >
+          <input
+            type="checkbox"
+            className="git-file-checkbox git-dir-checkbox"
+            checked={allChecked}
+            ref={(el) => { if (el) el.indeterminate = someChecked; }}
+            onChange={() => onToggleCheck(node)}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <span className="git-tree-chevron">{isExpanded ? '▼' : '▶'}</span>
+          <IdeaIcon status={node.status} />
+          <span className="git-tree-dir-name">{node.name}</span>
+          <span className="git-tree-dir-count">/</span>
+        </div>
+        {isExpanded && node.children?.map((child) => (
+          <FileTreeRow
+            key={child.path}
+            node={child}
+            checkedFiles={checkedFiles}
+            onToggleCheck={onToggleCheck}
+            expandedDirs={expandedDirs}
+            onToggleDir={onToggleDir}
+            onOpenDiff={onOpenDiff}
+            onContextMenu={onContextMenu}
+            depth={depth + 1}
+          />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <div
+      className="git-tree-file"
+      style={{ paddingLeft: 12 + indent }}
+      onContextMenu={(e) => onContextMenu(e, node)}
+    >
+      <input
+        type="checkbox"
+        className="git-file-checkbox"
+        checked={checkedFiles.has(node.path)}
+        onChange={() => onToggleCheck(node)}
+        onClick={(e) => e.stopPropagation()}
+      />
+      <IdeaIcon status={node.status} />
+      <span className="git-tree-file-name" onClick={() => onOpenDiff(node.path)}>{node.name}</span>
+      {node.path.includes('/') && (
+        <span className="git-tree-file-dir">{node.path.substring(0, node.path.lastIndexOf('/') + 1)}</span>
+      )}
+    </div>
+  );
+}
+
+/** 可折叠的文件分区 */
+function FileSection({
+  title,
+  count,
+  children,
+  defaultExpanded = true,
+  sectionKey,
+  expanded,
+  onToggle,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+  defaultExpanded?: boolean;
+  sectionKey: string;
+  expanded: Record<string, boolean>;
+  onToggle: (key: string) => void;
+}) {
+  const isExpanded = expanded[sectionKey] ?? defaultExpanded;
+  return (
+    <div className="git-file-section">
+      <div className="git-file-section-title" onClick={() => onToggle(sectionKey)}>
+        <span className="git-section-chevron">{isExpanded ? '▼' : '▶'}</span>
+        <span className="git-section-label">{title}</span>
+        <span className="git-section-count">{count}</span>
+      </div>
+      {isExpanded && (
+        <div className="git-file-section-body">
+          {count === 0 ? (
+            <div className="git-section-empty">No {title.toLowerCase()}</div>
+          ) : children}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Main component ──
@@ -126,16 +397,10 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
   // ── State ──
   const [branches, setBranches] = useState<Array<{ name: string; current: boolean; remote: boolean }>>([]);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  // 展开的提交 hash → 该提交的变更文件列表
-  const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
-  const [commitFiles, setCommitFiles] = useState<Array<{ status: string; path: string; oldPath?: string }>>([]);
-  const [commitFilesLoading, setCommitFilesLoading] = useState(false);
   const [status, setStatus] = useState<{
     isGit: boolean; branch: string | null; additions: number; deletions: number;
     ahead: number; behind: number; porcelain: string;
   } | null>(null);
-  const [log, setLog] = useState<LogEntry[]>([]);
   const [resources, setResources] = useState<GitResource[]>([]);
   const [commitMsg, setCommitMsg] = useState('');
   const [commitError, setCommitError] = useState<string | null>(null);
@@ -143,36 +408,54 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
   const [isCommitting, setIsCommitting] = useState(false);
   const [activeOps, setActiveOps] = useState<Set<string>>(new Set());
 
-  // Expand/collapse groups
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    staged: true, unstaged: true, untracked: true,
+  // 展开/折叠的文件分区
+  const [sectionExpanded, setSectionExpanded] = useState<Record<string, boolean>>({
+    staged: true, untracked: true, unstaged: true,
   });
+
+  // 展开/折叠的目录
+  const [dirExpanded, setDirExpanded] = useState<Set<string>>(new Set());
+
+  // 选中的文件路径 → checkbox 状态
+  const [checkedFiles, setCheckedFiles] = useState<Set<string>>(new Set());
+
+  // 作者
+  const [author, setAuthor] = useState('');
+
+  // ── 衍生数据 ──
+
+  const staged = resources.filter((r) => r.group === 'staged');
+  const unstaged = resources.filter((r) => r.group === 'unstaged');
+  const untracked = resources.filter((r) => r.group === 'untracked');
+
+  // 仅未暂存的 modified 文件（排除已暂存的）
+  const unstagedModified = unstaged.filter((r) => r.badge === 'M' || r.badge === 'D');
+
+  const stagedTree = buildFileTree(staged);
+  const untrackedTree = buildFileTree(untracked);
+  const unstagedTree = buildFileTree(unstagedModified);
+
+  const canCommit = commitMsg.trim().length > 0 && checkedFiles.size > 0 && !isCommitting;
 
   // ── Data fetching ──
 
   const refresh = useCallback(async () => {
-    if (!cwd) { setStatus(null); setLog([]); setResources([]); return; }
+    if (!cwd) { setStatus(null); setResources([]); return; }
     try {
       const s = await pi.gitStatus(cwd);
       setStatus(s);
       if (s.isGit) {
-        const [l, br] = await Promise.all([
-          pi.gitLog(cwd, 50),
-          pi.gitBranches(cwd).catch(() => []),
-        ]);
-        setLog(l);
+        const br = await pi.gitBranches(cwd).catch(() => []);
         setBranches(br);
         setResources(parseResources(s.porcelain ?? ''));
       } else {
-        setLog([]);
         setResources([]);
       }
     } catch {
-      setStatus(null); setLog([]); setResources([]);
+      setStatus(null); setResources([]);
     }
   }, [cwd]);
 
-  // Debounced refresh (800ms + throttle)
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshQueued = useRef(false);
   const scheduleRefresh = useCallback(() => {
@@ -196,7 +479,6 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
     };
   }, [cwd, refresh, scheduleRefresh]);
 
-  // Subscribe to operation state changes
   useEffect(() => {
     if (!cwd) return;
     const unsub = pi.onGitOperation?.((payload) => {
@@ -207,73 +489,155 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
         else next.delete(payload.kind);
         return next;
       });
-      // When a write operation finishes, refresh
-      if (!payload.running) {
-        scheduleRefresh();
-      }
+      if (!payload.running) scheduleRefresh();
     });
     return () => unsub?.();
   }, [cwd, scheduleRefresh]);
 
-  // ── Write operations ──
+  // 初始化 author
+  useEffect(() => {
+    if (!cwd) return;
+    pi.gitConfigUser?.(cwd).then((name) => {
+      if (name) setAuthor(name);
+    }).catch(() => {});
+  }, [cwd]);
 
-  const handleStage = useCallback(async (path: string) => {
-    const r = await pi.gitStage(cwd, [path]);
-    if (!r.success) console.error('stage failed:', r.error);
-    scheduleRefresh();
-  }, [cwd, scheduleRefresh]);
+  // ── 操作 ──
 
-  const handleStageAll = useCallback(async () => {
-    const r = await pi.gitStage(cwd, undefined, true);
-    if (!r.success) console.error('stage all failed:', r.error);
-    scheduleRefresh();
-  }, [cwd, scheduleRefresh]);
+  const handleToggleSection = useCallback((key: string) => {
+    setSectionExpanded((p) => ({ ...p, [key]: !p[key] }));
+  }, []);
 
-  const handleUnstage = useCallback(async (path: string) => {
-    const r = await pi.gitUnstage(cwd, [path]);
-    if (!r.success) console.error('unstage failed:', r.error);
-    scheduleRefresh();
-  }, [cwd, scheduleRefresh]);
+  const handleToggleDir = useCallback((path: string) => {
+    setDirExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
 
-  const handleRevert = useCallback(async (path: string) => {
-    const r = await pi.gitRevert(cwd, [path]);
-    if (!r.success) console.error('revert failed:', r.error);
-    scheduleRefresh();
-  }, [cwd, scheduleRefresh]);
+  const handleToggleCheck = useCallback((node: FileTreeNode) => {
+    setCheckedFiles((prev) => {
+      const next = new Set(prev);
+      if (node.isDir) {
+        // 目录：全选/全不选其所有后代文件。若全部已选则取消，否则全选。
+        const files = getDescendantFiles(node);
+        const allChecked = files.length > 0 && files.every((f) => next.has(f));
+        files.forEach((f) => {
+          if (allChecked) next.delete(f);
+          else next.add(f);
+        });
+        return next;
+      }
+      if (next.has(node.path)) next.delete(node.path);
+      else next.add(node.path);
+      return next;
+    });
+  }, []);
 
-  const handleClean = useCallback(async (path: string) => {
-    if (!window.confirm(`Delete untracked file "${path}"? This cannot be undone.`)) return;
-    const r = await pi.gitClean(cwd, [path]);
-    if (!r.success) console.error('clean failed:', r.error);
-    scheduleRefresh();
-  }, [cwd, scheduleRefresh]);
-
-  // 点击 Git 文件行 → 在中间区打开该文件（VS Code Source Control 行为）。
-  const handleOpenResource = useCallback((path: string) => {
-    onOpenFile?.(path, basename(path), cwd);
+  const handleOpenDiff = useCallback((path: string) => {
+    onOpenFile?.(path, path.split('/').pop() ?? path, cwd);
   }, [onOpenFile, cwd]);
 
-  const handleCommit = useCallback(async (opts?: { all?: boolean; amend?: boolean; signOff?: boolean }) => {
+  // ── 右键菜单 ──
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, node: FileTreeNode) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const items: ContextMenuItem[] = [
+      {
+        label: '显示差异',
+        onClick: () => handleOpenDiff(node.path),
+      },
+      {
+        label: '撤销更改',
+        danger: true,
+        onClick: () => {
+          void pi.gitRevert(cwd, [node.path]).then((r) => {
+            if (!r.success) alert(`撤销失败: ${r.error ?? '未知错误'}`);
+            scheduleRefresh();
+          });
+        },
+      },
+    ];
+    // 非文件节点（文件或空目录）才可添加 .gitignore
+    if (!node.isDir || !node.children || node.children.length === 0) {
+      items.push({
+        label: '添加到 .gitignore',
+        onClick: () => {
+          void pi.gitAddToGitignore(cwd, node.path, node.isDir).then((r) => {
+            if (!r.success && r.error !== 'Already in .gitignore') alert(`添加到 .gitignore 失败: ${r.error}`);
+            scheduleRefresh();
+          });
+        },
+      });
+    }
+    items.push(
+      { label: '', kind: 'separator' },
+      {
+        label: '复制路径',
+        onClick: () => {
+          const abs = `${cwd.replace(/[\\/]+$/, '')}/${node.path.replace(/^[\\/]+/, '')}`;
+          void navigator.clipboard.writeText(abs).catch(() => {});
+        },
+      },
+      {
+        label: '复制相对路径',
+        onClick: () => void navigator.clipboard.writeText(node.path).catch(() => {}),
+      },
+      { label: '', kind: 'separator' },
+      {
+        label: '在文件管理器中显示',
+        onClick: () => {
+          const abs = `${cwd.replace(/[\\/]+$/, '')}/${node.path.replace(/^[\\/]+/, '')}`;
+          void pi.fsShowInFolder(abs).catch(() => {});
+        },
+      },
+    );
+    if (!node.isDir) {
+      items.push({
+        label: '用系统默认程序打开',
+        onClick: () => {
+          const abs = `${cwd.replace(/[\\/]+$/, '')}/${node.path.replace(/^[\\/]+/, '')}`;
+          void pi.fsOpenWithSystem(abs).catch(() => {});
+        },
+      });
+    }
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  }, [cwd, handleOpenDiff, scheduleRefresh]);
+
+  const handleCommit = useCallback(async (push = false) => {
     const msg = commitMsg.trim();
-    if (!msg && !opts?.amend) { setCommitError('Commit message is empty'); return; }
+    if (!msg) { setCommitError('Commit message is empty'); return; }
+    if (checkedFiles.size === 0) { setCommitError('No files selected'); return; }
     setCommitError(null);
     setCommitSuccess(false);
     setIsCommitting(true);
     try {
-      const r = await pi.gitCommit(cwd, msg, { ...opts, allowEmptyMessage: true, allowEmpty: true });
-      if (r.success) {
+      // 先取消暂存所有，再暂存选中的文件，然后提交
+      await pi.gitUnstage(cwd);
+      const r = await pi.gitStage(cwd, Array.from(checkedFiles));
+      if (!r.success) { setCommitError(r.error ?? 'Stage failed'); setIsCommitting(false); return; }
+      const cr = await pi.gitCommit(cwd, msg, { allowEmptyMessage: true, allowEmpty: true });
+      if (cr.success) {
         setCommitMsg('');
+        setCheckedFiles(new Set());
         setCommitSuccess(true);
         setTimeout(() => setCommitSuccess(false), 2000);
+        if (push) {
+          void pi.gitPush(cwd);
+        }
       } else {
-        setCommitError(r.error ?? 'Commit failed');
+        setCommitError(cr.error ?? 'Commit failed');
       }
     } catch (e: any) {
       setCommitError(e.message ?? 'Commit failed');
     } finally {
       setIsCommitting(false);
     }
-  }, [cwd, commitMsg]);
+  }, [cwd, commitMsg, checkedFiles]);
 
   const handleCheckout = useCallback(async (ref: string) => {
     const r = await pi.gitCheckout(cwd, ref);
@@ -281,47 +645,30 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
     else scheduleRefresh();
   }, [cwd, scheduleRefresh]);
 
-  // 展开/折叠提交，获取变更文件列表
-  const handleToggleCommit = useCallback(async (hash: string) => {
-    if (expandedCommit === hash) {
-      setExpandedCommit(null);
-      setCommitFiles([]);
-      return;
-    }
-    setExpandedCommit(hash);
-    setCommitFilesLoading(true);
-    try {
-      const files = await pi.gitCommitFiles(cwd, hash);
-      setCommitFiles(files);
-    } catch {
-      setCommitFiles([]);
-    } finally {
-      setCommitFilesLoading(false);
-    }
-  }, [cwd, expandedCommit]);
+  const handleSelectAll = useCallback(() => {
+    const allPaths = new Set<string>();
+    const collect = (nodes: FileTreeNode[]) => {
+      for (const n of nodes) {
+        if (!n.isDir) allPaths.add(n.path);
+        if (n.children) collect(n.children);
+      }
+    };
+    collect(stagedTree);
+    collect(untrackedTree);
+    collect(unstagedTree);
+    setCheckedFiles(allPaths);
+  }, [stagedTree, untrackedTree, unstagedTree]);
 
-  // 点击提交文件 → 打开该文件的 diff tab
-  const handleOpenCommitFile = useCallback((hash: string, path: string) => {
-    onOpenCommitFile?.(cwd, hash, path);
-  }, [cwd, onOpenCommitFile]);
+  const handleDeselectAll = useCallback(() => {
+    setCheckedFiles(new Set());
+  }, []);
 
-  // ── Derived data ──
-
-  const staged = resources.filter((r) => r.group === 'staged');
-  const unstaged = resources.filter((r) => r.group === 'unstaged');
-  const untracked = resources.filter((r) => r.group === 'untracked');
-
-  const hasStaged = staged.length > 0;
-  const hasChanges = unstaged.length > 0 || untracked.length > 0;
-  const canCommit = (commitMsg.trim().length > 0 || hasStaged) && !isCommitting;
-
-  // Branch picker
+  // ── Branch picker ──
   const branchPickerRef = useRef<HTMLDivElement>(null);
   const branchToggleRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!showBranchPicker) return;
     const handler = (e: MouseEvent) => {
-      // 排除点击分支切换按钮本身（由 onClick 的 toggle 逻辑处理）
       if (branchToggleRef.current && branchToggleRef.current.contains(e.target as Node)) return;
       if (branchPickerRef.current && !branchPickerRef.current.contains(e.target as Node)) {
         setShowBranchPicker(false);
@@ -333,14 +680,6 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
 
   const [newBranchName, setNewBranchName] = useState('');
 
-  // Filter log by search query
-  const filteredLog = searchQuery.trim()
-    ? log.filter((e) =>
-        e.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        e.author.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : log;
-
   // ── Render ──
 
   if (!status) {
@@ -350,150 +689,55 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
     return <div className="git-empty">Not a git repository: {cwd}</div>;
   }
 
-  // ── Group helpers ──
-
-  function renderGroup(title: string, key: string, items: GitResource[], opts: {
-    showStage?: boolean; showUnstage?: boolean; showRevert?: boolean; showClean?: boolean;
-    emptyText?: string;
-  }) {
-    const isExpanded = expanded[key] ?? true;
-    const toggle = () => setExpanded((p) => ({ ...p, [key]: !p[key] }));
-    const actionIcon = opts.showStage ? '+' : opts.showUnstage ? '−' : '';
-    const actionTitle = opts.showStage ? 'Stage All' : opts.showUnstage ? 'Unstage All' : '';
-
-    let onAction: (() => void) | undefined;
-    if (opts.showStage && items.length > 0) onAction = () => {
-      void pi.gitStage(cwd, items.map((i) => i.path));
-      scheduleRefresh();
-    };
-    if (opts.showUnstage && items.length > 0) onAction = () => {
-      void pi.gitUnstage(cwd, items.map((i) => i.path));
-      scheduleRefresh();
-    };
-
-    return (
-      <div className="git-group">
-        <div className="git-group-title" onClick={toggle}>
-          <span className="git-group-chevron">{isExpanded ? '▼' : '▶'}</span>
-          <span className="git-group-label">{title}</span>
-          <span className="git-group-count">{items.length}</span>
-          {onAction && (
-            <button className="git-group-action" onClick={(e) => { e.stopPropagation(); onAction!(); }} title={actionTitle}>
-              {actionIcon}
-            </button>
-          )}
-        </div>
-        {isExpanded && (
-          <div className="git-group-body">
-            {items.length === 0 && <div className="git-group-empty">{opts.emptyText ?? 'No changes'}</div>}
-            {items.map((r) => (
-              <div className="git-resource-row" key={r.path + r.group} onClick={() => handleOpenResource(r.path)}>
-                <Badge badge={r.badge} group={r.group} />
-                <span className="git-resource-path" title={r.path}>{r.path}</span>
-                {r.renameTarget && <span className="git-rename-arrow">→ {r.renameTarget}</span>}
-                <div className="git-resource-actions">
-                  {opts.showStage && (
-                    <button className="git-resource-btn" onClick={() => handleStage(r.path)} title="Stage">+</button>
-                  )}
-                  {opts.showUnstage && (
-                    <button className="git-resource-btn" onClick={() => handleUnstage(r.path)} title="Unstage">−</button>
-                  )}
-                  {opts.showRevert && (
-                    <button className="git-resource-btn git-resource-btn-danger" onClick={() => handleRevert(r.path)} title="Revert changes">↩</button>
-                  )}
-                  {opts.showClean && (
-                    <button className="git-resource-btn git-resource-btn-danger" onClick={() => handleClean(r.path)} title="Delete file">✕</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
+  const allCount = staged.length + untracked.length + unstagedModified.length;
 
   return (
-    <div className="git-view">
-      {/* Commit input box */}
-      <div className="git-commit-box">
-        <textarea
-          className="git-commit-input"
-          placeholder="Message (Ctrl+Enter to commit)"
-          value={commitMsg}
-          onChange={(e) => { setCommitMsg(e.target.value); setCommitError(null); }}
-          onKeyDown={(e) => {
-            if (e.ctrlKey && e.key === 'Enter') {
-              e.preventDefault();
-              handleCommit({ all: !hasStaged });
-            }
-          }}
-          rows={2}
-        />
-        {commitError && <div className="git-commit-error">{commitError}</div>}
-        {commitSuccess && <div className="git-commit-success">✓ Committed</div>}
-        <div className="git-commit-toolbar">
-          <button
-            className="git-commit-btn"
-            disabled={!canCommit || activeOps.size > 0}
-            onClick={() => handleCommit({ all: !hasStaged })}
-            title={hasStaged ? 'Commit staged changes' : 'Stage all & commit'}
+    <div className="git-view git-view-idea">
+      {/* 头部：仓库名 + 分支 + 同步 */}
+      <div className="git-idea-header">
+        <div className="git-idea-repo">
+          <span className="git-idea-repo-icon">📦</span>
+          <span className="git-idea-repo-name">{cwd.split(/[\\/]/).pop() ?? cwd}</span>
+        </div>
+        <div className="git-branch-row">
+          <span
+            className="git-branch"
+            ref={branchToggleRef}
+            onClick={() => setShowBranchPicker((v) => !v)}
+            data-testid="git-branch-switch"
           >
-            {isCommitting ? 'Committing...' : hasStaged ? 'Commit' : 'Commit (Stage All)'}
-          </button>
-          <div className="git-commit-options">
-            <button
-              className="git-commit-opt-btn"
-              disabled={!canCommit || activeOps.size > 0}
-              onClick={() => handleCommit({ all: !hasStaged, amend: true })}
-              title="Amend last commit"
-            >
-              Amend
+            {activeOps.has('checkout') ? <Spinner /> : '🌿'} {status.branch ?? '(detached)'}
+          </span>
+          {(status.ahead > 0 || status.behind > 0) && (
+            <span className="git-ahead-behind">
+              {status.ahead > 0 && <span className="git-ahead">↑{status.ahead}</span>}
+              {status.behind > 0 && <span className="git-behind">↓{status.behind}</span>}
+            </span>
+          )}
+          <div className="git-sync-btns">
+            <button className="git-sync-btn" onClick={() => { void pi.gitSync(cwd); scheduleRefresh(); }} title="Sync" disabled={activeOps.size > 0}>
+              {activeOps.has('sync') ? <Spinner /> : '⟳'}
             </button>
-            <button
-              className="git-commit-opt-btn"
-              disabled={!canCommit || activeOps.size > 0}
-              onClick={() => handleCommit({ all: !hasStaged, signOff: true })}
-              title="Commit with sign-off"
-            >
-              Sign-off
+            <button className="git-sync-btn" onClick={() => { void pi.gitPull(cwd); scheduleRefresh(); }} title="Pull" disabled={activeOps.size > 0}>
+              {activeOps.has('pull') ? <Spinner /> : '↓'}
+            </button>
+            <button className="git-sync-btn" onClick={() => { void pi.gitPush(cwd); scheduleRefresh(); }} title="Push" disabled={activeOps.size > 0}>
+              {activeOps.has('push') ? <Spinner /> : '↑'}
+            </button>
+            <button className="git-sync-btn" onClick={() => { void pi.gitFetch(cwd); scheduleRefresh(); }} title="Fetch" disabled={activeOps.size > 0}>
+              {activeOps.has('fetch') ? <Spinner /> : '◎'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Branch + sync row */}
-      <div className="git-branch-row">
-        <span
-          className="git-branch"
-          title={status.branch ?? ''}
-          style={{ cursor: 'pointer' }}
-          ref={branchToggleRef}
-          onClick={() => setShowBranchPicker((v) => !v)}
-          data-testid="git-branch-switch"
-        >
-          {activeOps.has('checkout') ? <Spinner /> : '🌿'} {status.branch ?? '(detached)'}
-        </span>
-        {(status.ahead > 0 || status.behind > 0) && (
-          <span className="git-ahead-behind">
-            {status.ahead > 0 && <span className="git-ahead">↑{status.ahead}</span>}
-            {status.behind > 0 && <span className="git-behind">↓{status.behind}</span>}
-          </span>
-        )}
-        <div className="git-sync-btns">
-          <button className="git-sync-btn" onClick={() => { void pi.gitSync(cwd); scheduleRefresh(); }} title="Sync (fetch + push + pull)" disabled={activeOps.size > 0}>
-            {activeOps.has('sync') ? <Spinner /> : '⟳'}
-          </button>
-          <button className="git-sync-btn" onClick={() => { void pi.gitPull(cwd); scheduleRefresh(); }} title="Pull" disabled={activeOps.size > 0}>
-            {activeOps.has('pull') ? <Spinner /> : '↓'}
-          </button>
-          <button className="git-sync-btn" onClick={() => { void pi.gitPush(cwd); scheduleRefresh(); }} title="Push" disabled={activeOps.size > 0}>
-            {activeOps.has('push') ? <Spinner /> : '↑'}
-          </button>
-          <button className="git-sync-btn" onClick={() => { void pi.gitFetch(cwd); scheduleRefresh(); }} title="Fetch" disabled={activeOps.size > 0}>
-            {activeOps.has('fetch') ? <Spinner /> : '◎'}
-          </button>
-        </div>
+      {/* 全选/取消栏 */}
+      <div className="git-idea-select-bar">
+        <span className="git-idea-change-count">{allCount} file{allCount !== 1 ? 's' : ''} changed</span>
+        <span className="git-idea-spacer" />
+        <button className="git-idea-link-btn" onClick={handleSelectAll}>Select All</button>
+        <span className="git-idea-sep">|</span>
+        <button className="git-idea-link-btn" onClick={handleDeselectAll}>Deselect All</button>
       </div>
 
       {/* Branch picker popup */}
@@ -515,8 +759,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
                 }
               }}
             />
-            <button onClick={() => { void pi.gitCreateBranch(cwd, newBranchName.trim()).then((r) => { if (r?.success) void handleCheckout(newBranchName.trim()); else alert(r?.error ?? 'Create branch failed'); setNewBranchName(''); setShowBranchPicker(false); }); }}>+
-            </button>
+            <button onClick={() => { void pi.gitCreateBranch(cwd, newBranchName.trim()).then((r) => { if (r?.success) void handleCheckout(newBranchName.trim()); else alert(r?.error ?? 'Create branch failed'); setNewBranchName(''); setShowBranchPicker(false); }); }}>+</button>
           </div>
           <div className="git-branch-picker-list">
             {branches.map((b) => (
@@ -533,67 +776,110 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
         </div>
       )}
 
-      {/* Resource groups */}
-      <div className="git-resources">
-        {renderGroup('Staged Changes', 'staged', staged, {
-          showUnstage: true, showRevert: true, emptyText: 'No staged changes',
-        })}
-        {renderGroup('Changes', 'unstaged', unstaged, {
-          showStage: true, showRevert: true, emptyText: 'No changes',
-        })}
-        {renderGroup('Untracked Changes', 'untracked', untracked, {
-          showStage: true, showClean: true, emptyText: 'No untracked files',
-        })}
+      {/* 文件分区 */}
+      <div className="git-idea-files">
+        <FileSection title="Changes to be committed" count={staged.length} sectionKey="staged" expanded={sectionExpanded} onToggle={handleToggleSection}>
+          <FileTreeSection nodes={stagedTree} checkedFiles={checkedFiles} onToggleCheck={handleToggleCheck} expandedDirs={dirExpanded} onToggleDir={handleToggleDir} onOpenDiff={handleOpenDiff} onContextMenu={handleContextMenu} />
+        </FileSection>
+
+        <FileSection title="Unversioned Files" count={untracked.length} sectionKey="untracked" expanded={sectionExpanded} onToggle={handleToggleSection}>
+          <FileTreeSection nodes={untrackedTree} checkedFiles={checkedFiles} onToggleCheck={handleToggleCheck} expandedDirs={dirExpanded} onToggleDir={handleToggleDir} onOpenDiff={handleOpenDiff} onContextMenu={handleContextMenu} />
+        </FileSection>
+
+        <FileSection title="Modified (not staged)" count={unstagedModified.length} sectionKey="unstaged" expanded={sectionExpanded} onToggle={handleToggleSection}>
+          <FileTreeSection nodes={unstagedTree} checkedFiles={checkedFiles} onToggleCheck={handleToggleCheck} expandedDirs={dirExpanded} onToggleDir={handleToggleDir} onOpenDiff={handleOpenDiff} onContextMenu={handleContextMenu} />
+        </FileSection>
       </div>
 
-      {/* Commit history */}
-      <div className="git-section-title">
-        <span>Commit History</span>
-        <input
-          className="git-search-input"
-          placeholder="Search commits…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+      {/* 提交信息区 */}
+      <div className="git-idea-commit-area">
+        <textarea
+          className="git-commit-input"
+          placeholder="Commit message (Ctrl+Enter to commit)"
+          value={commitMsg}
+          onChange={(e) => { setCommitMsg(e.target.value); setCommitError(null); }}
+          onKeyDown={(e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+              e.preventDefault();
+              if (canCommit) handleCommit(false);
+            }
+          }}
+          rows={3}
         />
+        {commitError && <div className="git-commit-error">{commitError}</div>}
+        {commitSuccess && <div className="git-commit-success">✓ Committed</div>}
+        <div className="git-idea-author">
+          <span className="git-idea-author-label">Author:</span>
+          <input
+            className="git-idea-author-input"
+            value={author}
+            onChange={(e) => setAuthor(e.target.value)}
+            placeholder="Author name"
+          />
+        </div>
+        <div className="git-idea-commit-actions">
+          <label className="git-idea-amend">
+            <input type="checkbox" /> Amend
+          </label>
+          <span className="git-idea-spacer" />
+          <button
+            className="git-idea-btn git-idea-btn-commit"
+            disabled={!canCommit || activeOps.size > 0}
+            onClick={() => handleCommit(false)}
+          >
+            {isCommitting ? 'Committing...' : 'Commit'}
+          </button>
+          <button
+            className="git-idea-btn git-idea-btn-push"
+            disabled={!canCommit || activeOps.size > 0}
+            onClick={() => handleCommit(true)}
+          >
+            {isCommitting ? 'Committing...' : 'Commit and Push…'}
+          </button>
+        </div>
       </div>
-      <div className="git-log">
-        {filteredLog.length === 0 && <div className="git-empty">{searchQuery ? 'No matching commits' : 'No commits'}</div>}
-        {filteredLog.map((e) => (
-          <div key={e.hash} className="git-log-item-wrapper">
-            <div
-              className={`git-log-item${expandedCommit === e.hash ? ' expanded' : ''}`}
-              onClick={() => void handleToggleCommit(e.hash)}
-              title={`${e.hash}\n${e.author} · ${e.date}\nClick to expand files`}
-            >
-              <span className="git-log-chevron">{expandedCommit === e.hash ? '▼' : '▶'}</span>
-              <span className="git-log-msg">{e.message}</span>
-              <span className="git-log-meta">{e.author}</span>
-            </div>
-            {/* 展开的变更文件列表 */}
-            {expandedCommit === e.hash && (
-              <div className="git-commit-files">
-                {commitFilesLoading && <div className="git-commit-files-loading">加载中…</div>}
-                {!commitFilesLoading && commitFiles.length === 0 && <div className="git-commit-files-empty">无文件改动</div>}
-                {!commitFilesLoading && commitFiles.map((f) => (
-                  <div
-                    key={f.path}
-                    className="git-commit-file-row"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      handleOpenCommitFile(e.hash, f.path);
-                    }}
-                    title={`${f.status === 'A' ? '新增' : f.status === 'D' ? '删除' : f.status === 'M' ? '修改' : f.status} — ${f.path}`}
-                  >
-                    <span className={`git-commit-file-status git-cfs-${f.status.toLowerCase()}`}>{f.status}</span>
-                    <span className="git-commit-file-path">{f.path}</span>
-                    {f.oldPath && <span className="git-commit-file-old">← {f.oldPath}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+
+      {/* 右键菜单 */}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
     </div>
+  );
+}
+
+// ── 辅助子组件 ──
+
+function FileTreeSection({
+  nodes,
+  checkedFiles,
+  onToggleCheck,
+  expandedDirs,
+  onToggleDir,
+  onOpenDiff,
+  onContextMenu,
+}: {
+  nodes: FileTreeNode[];
+  checkedFiles: Set<string>;
+  onToggleCheck: (node: FileTreeNode) => void;
+  expandedDirs: Set<string>;
+  onToggleDir: (path: string) => void;
+  onOpenDiff: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, node: FileTreeNode) => void;
+}) {
+  return (
+    <>
+      {nodes.map((node) => (
+        <FileTreeRow
+          key={node.path}
+          node={node}
+          checkedFiles={checkedFiles}
+          onToggleCheck={onToggleCheck}
+          expandedDirs={expandedDirs}
+          onToggleDir={onToggleDir}
+          onOpenDiff={onOpenDiff}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+    </>
   );
 }

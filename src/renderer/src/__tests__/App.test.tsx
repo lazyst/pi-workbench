@@ -212,10 +212,10 @@ describe('App', () => {
     // Git 面板异步渲染：等待提交输入框出现（gitStatus 异步返回）
     const rightPanel = document.querySelector('.right-panel') as HTMLElement;
     // 等待 git-view 容器出现（gitStatus 异步完成后渲染）
-    const gitView = await within(rightPanel).findByPlaceholderText('Message (Ctrl+Enter to commit)');
+    const gitView = await within(rightPanel).findByPlaceholderText('Commit message (Ctrl+Enter to commit)');
     expect(gitView).toBeTruthy();
-    // 验证提交历史标题存在
-    expect(within(rightPanel).queryByText('Commit History')).toBeTruthy();
+    // 验证文件变更计数存在
+    expect(within(rightPanel).queryByText('0 files changed')).toBeTruthy();
   });
 
   it('点击文件树文件 → 中间区出现 .preview-tab（预览变 tab）', async () => {
@@ -228,6 +228,8 @@ describe('App', () => {
       getConfig: vi.fn().mockResolvedValue(cfgWithDir),
       // 文件树根目录列出一个文件，点击即触发 onOpenFile → 中间区预览 tab
       fsListDir: vi.fn().mockResolvedValue([{ name: 'README.md', isDir: false, fullPath: cwd + '\\README.md' }]),
+      // handleOpenFile 会先检查文件类型，需要返回非二进制结果
+      fsReadFile: vi.fn().mockResolvedValue({ isBinary: false, isImage: false, content: '# Hello', language: 'markdown', size: 10 }),
     });
     render(<App />);
     await screen.findByText('s1');
@@ -238,7 +240,9 @@ describe('App', () => {
     // 右栏默认在「文件」tab，文件树应渲染出 README.md 节点
     const fileNode = await screen.findByText('README.md');
     fireEvent.click(fileNode);
-    // 中间区出现 .preview-tab（替代旧式 FileDrawer 抽屉）
-    expect(document.querySelector('.center-pane .preview-tab')).toBeTruthy();
+    // 等待 async handleOpenFile 完成后再断言
+    await vi.waitFor(() => {
+      expect(document.querySelector('.center-pane .preview-tab')).toBeTruthy();
+    });
   });
 });
