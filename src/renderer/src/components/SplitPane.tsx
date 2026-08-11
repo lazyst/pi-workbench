@@ -697,7 +697,7 @@ function SplitPaneLeaf({
               </div>
             );
           }
-          return <div key={t.id} className={cls}><DiffTab cwd={t.cwd} commitHash={t.commitHash} filePath={t.filePath} active={tabActive} onBack={() => closeCenterTab(t.id)} /></div>;
+          return <div key={t.id} className={cls}><DiffTab cwd={t.cwd} commitHash={t.commitHash} filePath={t.filePath} singleColumn={(t as import('../store/splitStore').DiffTab).singleColumn} active={tabActive} onBack={() => closeCenterTab(t.id)} /></div>;
         })}
         {/* 空状态 */}
         {leaf.tabs.length === 0 && (

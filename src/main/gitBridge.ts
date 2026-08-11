@@ -730,6 +730,7 @@ export interface GitLogQuery {
   query?: string;        // search message (fuzzy) — matched against subject/body
   author?: string;       // search author
   ref?: string;          // start ref for the log query
+  allBranches?: boolean; // add --all to include all branches
 }
 
 /** Advanced log with optional search and pagination. */
@@ -741,6 +742,7 @@ export async function gitLogAdvanced(cwd: string, q: GitLogQuery = {}): Promise<
     if (q.author) { args.push(`--author=${q.author}`); }
     if (q.query) { args.push(`--grep=${q.query}`); args.push('-i'); args.push('--regexp-ignore-case'); }
     if (q.ref) args.push(q.ref.toString());
+    if (q.allBranches) args.push('--all');
     args.push('--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso');
     const out = await git(cwd, args);
     return out.split('\n').filter((l) => l).map((l) => {

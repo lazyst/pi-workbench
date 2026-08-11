@@ -67,7 +67,7 @@ export interface PiApi {
   // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用）
   gitIgnoredPaths(cwd: string): Promise<string[]>;
   // 高级日志：支持搜索与分页。
-  gitLogAdvanced(cwd: string, query?: { limit?: number; skip?: number; query?: string; author?: string; ref?: string }): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;
+  gitLogAdvanced(cwd: string, query?: { limit?: number; skip?: number; query?: string; author?: string; ref?: string; allBranches?: boolean }): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;
   // 工作区实时监听：订阅某仓库 cwd，变更时回调；返回取消订阅函数。
   gitWatch(cwd: string, cb: () => void): () => void;
 

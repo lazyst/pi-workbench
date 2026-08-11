@@ -15,6 +15,8 @@ interface Props {
   commitHash: string | null;
   /** 指定提交中的某个文件 diff（仅 commitHash 非 null 时有效）。 */
   filePath?: string | null;
+  /** 单栏 unified diff（Monaco inline），false 为左右分栏。 */
+  singleColumn?: boolean;
   /** 是否当前可见 tab（keep-alive：非 active 时父容器用 CSS 隐藏，本组件仍挂载）。 */
   active: boolean;
   /** 点击「返回」的回调。 */
@@ -35,7 +37,7 @@ function detectLanguage(filePath: string): string {
   return map[ext] ?? 'plaintext';
 }
 
-export function DiffTab({ cwd, commitHash, filePath, active, onBack }: Props) {
+export function DiffTab({ cwd, commitHash, filePath, singleColumn, active, onBack }: Props) {
   // 全量 unified diff（用于非文件级 diff 模式）
   const [diff, setDiff] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -128,6 +130,7 @@ export function DiffTab({ cwd, commitHash, filePath, active, onBack }: Props) {
               modified={fileDiff.modified}
               language={detectLanguage(filePath)}
               fileName={filePath}
+              singleColumn={singleColumn}
             />
           )}
         </div>

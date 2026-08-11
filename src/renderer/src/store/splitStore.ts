@@ -51,6 +51,8 @@ export interface DiffTab extends BaseTab {
   commitHash: string | null;
   /** 该提交中的特定文件路径（null 时显示全量 diff）。 */
   filePath?: string | null;
+  /** 单栏 unified diff（对齐 Monaco inline diff），false 为左右分栏。 */
+  singleColumn?: boolean;
 }
 
 export interface IntegratedTerminalTab extends BaseTab {
@@ -472,7 +474,7 @@ export interface SplitStore {
   setActiveCwd: (cwd: string) => void;
   openSession: (req: { key?: string; cwd?: string; name?: string }, leafId?: string) => void;
   openPreview: (root: string, path: string, fileName?: string, leafId?: string) => void;
-  openDiff: (cwd: string, commitHash: string | null, leafId?: string, filePath?: string | null) => void;
+  openDiff: (cwd: string, commitHash: string | null, leafId?: string, filePath?: string | null, singleColumn?: boolean) => void;
   openSessionContent: (sessionKey: string, sessionName: string, cwd: string, leafId?: string) => void;
   openTerminal: (id: string, cwd: string, title: string, leafId?: string) => void;
   selectTab: (id: string) => void;
@@ -698,7 +700,6 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         cwdOrder: ensureCwdOrder(state.cwdOrder, cwdVal),
       };
     }),
-
   openPreview: (root, path, fileName, leafId) =>
     set((state) => {
       const id = `preview:${root}//${path}`;
@@ -786,7 +787,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       };
     }),
 
-  openDiff: (cwd, commitHash, leafId, filePath) =>
+  openDiff: (cwd, commitHash, leafId, filePath, singleColumn) =>
     set((state) => {
       const fp = filePath ?? '';
       const id = `diff:${cwd}//${commitHash ?? 'work'}` + (fp ? `/${fp}` : '');
@@ -848,6 +849,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         cwd,
         commitHash,
         filePath,
+        singleColumn,
       };
 
       const updatedLeaf: SplitLeaf = {

@@ -18,9 +18,11 @@ interface Props {
   language: string;
   /** 文件路径（用于显示文件名）。 */
   fileName?: string;
+  /** 单栏 unified diff（Monaco inline），默认 false 为左右分栏。 */
+  singleColumn?: boolean;
 }
 
-export function MonacoDiffView({ original, modified, language, fileName }: Props) {
+export function MonacoDiffView({ original, modified, language, fileName, singleColumn }: Props) {
   const editorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -63,16 +65,21 @@ export function MonacoDiffView({ original, modified, language, fileName }: Props
             fontFamily: 'var(--font-mono)',
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            renderSideBySide: true,
+            renderSideBySide: !singleColumn,
             readOnly: true,
             wordWrap: 'on',
             renderWhitespace: 'none',
             lineNumbers: 'on',
+            // 对齐主编辑器（MonacoCodeEditor / MonacoDiffEditor）的编辑体验
+            cursorStyle: 'block',
+            renderLineHighlight: 'line',
+            smoothScrolling: true,
+            diffWordWrap: 'on',
             // VS Code 风格 diff 选项
             renderIndicators: true,
             ignoreTrimWhitespace: false,
             diffCodeLens: false,
-            enableSplitViewResizing: true,
+            enableSplitViewResizing: !singleColumn,
           }}
           onMount={handleMount}
         />

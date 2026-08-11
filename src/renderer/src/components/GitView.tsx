@@ -3,8 +3,10 @@
 // 每个区内的文件按目录组织为可展开的树，每个文件带 checkbox 和 IDEA 彩色圆点图标。
 // 底部：提交信息 + 提交按钮。
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { pi } from '../ipc';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { useSplitStore } from '../store/splitStore';
 
 // ── Types ──
 
@@ -77,6 +79,23 @@ function decodeGitPath(p: string): string {
     }
   }
   return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/** 把 ISO 日期格式化为相对时间（中文）。 */
+function formatRelative(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  const diff = Date.now() - d.getTime();
+  if (diff < 0) return '刚刚';
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return '刚刚';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小时前`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day} 天前`;
+  return d.toLocaleDateString('zh-CN');
 }
 
 export function parseResources(porcelain: string): GitResource[] {
@@ -310,7 +329,7 @@ function FileTreeRow({
             onChange={() => onToggleCheck(node)}
             onClick={(e) => e.stopPropagation()}
           />
-          <span className="git-tree-chevron">{isExpanded ? '▼' : '▶'}</span>
+          <span className={`git-chevron${isExpanded ? ' expanded' : ''}`} />
           <IdeaIcon status={node.status} />
           <span className="git-tree-dir-name">{node.name}</span>
           <span className="git-tree-dir-count">/</span>
@@ -376,17 +395,15 @@ function FileSection({
   return (
     <div className="git-file-section">
       <div className="git-file-section-title" onClick={() => onToggle(sectionKey)}>
-        <span className="git-section-chevron">{isExpanded ? '▼' : '▶'}</span>
+        <span className={`git-chevron${isExpanded ? ' expanded' : ''}`} />
         <span className="git-section-label">{title}</span>
         <span className="git-section-count">{count}</span>
       </div>
-      {isExpanded && (
-        <div className="git-file-section-body">
+      <div className={`git-file-section-body${isExpanded ? ' expanded' : ''}`}>
           {count === 0 ? (
             <div className="git-section-empty">No {title.toLowerCase()}</div>
           ) : children}
         </div>
-      )}
     </div>
   );
 }
@@ -421,6 +438,21 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
 
   // 作者
   const [author, setAuthor] = useState('');
+
+  // ── 提交历史（右侧栏 section）──
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [historyAllBranches, setHistoryAllBranches] = useState(false);
+  const [historyCommits, setHistoryCommits] = useState<LogEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  /** 展开的提交 hash（点击提交行展开/收起其改动文件）。 */
+  const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
+  /** 展开提交的改动文件列表。 */
+  const [expandedCommitFiles, setExpandedCommitFiles] = useState<Array<{ status: string; path: string; oldPath?: string }>>([]);
+  const [commitFilesLoading, setCommitFilesLoading] = useState(false);
+
+  // ── 悬浮预览 ──
+  const [hoverCommit, setHoverCommit] = useState<{ x: number; y: number; entry: LogEntry } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── 衍生数据 ──
 
@@ -608,6 +640,73 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
     setMenu({ x: e.clientX, y: e.clientY, items });
   }, [cwd, handleOpenDiff, scheduleRefresh]);
 
+  // ── 提交历史 ──
+  const loadHistory = useCallback((allBranches: boolean) => {
+    setHistoryLoading(true);
+    pi.gitLogAdvanced(cwd, { limit: 50, allBranches }).then((list) => {
+      setHistoryCommits(list);
+    }).finally(() => setHistoryLoading(false));
+  }, [cwd]);
+
+  const handleToggleHistory = useCallback(() => {
+    setHistoryExpanded((v) => {
+      const nv = !v;
+      if (nv && historyCommits.length === 0) {
+        loadHistory(historyAllBranches);
+      }
+      return nv;
+    });
+  }, [historyCommits.length, loadHistory, historyAllBranches]);
+
+  // 切换分支 / 切换全部/当前后刷新提交历史（如果已展开）
+  useEffect(() => {
+    if (historyExpanded) {
+      loadHistory(historyAllBranches);
+    }
+  }, [cwd, status?.branch, historyAllBranches, historyExpanded, loadHistory]);
+
+  const handleToggleCommit = useCallback(async (hash: string) => {
+    if (expandedCommit === hash) {
+      setExpandedCommit(null);
+      // 不立即清空文件列表，让 max-height 过渡平滑收起
+      return;
+    }
+    setExpandedCommit(hash);
+    setExpandedCommitFiles([]);
+    setCommitFilesLoading(true);
+    try {
+      const files = await pi.gitCommitFiles(cwd, hash);
+      setExpandedCommitFiles(files);
+    } catch (e) {
+      setExpandedCommitFiles([]);
+    } finally {
+      setCommitFilesLoading(false);
+    }
+  }, [cwd, expandedCommit]);
+
+  const handleOpenCommitFile = useCallback((hash: string, filePath: string) => {
+    // 从提交日志打开文件 diff → 单栏 unified
+    useSplitStore.getState().openDiff(cwd, hash, undefined, filePath, true);
+  }, [cwd]);
+
+  // ── 悬浮预览 ──
+  const handleHoverEnter = useCallback((e: React.MouseEvent, entry: LogEntry) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      setHoverCommit({ x: e.clientX, y: e.clientY, entry });
+    }, 300);
+  }, []);
+  const handleHoverMove = useCallback((e: React.MouseEvent) => {
+    setHoverCommit((prev) => {
+      if (!prev) return null;
+      return { ...prev, x: e.clientX, y: e.clientY };
+    });
+  }, []);
+  const handleHoverLeave = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHoverCommit(null);
+  }, []);
+
   const handleCommit = useCallback(async (push = false) => {
     const msg = commitMsg.trim();
     if (!msg) { setCommitError('Commit message is empty'); return; }
@@ -700,6 +799,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
           <span className="git-idea-repo-name">{cwd.split(/[\\/]/).pop() ?? cwd}</span>
         </div>
         <div className="git-branch-row">
+          <div className="git-branch-wrap">
           <span
             className="git-branch"
             ref={branchToggleRef}
@@ -714,6 +814,42 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
               {status.behind > 0 && <span className="git-behind">↓{status.behind}</span>}
             </span>
           )}
+          {/* Branch picker popup（绝对定位在分支名下方） */}
+          {showBranchPicker && (
+            <div className="git-branch-picker" ref={branchPickerRef}>
+              <div className="git-branch-picker-create">
+                <input
+                  placeholder="New branch name"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newBranchName.trim()) {
+                      void pi.gitCreateBranch(cwd, newBranchName.trim()).then((r) => {
+                        if (r?.success) void handleCheckout(newBranchName.trim());
+                        else alert(r?.error ?? 'Create branch failed');
+                        setNewBranchName('');
+                        setShowBranchPicker(false);
+                      });
+                    }
+                  }}
+                />
+                <button onClick={() => { void pi.gitCreateBranch(cwd, newBranchName.trim()).then((r) => { if (r?.success) void handleCheckout(newBranchName.trim()); else alert(r?.error ?? 'Create branch failed'); setNewBranchName(''); setShowBranchPicker(false); }); }}>+</button>
+              </div>
+              <div className="git-branch-picker-list">
+                {branches.map((b) => (
+                  <div
+                    key={b.name}
+                    className={`git-branch-item${b.current ? ' git-branch-item-current' : ''}`}
+                    onClick={() => { void handleCheckout(b.name); setShowBranchPicker(false); }}
+                  >
+                    <span className="git-branch-item-name">{b.remote ? '☁' : '⎇'} {b.name}</span>
+                    {b.current && <span className="git-branch-item-current-mark">*</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          </div>
           <div className="git-sync-btns">
             <button className="git-sync-btn" onClick={() => { void pi.gitSync(cwd); scheduleRefresh(); }} title="Sync" disabled={activeOps.size > 0}>
               {activeOps.has('sync') ? <Spinner /> : '⟳'}
@@ -740,42 +876,6 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
         <button className="git-idea-link-btn" onClick={handleDeselectAll}>Deselect All</button>
       </div>
 
-      {/* Branch picker popup */}
-      {showBranchPicker && (
-        <div className="git-branch-picker" ref={branchPickerRef}>
-          <div className="git-branch-picker-create">
-            <input
-              placeholder="New branch name"
-              value={newBranchName}
-              onChange={(e) => setNewBranchName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && newBranchName.trim()) {
-                  void pi.gitCreateBranch(cwd, newBranchName.trim()).then((r) => {
-                    if (r?.success) void handleCheckout(newBranchName.trim());
-                    else alert(r?.error ?? 'Create branch failed');
-                    setNewBranchName('');
-                    setShowBranchPicker(false);
-                  });
-                }
-              }}
-            />
-            <button onClick={() => { void pi.gitCreateBranch(cwd, newBranchName.trim()).then((r) => { if (r?.success) void handleCheckout(newBranchName.trim()); else alert(r?.error ?? 'Create branch failed'); setNewBranchName(''); setShowBranchPicker(false); }); }}>+</button>
-          </div>
-          <div className="git-branch-picker-list">
-            {branches.map((b) => (
-              <div
-                key={b.name}
-                className={`git-branch-item${b.current ? ' git-branch-item-current' : ''}`}
-                onClick={() => { void handleCheckout(b.name); setShowBranchPicker(false); }}
-              >
-                <span className="git-branch-item-name">{b.remote ? '☁' : '⎇'} {b.name}</span>
-                {b.current && <span className="git-branch-item-current-mark">*</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* 文件分区 */}
       <div className="git-idea-files">
         <FileSection title="Changes to be committed" count={staged.length} sectionKey="staged" expanded={sectionExpanded} onToggle={handleToggleSection}>
@@ -789,6 +889,62 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
         <FileSection title="Modified (not staged)" count={unstagedModified.length} sectionKey="unstaged" expanded={sectionExpanded} onToggle={handleToggleSection}>
           <FileTreeSection nodes={unstagedTree} checkedFiles={checkedFiles} onToggleCheck={handleToggleCheck} expandedDirs={dirExpanded} onToggleDir={handleToggleDir} onOpenDiff={handleOpenDiff} onContextMenu={handleContextMenu} />
         </FileSection>
+      </div>
+
+      {/* 提交历史 */}
+      <div className="git-file-section">
+        <div className="git-file-section-title" onClick={handleToggleHistory}>
+          <span className={`git-chevron${historyExpanded ? ' expanded' : ''}`} />
+          <span className="git-section-label">提交历史</span>
+          {historyLoading && <span className="git-spinner" style={{ fontSize: 10, marginLeft: 4 }} />}
+          <span className="git-history-scope" onClick={(e) => { e.stopPropagation(); setHistoryAllBranches((v) => !v); }} title={historyAllBranches ? '当前为全部分支，点击切换为仅当前分支' : '当前为仅当前分支，点击切换为全部分支'}>
+            {historyAllBranches ? '全部' : '当前'}
+          </span>
+        </div>
+          <div className={`git-history-body${historyExpanded ? ' expanded' : ''}`}>
+            {historyCommits.length === 0 && !historyLoading && (
+              <div className="git-section-empty">暂无提交记录</div>
+            )}
+            {historyCommits.map((entry) => (
+              <div
+                key={entry.hash}
+                className="git-history-row"
+                onMouseEnter={(e) => handleHoverEnter(e, entry)}
+                onMouseMove={handleHoverMove}
+                onMouseLeave={handleHoverLeave}
+              >
+                <div
+                  className="git-history-row-main"
+                  onClick={() => handleToggleCommit(entry.hash)}
+                >
+                  <span className={`git-chevron${expandedCommit === entry.hash ? ' expanded' : ''}`} />
+                  <span className="git-history-hash">{entry.hash.slice(0, 7)}</span>
+                  <span className="git-history-msg">{entry.message}</span>
+                  <span className="git-history-date">{formatRelative(entry.date)}</span>
+                </div>
+                <div className={`git-history-files${expandedCommit === entry.hash ? ' expanded' : ''}`}>
+                  {expandedCommit === entry.hash && commitFilesLoading && <div className="git-section-empty" style={{ paddingLeft: 20 }}>加载改动文件…</div>}
+                  {expandedCommit === entry.hash && !commitFilesLoading && expandedCommitFiles.length === 0 && (
+                    <div className="git-section-empty" style={{ paddingLeft: 20 }}>无改动文件</div>
+                  )}
+                  {expandedCommit === entry.hash && !commitFilesLoading && expandedCommitFiles.map((f) => (
+                    <div
+                      key={f.path}
+                      className="git-history-file"
+                      onClick={(e) => { e.stopPropagation(); handleOpenCommitFile(entry.hash, f.path); }}
+                      title="点击查看该文件 diff"
+                    >
+                      <span className={`git-history-file-status git-history-file-status--${f.status.toLowerCase()}`}>
+                        {f.status}
+                      </span>
+                      <span className="git-history-file-path">{f.path}</span>
+                      {f.oldPath && <span className="git-history-file-old">← {f.oldPath}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
       </div>
 
       {/* 提交信息区 */}
@@ -843,6 +999,12 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
+
+      {/* 悬浮预览卡片（Portal 到 body，避免右侧栏 transform 影响 fixed 定位） */}
+      {hoverCommit && createPortal(
+        <CommitHoverPanel entry={hoverCommit.entry} mouseX={hoverCommit.x} mouseY={hoverCommit.y} />,
+        document.body
+      )}
     </div>
   );
 }
@@ -881,5 +1043,40 @@ function FileTreeSection({
         />
       ))}
     </>
+  );
+}
+
+/** 悬浮在提交行上时弹出的紧凑预览卡片（类似右键菜单，跟随鼠标）。 */
+function CommitHoverPanel({ entry, mouseX, mouseY }: { entry: LogEntry; mouseX: number; mouseY: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: 0, top: 0 });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pw = el.offsetWidth;
+    const ph = el.offsetHeight;
+    // 尽在鼠标右侧，放不下则左侧（类似右键菜单）
+    let left = mouseX + 12;
+    if (left + pw > vw - 8) left = mouseX - pw - 12;
+    left = Math.max(8, left);
+    let top = mouseY + 12;
+    if (top + ph > vh - 8) top = mouseY - ph - 12;
+    top = Math.max(8, top);
+    setPos({ left: Math.round(left), top: Math.round(top) });
+  }, [mouseX, mouseY]);
+
+  return (
+    <div ref={ref} className="git-hover-panel" style={{ left: pos.left, top: pos.top }}>
+      <div className="git-hover-panel-hash">{entry.hash.slice(0, 12)}</div>
+      <div className="git-hover-panel-message">{entry.message}</div>
+      <div className="git-hover-panel-meta">
+        <span className="git-hover-panel-author">{entry.author}</span>
+        <span className="git-hover-panel-sep">·</span>
+        <span className="git-hover-panel-date">{entry.date?.replace('T', ' ').replace(/\..*/, '')}</span>
+      </div>
+    </div>
   );
 }
