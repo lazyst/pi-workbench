@@ -4,7 +4,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { TitleBar } from './components/TitleBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
-import { ToastProvider } from './components/Toast';
+import { ToastProvider, useToast } from './components/Toast';
 import { CenterPane } from './components/CenterPane';
 import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
@@ -33,7 +33,7 @@ export default function App() {
   const {
     disk, pinned, addedDirs, appWorkDir, collapsedGroups,
     liveUnsaved, visibleDirs, sessions,
-    handlePickDirectory, handleRemoveDir, handleTogglePin, handleCollapseGroup,
+    handlePickDirectory, handleAddDirectory, handleRemoveDir, handleTogglePin, handleCollapseGroup,
   } = useSidebarState(liveToDisk, virtualSessions, setStatusMap);
   const {
     sidebarWidth, rightPanelWidth, sidebarCollapsed, rightPanelCollapsed,
@@ -41,6 +41,7 @@ export default function App() {
     handleSidebarResize, handleRightPanelResize,
     handleToggleSidebar, handleToggleRightPanel,
   } = usePanelLayout();
+  const { toast } = useToast();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 集成终端实例列表 / 激活状态已收编进 useTabStore（see issue 03）。
   // App 仅保留「终端新建 / 销毁」所需的主进程 IPC 协调逻辑（见下方 handler）。
@@ -496,6 +497,13 @@ export default function App() {
         activeCwd={lastSessionCwd}
         onPickDirectory={(cwd) => { pi.setConfig({ lastActiveDir: cwd }).catch(() => {}); }}
         onOpenFile={handleOpenFile}
+        onAddWorkDir={(absDir: string) => {
+          // 已在左侧工作目录中（含应用工作目录）→ 静默忽略
+          if (visibleDirs.has(absDir)) return;
+          handleAddDirectory(absDir);
+          const dirName = absDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || absDir;
+          toast('已添加工作目录：' + dirName);
+        }}
         onOpenWorkDiff={openWorkDiff}
         onOpenCommit={openCommitDiff}
         onOpenCommitFile={(cwd, hash, filePath) => {

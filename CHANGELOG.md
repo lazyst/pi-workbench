@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.0 (2026-08-12)
+
+### 新功能
+
+- **终端链接：Ctrl+左键在系统默认浏览器打开（修复弹窗回归）** — 修复终端内 http/https 链接点击弹出 xterm 原生 confirm() 确认框、且普通左键即触发的问题。
+  - 根因：pi 会话输出的 Markdown 链接以 OSC 8 超链接序列渲染，此前删除 `linkHandler` 导致 xterm 回退到内置默认 handler（`confirm("Do you want to navigate to ...")` + `window.open`）。
+  - 修复：恢复 `linkHandler`（处理 OSC 8 超链接）并与 WebLinksAddon（处理普通文本 URL）统一到同一套逻辑——仅 **Ctrl/Cmd+左键** 才激活，走 `pi.openExternal`（主进程 `child_process.exec` 在系统默认浏览器打开，无对话框）。
+  - hover 链接时显示「ctrl+左键 打开链接」工具提示（复用 `.terminal-link-tooltip` CSS 类），移出后自动消失。
+  - 支持 `file://` 链接：Ctrl+左键调用系统默认程序打开本地文件。
+  - 抽取 `_handleLinkActivate` / `_showLinkTooltip` / `_hideLinkTooltip` 三个私有方法，两条链接路径（OSC 8 + 普通 URL）共用，去除原先 WebLinksAddon 与 linkHandler 间重复的实现。
+
+- **文件树目录右键「添加为工作目录」** — 在右侧栏文件树的目录右键菜单中新增「添加为工作目录」，点击后把该目录的绝对路径加入左侧侧边栏的工作目录分组（含无会话的空分组），并持久化到 config `addedDirs`。
+  - 去重：目标目录已在左侧显示（含「应用工作目录」，即 `visibleDirs`）时静默忽略，不重复添加、不弹提示。
+  - 成功添加后弹出 Toast「已添加工作目录：<目录名>」。
+  - `useSidebarState` 新增按路径添加的 `handleAddDirectory`，原系统对话框选择的 `handlePickDirectory` 复用同一逻辑。
+
+
 ## v1.1.0 (2026-08-11)
 
 ### 新功能

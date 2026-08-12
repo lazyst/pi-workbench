@@ -1128,11 +1128,63 @@ export class XtermTerminal implements LiveTerminal {
     }).catch(() => { /* fire-and-forget：重放失败不影响主流程 */ });
   }
 
-  /** 加载 WebLinksAddon（@xterm/addon-web-links）：检测终端输出中的 URL 并使其可点击。
-   * 鼠标悬停时显示下划线，Ctrl+click 在系统浏览器中打开。
+  /** 统一的链接激活逻辑：仅 Ctrl/Cmd+左键才激活，按 scheme 分发打开。
+   * 供 WebLinksAddon（普通 URL）与 Terminal linkHandler（OSC 8 超链接）共用。 */
+  private _handleLinkActivate(event: MouseEvent, url: string): void {
+    // 检查修饰键（Ctrl/Cmd+click 才激活）
+    if (!event || !(event.ctrlKey || event.metaKey)) return;
+    // 提取 scheme 判断类型
+    const colonIdx = url.indexOf(':');
+    if (colonIdx === -1) return;
+    const scheme = url.substring(0, colonIdx);
+    // file:// 链接：走文件打开
+    if (scheme === 'file') {
+      const path = decodeURIComponent(url.slice('file://'.length));
+      if (this.onOpenFile) {
+        this.onOpenFile(path);
+      } else {
+        this.pi.fsOpenWithSystem?.(path).catch(() => {});
+      }
+      return;
+    }
+    // http/https/mailto 等：走 pi.openExternal（主进程 child_process.exec 打开默认浏览器）
+    this.pi.openExternal(url).catch(() => {});
+  }
+
+  /** 链接 hover 提示：显示「ctrl+左键 打开链接」工具提示（复用 .terminal-link-tooltip CSS 类）。 */
+  private _showLinkTooltip(event: MouseEvent): void {
+    const doc = document;
+    const existing = doc.querySelector('.terminal-link-tooltip');
+    if (existing) existing.remove();
+
+    const tooltip = doc.createElement('div');
+    tooltip.className = 'terminal-link-tooltip';
+    tooltip.textContent = 'ctrl+左键 打开链接';
+    tooltip.style.left = `${event.clientX}px`;
+    tooltip.style.top = `${event.clientY - 28}px`;
+    doc.body.appendChild(tooltip);
+    requestAnimationFrame(() => {
+      tooltip.style.opacity = '1';
+    });
+  }
+
+  /** 链接 hover 离开：移除工具提示。 */
+  private _hideLinkTooltip(): void {
+    const tooltip = document.querySelector('.terminal-link-tooltip');
+    if (tooltip) tooltip.remove();
+  }
+
+  /** 加载 WebLinksAddon（@xterm/addon-web-links）：检测终端输出中的普通 URL 并使其可点击。
+   * 鼠标悬停时显示下划线和「ctrl+左键」工具提示，Ctrl+click 在系统默认浏览器中打开。
    * 返回反注册函数（unmount 时调用）。 */
   private _loadWebLinksAddon(term: Terminal): { dispose: () => void } {
-    const addon = new WebLinksAddon();
+    const addon = new WebLinksAddon(
+      (event: MouseEvent, url: string) => this._handleLinkActivate(event, url),
+      {
+        hover: (event: MouseEvent) => this._showLinkTooltip(event),
+        leave: () => this._hideLinkTooltip(),
+      },
+    );
     term.loadAddon(addon);
     return addon;
   }
@@ -1244,65 +1296,15 @@ export class XtermTerminal implements LiveTerminal {
       // 后者在模块加载时求值，此时 paint() 尚未执行，导致所有变体都捕获了默认暗色值。
       theme: getTermTheme(getThemeFamily(), getTheme()),
       // 链接处理器（对齐 VS Code TerminalLinkManager 的 linkHandler）：
-      // 拦截 xterm 原生 OSC 8 超链接（如 pi 会话中 AI 输出的 Markdown 链接），
-      // 防止 xterm 默认行为弹安全对话框，改为走 pi.openExternal。
+      // 拦截 xterm 原生 OSC 8 超链接（pi 会话中 AI 输出的 Markdown 链接被渲染为
+      // OSC 8 序列）。必须提供此 handler，否则 xterm 默认使用 confirm() 弹窗
+      // （见 xterm 源码 Hn 函数）。activate/hover/leave 与 WebLinksAddon 共用
+      // 同一套逻辑（_handleLinkActivate / _showLinkTooltip / _hideLinkTooltip）。
       linkHandler: {
         allowNonHttpProtocols: true,
-        activate: (event: any, text: string) => {
-          // 检查修饰键（Ctrl/Cmd+click 才激活）
-          if (!event || !(event.ctrlKey || event.metaKey)) return;
-          // 提取 scheme 判断类型
-          const colonIdx = text.indexOf(':');
-          if (colonIdx === -1) return;
-          const scheme = text.substring(0, colonIdx);
-          // file:// 链接：走文件打开（忽略安全警告）
-          if (scheme === 'file') {
-            const path = decodeURIComponent(text.slice('file://'.length));
-            if (this.onOpenFile) {
-              this.onOpenFile(path);
-            } else {
-              this.pi.fsOpenWithSystem?.(path).catch(() => {});
-            }
-            return;
-          }
-          // http/https/mailto 等：走 pi.openExternal（已改用 child_process.exec）
-          this.pi.openExternal(text).catch(() => {});
-        },
-        hover: (event: any, text: string, range: any) => {
-          // 显示工具提示（对齐 linkProvider 的 buildLink hover 行为）
-          const doc = document;
-          const existing = doc.querySelector('.terminal-link-tooltip');
-          if (existing) existing.remove();
-
-          const tooltipEl = doc.createElement('div');
-          tooltipEl.className = 'terminal-link-tooltip';
-          tooltipEl.textContent = 'Ctrl+click 打开链接';
-          tooltipEl.style.cssText = `
-            position: fixed;
-            left: ${event.clientX}px;
-            top: ${event.clientY - 28}px;
-            background: var(--bg-over, #2d2d2d);
-            color: var(--text, #fff);
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            pointer-events: none;
-            z-index: 1000;
-            white-space: nowrap;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            opacity: 0;
-            transition: opacity 0.15s ease;
-          `;
-          doc.body.appendChild(tooltipEl);
-          requestAnimationFrame(() => {
-            tooltipEl.style.opacity = '1';
-          });
-        },
-        leave: () => {
-          // 移除工具提示
-          const tooltip = document.querySelector('.terminal-link-tooltip');
-          if (tooltip) tooltip.remove();
-        },
+        activate: (event: MouseEvent, text: string) => this._handleLinkActivate(event, text),
+        hover: (event: MouseEvent) => this._showLinkTooltip(event),
+        leave: () => this._hideLinkTooltip(),
       },
     } as any);
     const fit = new FitAddon();

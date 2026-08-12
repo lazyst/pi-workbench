@@ -144,17 +144,24 @@ export function useSidebarState(
 
   // ── Handlers ──
 
+  /** 把指定路径添加为左侧工作目录（去重：已存在则静默忽略）。 */
+  const handleAddDirectory = useCallback((dir: string) => {
+    if (!dir) return;
+    setAddedDirs((prev) => {
+      if (prev.includes(dir)) return prev;
+      const next = [...prev, dir];
+      pi.setConfig({ addedDirs: next }).catch(() => {});
+      return next;
+    });
+  }, []);
+
   const handlePickDirectory = useCallback(async () => {
     try {
       const dir = await pi.pickDirectory();
       if (!dir) return;
-      setAddedDirs((prev) => {
-        const next = prev.includes(dir) ? prev : [...prev, dir];
-        pi.setConfig({ addedDirs: next }).catch(() => {});
-        return next;
-      });
+      handleAddDirectory(dir);
     } catch { /* 用户取消或出错 */ }
-  }, []);
+  }, [handleAddDirectory]);
 
   const handleRemoveDir = useCallback((cwd: string) => {
     setAddedDirs((prev) => {
@@ -192,6 +199,7 @@ export function useSidebarState(
     visibleDirs,
     sessions,
     handlePickDirectory,
+    handleAddDirectory,
     handleRemoveDir,
     handleTogglePin,
     handleCollapseGroup,

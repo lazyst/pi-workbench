@@ -37,11 +37,13 @@ function basename(p: string): string {
 interface Props {
   root: string;
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
+  /** 目录右键菜单「添加为工作目录」：将目录添加到左侧工作目录列表。 */
+  onAddWorkDir?: (absDir: string) => void;
   /** Bump to force a refresh of the root layer. (可选；当前调用方未传，向后兼容保留。) */
   refreshKey?: number;
 }
 
-export function FileTree({ root, onOpenFile, refreshKey }: Props) {
+export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) {
   // 单一模型实例（借鉴 VS Code ExplorerModel 单例持有 roots）。
   const modelRef = useRef<FileTreeModel>(new FileTreeModel());
   const model = modelRef.current;
@@ -622,6 +624,17 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
       },
     });
 
+    // ── 目录专属：添加为工作目录 ──
+    if (isDir && onAddWorkDir) {
+      items.push({
+        label: '添加为工作目录',
+        onClick: () => {
+          const absPath = toAbsolutePath(root, relPath);
+          onAddWorkDir(absPath);
+        },
+      });
+    }
+
     // ── 非目录：用系统默认程序打开（HTML→浏览器，PDF→阅读器，图片→看图软件等） ──
     if (!isDir) {
       items.push({
@@ -634,7 +647,7 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     }
 
     return items;
-  }, [menu, selection, root, startNew, startRename, doCut, doCopy, doPaste, requestDelete]);
+  }, [menu, selection, root, startNew, startRename, doCut, doCopy, doPaste, requestDelete, onAddWorkDir]);
 
   // 当前右键所在目录（用于空白区新建/粘贴）：若目标是目录则为其本身，否则取其父目录
   const currentDirForMenu = (() => {

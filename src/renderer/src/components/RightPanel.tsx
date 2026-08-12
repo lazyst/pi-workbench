@@ -32,6 +32,8 @@ interface Props {
   onPickDirectory?: (cwd: string) => void;
   // 点击文件 → 中间区新增预览 tab（由 App 处理）；此处仅透传回调。
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
+  /** 文件树目录右键「添加为工作目录」：透传给 FileTree。 */
+  onAddWorkDir?: (absDir: string) => void;
   // 点击 Git 工作区/提交 diff → 中间区新增 diff tab（由 App 处理）。
   onOpenWorkDiff: (cwd: string) => void;
   onOpenCommit: (cwd: string, hash: string) => void;
@@ -46,6 +48,7 @@ export function RightPanel({
   activeCwd,
   onPickDirectory,
   onOpenFile,
+  onAddWorkDir,
   onOpenWorkDiff,
   onOpenCommit,
   onOpenCommitFile,
@@ -209,7 +212,7 @@ export function RightPanel({
         ) : (
           <>
             <div className={`rp-tab-content ${tab === 'files' ? 'active' : 'inactive'}`} data-panel="files">
-              <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
+              <FileTree root={effectiveRoot} onOpenFile={onOpenFile} onAddWorkDir={onAddWorkDir} />
             </div>
             <div className={`rp-tab-content ${tab === 'git' ? 'active' : 'inactive'}`} data-panel="git">
               <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} onOpenFile={onOpenFile} onOpenCommitFile={onOpenCommitFile} />
