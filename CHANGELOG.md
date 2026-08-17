@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.2.1 (2026-08-13)
+
+### 修复
+
+- **侧边栏混合斜杠路径下会话不显示** — 历史配置可能写入混合分隔符路径（如 `D:\tmp/pi-test`），而会话文件 cwd 由 pi 写为标准反斜杠形式，两者字符串不等导致会话被 `visibleDirs` 过滤掉。修复：`addedDirs` 写入与加载时统一 `path.normalize` + 去空 + 去重，并自愈写回历史配置。
+
+- **扩展管理 7 项 bug 修复** —
+  - 扩展列表同名去重（启用优先），消除双显。
+  - `pi-desktop-sync` 标记为系统内置扩展，界面不可禁用/删除。
+  - enable/disable 时 rename 目标已存在不再崩溃，改为安全清理。
+  - 补充 `settings.json` 中 `extensions` 字段与项目级 `.pi/extensions/` 扩展的扫描与管理。
+  - enable package 用 `getPackageSourceString` 统一判断，避免对象形式重复条目。
+  - delete package 无论是否从 settings 移除都清理 `disabledExtensions` 残留。
+  - 新增 `isSafeLocalName` / `isInsideLocalExtDir` 路径校验，防止 path traversal。
+
+- **会话查看器错误显示全部分叉** — 会话内容查看器未按 `parentId` 链回溯当前分支，导致显示全部对话而非当前分支。修复：按 parentId 链回溯当前分支，只显示当前对话链路。
+
+### 重构与清理
+
+- **分屏 store 大幅瘦身（splitStore 1882 → 1258 行，净减 624 行）** — 提取 `upsertTab` / `closeEmptyLeaf` / `updateLeaf` / `findTargetLeaf` 等助手统一重复样板；删除 `resolveLeaf*` / `createTree` 转发包装 / `iterateLeaves` 重复生成器等死代码；`closeCenterTab` 两个逐字相同的 if/else 合并为一条路径；将运行时被 `as any` 注入的 `activeTabId` 正式写入接口消除类型谎言。
+
+- **Skills 管理移除 npx skills 依赖** — 改为直接读写 `~/.agents/.skill-lock.json`（`readSkillSources` / `removeSkillFromLock`），删除 `refreshSkillSourceCache` 状态缓存与 `execSync` 依赖；修复 `findSkillRoot` 两阶段扫描在跨 root 残留禁用副本时误判为已禁用的 bug。
+
+- **清理死代码与冗余导出** — 删除 5 个未使用文件（`MonacoDiffEditor` / `mouse-hide-while-typing` / `stable-fit` / `terminal-renderer-policy` / `terminal-webgl-atlas-recovery`）；解除 terminal-registry 对 WebGL 图集恢复的死调用链；删除误提交的 `null` 文件并加入 gitignore；移除未用依赖 `@radix-ui/react-context-menu` / `@tiptap/extension-underline` / `png-to-ico`。
+
+- **渲染进程功能视图模块简化** — `MonacoCodeEditor` / `DiffPopup` / `SideBySideDiffView` 多处嵌套三元改查表（`LINE_META` / `CELL` 背景色）；`PiExtensionsManager` / `PiSkillsManager` 三段重复 try/catch 提取为 `runWithReload`；`SettingsPanel` 8 路嵌套三元改 switch、8 个重复导航按钮抽为 `NAV_ITEMS` 列表；`FileTree` 提取 `renderRow` / `computeBubble` 纯函数，删除无调用的死方法。
+
+- **终端模块代码简化** — `XtermTerminal` 抽取 `readConfig` 助手 + 5 个归一化器，16 个 `getXxx()` 收敛为单行声明；`terminalChannel.ts` 提取 `TerminalChannelBase` 基类统一 `onData`/`onExit` 订阅；移除数据热路径上的 `console.log`（主进程卡顿潜在诱因）；`terminalHandlers.ts` 提取 `createAndList` 消除 3 份重复 try/catch。
+
+- **主进程与 preload 简化** — `fsBridge.readFile` 合并逻辑相同的 `TEXT_EXTS` 分支；`config` 提取 `clampNumber` 合并 8 个结构相同的 clamp 函数；7 个 handler 消除冗余 `async/await` 包装；preload 提取 `subscribe` 助手收敛 13 个 `on*` 订阅样板，跨文件类型提取到 `types.ts`；修正 `checkUpdate` 返回类型漏写 `assets` 的漂移。
+
+- **会话内容视图落地三段式布局** — `SessionContentView` 改为用户气泡 + Process 折叠（默认收起）+ Pi 回复三段式；提取 `tryParseJson` 统一 JSON 解析回退、`toggleOnKey` 高阶函数消除三处重复 `onKeyDown`；`SessionMarkdownRenderer` 包裹 `memo` 避免不必要重渲染。
+
+- **杂项重构** — `piToolHandlers` 提取 6 个助手函数（`settingsPathFor` / `getMcpConfigFiles` / `scanSkillDir` / `disableSkillByName` / `removeSkillDirs` / `removePackageFromSettings`）；`index.ts` 提取 `sendDataToTerminal` 消除 3 次重复数据路由、提升 `openUrlInExternal` / `unescapeField` 到模块级；`updateChecker` 提取 `formatError` 消除嵌套三元；池暴露 `debugSnapshot()` 只读调试接口，`reconcile` 改用 `fs.promises` 异步 I/O 避免阻塞主进程。
+
 ## v1.2.0 (2026-08-12)
 
 ### 新功能
