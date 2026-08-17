@@ -152,6 +152,70 @@ export interface IntegratedTerminalInfo {
   title: string;       // 展示标题（profile label 或 cwd 末段）
 }
 
+// ── Git 写操作结果（与主进程 gitBridge.GitWriteResult 对应）──
+export interface GitWriteResult {
+  success: boolean;
+  error?: string;
+}
+
+// ── pi-tool 批量操作单项结果（skills batch disable/delete）──
+export interface PiBatchResult {
+  name: string;
+  success: boolean;
+  error?: string;
+}
+
+// ── pi-tool 集成：Skills / 扩展 / MCP（与主进程 piToolHandlers 对应）──
+export interface PiSkill {
+  name: string;
+  disabled: boolean;
+  description?: string;
+  source: string | null;
+  sourceUrl: string | null;
+  sourceType: string | null;
+}
+export interface PiExtension {
+  name: string;
+  type: string;
+  source: string;
+  disabled: boolean;
+  managed: boolean;
+  dir?: string;
+}
+export interface PiMcpConfig {
+  id: string;
+  label: string;
+  path: string;
+  exists: boolean;
+  config: unknown;
+}
+
+// ── 版本更新（与主进程 updateChecker.UpdateInfo / ReleaseAsset 对应）──
+export interface ReleaseAsset {
+  name: string;
+  url: string;
+  size: number;
+}
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  releaseUrl: string | null;
+  releaseName: string | null;
+  releaseBody: string | null;
+  checkedAt: string | null;
+  error: string | null;
+  assets: ReleaseAsset[];
+}
+export interface UpdateProgress {
+  status: 'downloading' | 'completed' | 'error' | 'cancelled';
+  percent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  filePath?: string;
+  error?: string;
+}
+
 // ── Git 文件树状态（与主进程 gitBridge.GitFileStatusEntry 对应）──
 export interface GitFileStatusEntry {
   /** 简化类别，用于 CSS 颜色 */

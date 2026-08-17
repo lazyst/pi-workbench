@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo } from '../renderer/src/types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo, UpdateProgress } from '../renderer/src/types';
 
 // 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
 // 即确定，无需等待异步 IPC），供渲染进程首屏零闪烁地拿到主题等初始值。
@@ -14,18 +14,47 @@ function readInitialConfig(): AppConfig | null {
 }
 const initialConfig = readInitialConfig();
 
+// 订阅主进程事件通道：unpack 把 IPC payload 解包为订阅者回调参数（缺省整包透传）。
+// 统一返回取消订阅函数（对齐 React useEffect 清理语义），收敛重复的 on/removeListener 样板。
+function subscribe<T>(
+  channel: string,
+  unpack: (payload: T) => unknown[] = (payload) => [payload],
+): (cb: (...args: unknown[]) => void) => () => void {
+  return (cb) => {
+    const handler = (_e: unknown, payload: T) => cb(...unpack(payload));
+    ipcRenderer.on(channel, handler);
+    return () => ipcRenderer.removeListener(channel, handler);
+  };
+}
+
+// 终端数据通道：会话终端与集成终端共用同一 IPC 通道（key/id 语义一致），新/旧命名并存。
+const terminalInput = (id: string, data: string) => ipcRenderer.send('terminal:input', { id, data });
+const terminalResize = (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id, cols, rows });
+const onTerminalData = subscribe<{ id: string; data: string }>('terminal:data', (m) => [m.id, m.data]);
+const onTerminalExit = subscribe<{ id: string }>('terminal:exit', (m) => [m.id]);
+
 contextBridge.exposeInMainWorld('pi', {
   listSessions: (): Promise<SessionGroup[]> => ipcRenderer.invoke('session:list'),
   readSessionContent: (key: string): Promise<Array<{ role: string; content: string; toolName?: string }>> =>
     ipcRenderer.invoke('session:readContent', key),
-  openSession: (req: OpenRequest): Promise<SessionInfo> =>
-    ipcRenderer.invoke('terminal:spawn', { command: 'pi', cwd: req.cwd ?? '', sessionFile: req.key?.endsWith('.jsonl') ? req.key : undefined, key: req.key && !req.key.endsWith('.jsonl') ? req.key : undefined, name: req.name }),
-  terminate: (key: string): Promise<void> => ipcRenderer.invoke('session:terminate', key),  // 调用 session:terminate（main 中 UnifiedTerminalPool.terminate）
+  openSession: ({ key, cwd, name }: OpenRequest): Promise<SessionInfo> => {
+    // key 形如 *.jsonl 时视为会话文件（从磁盘恢复），否则视为既有会话 key（重新挂载）。
+    const sessionFile = key?.endsWith('.jsonl');
+    return ipcRenderer.invoke('terminal:spawn', {
+      command: 'pi',
+      cwd: cwd ?? '',
+      sessionFile: sessionFile ? key : undefined,
+      key: key && !sessionFile ? key : undefined,
+      name,
+    });
+  },
+  terminate: (key: string): Promise<void> => ipcRenderer.invoke('session:terminate', key),
   deleteSession: (key: string): Promise<void> => ipcRenderer.invoke('session:delete', key),
   deleteMany: (keys: string[]): Promise<void> => ipcRenderer.invoke('session:deleteMany', keys),
   clearDirectory: (cwd: string): Promise<void> => ipcRenderer.invoke('session:clearDirectory', cwd),
-  input: (key: string, data: string) => ipcRenderer.send('terminal:input', { id: key, data }),
-  resize: (key: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id: key, cols, rows }),
+  // 会话终端通道：别名指向共用终端通道（见模块级 terminalInput/onTerminalData 等），保留历史命名。
+  input: terminalInput,
+  resize: terminalResize,
   debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('session:pickDirectory'),
   // 拖拽文件落终端：把渲染端拖入的 File 解析为绝对路径。
@@ -43,31 +72,11 @@ contextBridge.exposeInMainWorld('pi', {
   // 图片粘贴落盘：渲染端把剪贴板里的图片读成 base64 传来，主进程写临时文件并返回绝对路径。
   saveImage: (data: string, ext: string): Promise<string | null> =>
     ipcRenderer.invoke('session:saveImage', { data, ext }),
-  onData: (cb: (key: string, data: string) => void) => {
-    const handler = (_e: unknown, m: { id: string; data: string }) => cb(m.id, m.data);
-    ipcRenderer.on('terminal:data', handler);
-    return () => ipcRenderer.removeListener('terminal:data', handler);
-  },
-  onStatus: (cb: (key: string, status: SessionStatus) => void) => {
-    const handler = (_e: unknown, m: { key: string; status: SessionStatus }) => cb(m.key, m.status);
-    ipcRenderer.on('session:status', handler);
-    return () => ipcRenderer.removeListener('session:status', handler);
-  },
-  onExit: (cb: (key: string) => void) => {
-    const handler = (_e: unknown, m: { id: string }) => cb(m.id);
-    ipcRenderer.on('terminal:exit', handler);
-    return () => ipcRenderer.removeListener('terminal:exit', handler);
-  },
-  onRelink: (cb: (from: string, to: string) => void) => {
-    const handler = (_e: unknown, m: { from: string; to: string }) => cb(m.from, m.to);
-    ipcRenderer.on('session:relink', handler);
-    return () => ipcRenderer.removeListener('session:relink', handler);
-  },
-  onIndex: (cb: (groups: SessionGroup[]) => void) => {
-    const handler = (_e: unknown, groups: SessionGroup[]) => cb(groups);
-    ipcRenderer.on('session:index', handler);
-    return () => ipcRenderer.removeListener('session:index', handler);
-  },
+  onData: onTerminalData,
+  onStatus: subscribe<{ key: string; status: SessionStatus }>('session:status', (m) => [m.key, m.status]),
+  onExit: onTerminalExit,
+  onRelink: subscribe<{ from: string; to: string }>('session:relink', (m) => [m.from, m.to]),
+  onIndex: subscribe<SessionGroup[]>('session:index'),
   // 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端每消费 N 字节即通知主进程，
   // 主进程据此对 PTY 做流控/消费进度记账。统一使用 terminal:ack 通道。
   acknowledgeDataEvent: (id: string, bytes: number) =>
@@ -79,11 +88,7 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('window:get-bounds'),
   setWindowBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.send('window:set-bounds', bounds),
-  onMaximizeChange: (cb: (maximized: boolean) => void) => {
-    const handler = (_e: unknown, m: boolean) => cb(m);
-    ipcRenderer.on('window:maximize-change', handler);
-    return () => ipcRenderer.removeListener('window:maximize-change', handler);
-  },
+  onMaximizeChange: subscribe<boolean>('window:maximize-change'),
   getInitialConfig: (): AppConfig | null => initialConfig,
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
   setConfig: (partial: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:set', partial),
@@ -140,64 +145,58 @@ contextBridge.exposeInMainWorld('pi', {
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),
   gitDiff: (cwd: string, ref?: string): Promise<string> => ipcRenderer.invoke('git:diff', { cwd, ref }),
-gitFileDiff: (cwd: string, path: string): Promise<string> => ipcRenderer.invoke('git:fileDiff', { cwd, path }),
-gitCommitFiles: (cwd: string, hash: string): Promise<{ status: string; path: string; oldPath?: string }[]> => ipcRenderer.invoke('git:commitFiles', { cwd, hash }),
-gitCommitFileDiff: (cwd: string, hash: string, path: string): Promise<{ original: string; modified: string }> => ipcRenderer.invoke('git:commitFileDiff', { cwd, hash, path }),
+  gitFileDiff: (cwd: string, path: string): Promise<string> => ipcRenderer.invoke('git:fileDiff', { cwd, path }),
+  gitCommitFiles: (cwd: string, hash: string): Promise<{ status: string; path: string; oldPath?: string }[]> =>
+    ipcRenderer.invoke('git:commitFiles', { cwd, hash }),
+  gitCommitFileDiff: (cwd: string, hash: string, path: string): Promise<{ original: string; modified: string }> =>
+    ipcRenderer.invoke('git:commitFileDiff', { cwd, hash, path }),
   gitFileStatusMap: (cwd: string): Promise<Record<string, any>> => ipcRenderer.invoke('git:fileStatusMap', { cwd }),
   gitIgnoredPaths: (cwd: string): Promise<string[]> => ipcRenderer.invoke('git:ignoredPaths', { cwd }),
 
   // ── Git 写操作 ──
-  gitStage: (cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }> =>
+  gitStage: (cwd: string, paths?: string[], all?: boolean): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:stage', { cwd, paths, all }),
-  gitUnstage: (cwd: string, paths?: string[]): Promise<{ success: boolean; error?: string }> =>
+  gitUnstage: (cwd: string, paths?: string[]): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:unstage', { cwd, paths }),
-  gitCommit: (cwd: string, message: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+  gitCommit: (cwd: string, message: string, opts?: any): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:commit', { cwd, message, opts }),
-  gitRevert: (cwd: string, paths: string[]): Promise<{ success: boolean; error?: string }> =>
+  gitRevert: (cwd: string, paths: string[]): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:revert', { cwd, paths }),
-  gitClean: (cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }> =>
+  gitClean: (cwd: string, paths?: string[], all?: boolean): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:clean', { cwd, paths, all }),
 
   // ── 分支 ──
   gitCurrentBranch: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:currentBranch', { cwd }),
   gitConfigUser: (cwd: string): Promise<string | null> => ipcRenderer.invoke('git:configUser', { cwd }),
-  gitAddToGitignore: (cwd: string, path: string, isDir?: boolean): Promise<{ success: boolean; error?: string }> =>
+  gitAddToGitignore: (cwd: string, path: string, isDir?: boolean): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:addToGitignore', { cwd, path, isDir }),
   gitBranches: (cwd: string): Promise<any[]> => ipcRenderer.invoke('git:branches', { cwd }),
-  gitCreateBranch: (cwd: string, name: string, from?: string): Promise<{ success: boolean; error?: string }> =>
+  gitCreateBranch: (cwd: string, name: string, from?: string): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:createBranch', { cwd, name, from }),
-  gitCheckout: (cwd: string, ref: string, create?: boolean): Promise<{ success: boolean; error?: string }> =>
+  gitCheckout: (cwd: string, ref: string, create?: boolean): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:checkout', { cwd, ref, create }),
-  gitDeleteBranch: (cwd: string, name: string, force?: boolean): Promise<{ success: boolean; error?: string }> =>
+  gitDeleteBranch: (cwd: string, name: string, force?: boolean): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:deleteBranch', { cwd, name, force }),
-  gitRenameBranch: (cwd: string, newName: string): Promise<{ success: boolean; error?: string }> =>
+  gitRenameBranch: (cwd: string, newName: string): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:renameBranch', { cwd, newName }),
 
   // ── 远程同步 ──
   gitRemotes: (cwd: string): Promise<any[]> => ipcRenderer.invoke('git:remotes', { cwd }),
-  gitAddRemote: (cwd: string, name: string, url: string): Promise<{ success: boolean; error?: string }> =>
+  gitAddRemote: (cwd: string, name: string, url: string): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:addRemote', { cwd, name, url }),
-  gitRemoveRemote: (cwd: string, name: string): Promise<{ success: boolean; error?: string }> =>
+  gitRemoveRemote: (cwd: string, name: string): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:removeRemote', { cwd, name }),
-  gitFetch: (cwd: string): Promise<{ success: boolean; error?: string }> =>
+  gitFetch: (cwd: string): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:fetch', { cwd }),
-  gitPull: (cwd: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+  gitPull: (cwd: string, opts?: any): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:pull', { cwd, opts }),
-  gitPush: (cwd: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+  gitPush: (cwd: string, opts?: any): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:push', { cwd, opts }),
-  gitSync: (cwd: string, opts?: any): Promise<{ success: boolean; error?: string }> =>
+  gitSync: (cwd: string, opts?: any): Promise<GitWriteResult> =>
     ipcRenderer.invoke('git:sync', { cwd, opts }),
-  gitLogAdvanced: (cwd: string, query?: any): Promise<any[]> =>
-    ipcRenderer.invoke('git:logAdvanced', { cwd, query }),
+  gitLogAdvanced: (cwd: string, query?: any): Promise<any[]> => ipcRenderer.invoke('git:logAdvanced', { cwd, query }),
   // 操作状态事件：
-  onGitOperation: (cb: (payload: { cwd: string; kind: string; running: boolean }) => void) => {
-    const handler = (_e: unknown, m: { cwd: string; kind: string; running: boolean }) => cb(m);
-    ipcRenderer.on('git:operation', handler);
-    return () => ipcRenderer.removeListener('git:operation', handler);
-  },
-  // 高级日志：
-  gitSearchLog: (cwd: string, query?: any): Promise<any[]> => ipcRenderer.invoke('git:logAdvanced', { cwd, query }),
-  gitLogPage: (cwd: string, opts?: any): Promise<any[]> => ipcRenderer.invoke('git:logAdvanced', { cwd, query: opts }),
+  onGitOperation: subscribe<{ cwd: string; kind: string; running: boolean }>('git:operation'),
   // 工作区实时监听：订阅某仓库 cwd，主进程经 'git:change' 推送变更；返回取消订阅函数。
   gitWatch: (cwd: string, cb: () => void): (() => void) => {
     const handler = (_e: unknown, m: { cwd: string }) => {
@@ -229,38 +228,18 @@ gitCommitFileDiff: (cwd: string, hash: string, path: string): Promise<{ original
   createTerminalInAppWorkDir: (req: { profile: TerminalProfile }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:createInAppWorkDir', req),
   listIntegratedTerminals: (): Promise<IntegratedTerminalInfo[]> => ipcRenderer.invoke('terminal:list'),
   destroyTerminal: (id: string): Promise<void> => ipcRenderer.invoke('terminal:destroy', id),
-  terminalInput: (id: string, data: string) => ipcRenderer.send('terminal:input', { id, data }),
-  terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
-  onTerminalData: (cb: (id: string, data: string) => void) => {
-    const handler = (_e: unknown, m: { id: string; data: string }) => cb(m.id, m.data);
-    ipcRenderer.on('terminal:data', handler);
-    return () => ipcRenderer.removeListener('terminal:data', handler);
-  },
-  onTerminalExit: (cb: (id: string) => void) => {
-    const handler = (_e: unknown, m: { id: string }) => cb(m.id);
-    ipcRenderer.on('terminal:exit', handler);
-    return () => ipcRenderer.removeListener('terminal:exit', handler);
-  },
+  terminalInput,
+  terminalResize,
+  onTerminalData,
+  onTerminalExit,
   saveTerminalBuffer: (id: string, data: string) => ipcRenderer.send('terminal:saveBuffer', { id, data }),
   loadTerminalBuffer: (id: string): Promise<string | undefined> => ipcRenderer.invoke('terminal:loadBuffer', id),
   updateTerminalCwd: (id: string, cwd: string) => ipcRenderer.send('terminal:updateCwd', { id, cwd }),
-  onTerminalList: (cb: (list: IntegratedTerminalInfo[]) => void) => {
-    const handler = (_e: unknown, m: { list: IntegratedTerminalInfo[] }) => cb(m.list);
-    ipcRenderer.on('terminal:list', handler);
-    return () => ipcRenderer.removeListener('terminal:list', handler);
-  },
+  onTerminalList: subscribe<{ list: IntegratedTerminalInfo[] }>('terminal:list', (m) => [m.list]),
   // pi 进程内部执行 /new 时主进程推送的通知
-  onNewFromPi: (cb: (payload: { ptyId: string; uuid: string; cwd: string; name: string }) => void) => {
-    const handler = (_e: unknown, payload: any) => cb(payload);
-    ipcRenderer.on('session:new-from-pi', handler);
-    return () => ipcRenderer.removeListener('session:new-from-pi', handler);
-  },
+  onNewFromPi: subscribe<{ ptyId: string; uuid: string; cwd: string; name: string }>('session:new-from-pi'),
   // 会话名变更通知（/name 命令触发）
-  onSessionNameChanged: (cb: (payload: { ptyId: string; name: string }) => void) => {
-    const handler = (_e: unknown, payload: any) => cb(payload);
-    ipcRenderer.on('session:name-changed', handler);
-    return () => ipcRenderer.removeListener('session:name-changed', handler);
-  },
+  onSessionNameChanged: subscribe<{ ptyId: string; name: string }>('session:name-changed'),
   // 注册 PTY 初始 owner（渲染进程通知主进程）
   registerPtyOwner: (ptyId: string, ownerKey: string) => {
     ipcRenderer.send('session:register-pty-owner', { ptyId, ownerKey });
@@ -278,56 +257,37 @@ gitCommitFileDiff: (cwd: string, hash: string, path: string): Promise<{ original
     ipcRenderer.invoke('pi:models:get'),
   piModelsSet: (data: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('pi:models:set', data),
-  piMcpConfigs: (): Promise<Array<{ id: string; label: string; path: string; exists: boolean; config: unknown }>> =>
+  piMcpConfigs: (): Promise<PiMcpConfig[]> =>
     ipcRenderer.invoke('pi:mcp:configs'),
   piMcpConfigsSave: (payload: { id: string; config: unknown }): Promise<{ success: boolean; path: string }> =>
     ipcRenderer.invoke('pi:mcp:configs:save', payload),
   piMcpStatus: (): Promise<{ installed: boolean; version?: string }> =>
     ipcRenderer.invoke('pi:mcp:status'),
-  piSkillsList: (): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string; source: string | null; sourceUrl: string | null; sourceType: string | null }> }> =>
+  piSkillsList: (): Promise<{ skills: PiSkill[] }> =>
     ipcRenderer.invoke('pi:skills:list'),
-  piSkillsDisable: (payload: { name: string; source?: string | null }): Promise<{ success: boolean; error?: string }> =>
+  piSkillsDisable: (payload: { name: string; source?: string | null }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:skills:disable', payload),
-  piSkillsEnable: (name: string): Promise<{ success: boolean; error?: string }> =>
+  piSkillsEnable: (name: string): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:skills:enable', name),
-  piSkillsDelete: (payload: { name: string; disabled?: boolean }): Promise<{ success: boolean; error?: string }> =>
+  piSkillsDelete: (payload: { name: string; disabled?: boolean }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:skills:delete', payload),
-  piSkillsBatchDisable: (payload: { names: string[]; source?: string | null }): Promise<{ results: Array<{ name: string; success: boolean; error?: string }> }> =>
+  piSkillsBatchDisable: (payload: { names: string[]; source?: string | null }): Promise<{ results: PiBatchResult[] }> =>
     ipcRenderer.invoke('pi:skills:batchDisable', payload),
-  piSkillsBatchDelete: (payload: { names: string[] }): Promise<{ results: Array<{ name: string; success: boolean; error?: string }> }> =>
+  piSkillsBatchDelete: (payload: { names: string[] }): Promise<{ results: PiBatchResult[] }> =>
     ipcRenderer.invoke('pi:skills:batchDelete', payload),
-  piSkillsRefreshCache: (): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string; source: string | null; sourceUrl: string | null; sourceType: string | null }> }> =>
+  piSkillsRefreshCache: (): Promise<{ skills: PiSkill[] }> =>
     ipcRenderer.invoke('pi:skills:refreshCache'),
-  piExtensionsList: (): Promise<{ extensions: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> }> =>
+  piExtensionsList: (): Promise<{ extensions: PiExtension[] }> =>
     ipcRenderer.invoke('pi:extensions:list'),
-  piExtensionsDisable: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
+  piExtensionsDisable: (payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:extensions:disable', payload),
-  piExtensionsEnable: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
+  piExtensionsEnable: (payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:extensions:enable', payload),
-  piExtensionsDelete: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
+  piExtensionsDelete: (payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:extensions:delete', payload),
   // 版本更新检查
-  checkUpdate: (): Promise<{
-    currentVersion: string;
-    latestVersion: string | null;
-    hasUpdate: boolean;
-    releaseUrl: string | null;
-    releaseName: string | null;
-    releaseBody: string | null;
-    checkedAt: string | null;
-    error: string | null;
-  }> => ipcRenderer.invoke('update:check'),
-  getUpdateStatus: (): Promise<{
-    currentVersion: string;
-    latestVersion: string | null;
-    hasUpdate: boolean;
-    releaseUrl: string | null;
-    releaseName: string | null;
-    releaseBody: string | null;
-    checkedAt: string | null;
-    error: string | null;
-    assets: Array<{ name: string; url: string; size: number }>;
-  } | null> => ipcRenderer.invoke('update:get-status'),
+  checkUpdate: (): Promise<UpdateInfo> => ipcRenderer.invoke('update:check'),
+  getUpdateStatus: (): Promise<UpdateInfo | null> => ipcRenderer.invoke('update:get-status'),
   getCurrentVersion: (): Promise<string> => ipcRenderer.invoke('update:get-current-version'),
   // 下载更新
   downloadUpdate: (): Promise<{ success: boolean; filePath: string }> =>
@@ -338,16 +298,5 @@ gitCommitFileDiff: (cwd: string, hash: string, path: string): Promise<{ original
   installUpdate: (filePath: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('update:install', filePath),
   // 监听下载进度
-  onDownloadProgress: (cb: (progress: {
-    status: 'downloading' | 'completed' | 'error' | 'cancelled';
-    percent: number;
-    downloadedBytes: number;
-    totalBytes: number;
-    filePath?: string;
-    error?: string;
-  }) => void) => {
-    const handler = (_e: unknown, progress: any) => cb(progress);
-    ipcRenderer.on('update:download-progress', handler);
-    return () => ipcRenderer.removeListener('update:download-progress', handler);
-  },
+  onDownloadProgress: subscribe<UpdateProgress>('update:download-progress'),
 });

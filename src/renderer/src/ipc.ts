@@ -1,4 +1,4 @@
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry } from './types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo, UpdateProgress } from './types';
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
@@ -72,30 +72,30 @@ export interface PiApi {
   gitWatch(cwd: string, cb: () => void): () => void;
 
   // ── Git 写操作 ──
-  gitStage(cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }>;
-  gitUnstage(cwd: string, paths?: string[]): Promise<{ success: boolean; error?: string }>;
-  gitCommit(cwd: string, message: string, opts?: { all?: boolean; amend?: boolean; signOff?: boolean; noVerify?: boolean; allowEmpty?: boolean; allowEmptyMessage?: boolean }): Promise<{ success: boolean; error?: string }>;
-  gitRevert(cwd: string, paths: string[]): Promise<{ success: boolean; error?: string }>;
-  gitClean(cwd: string, paths?: string[], all?: boolean): Promise<{ success: boolean; error?: string }>;
+  gitStage(cwd: string, paths?: string[], all?: boolean): Promise<GitWriteResult>;
+  gitUnstage(cwd: string, paths?: string[]): Promise<GitWriteResult>;
+  gitCommit(cwd: string, message: string, opts?: { all?: boolean; amend?: boolean; signOff?: boolean; noVerify?: boolean; allowEmpty?: boolean; allowEmptyMessage?: boolean }): Promise<GitWriteResult>;
+  gitRevert(cwd: string, paths: string[]): Promise<GitWriteResult>;
+  gitClean(cwd: string, paths?: string[], all?: boolean): Promise<GitWriteResult>;
 
   // ── 分支 ──
   gitCurrentBranch(cwd: string): Promise<string | null>;
   gitConfigUser(cwd: string): Promise<string | null>;
-  gitAddToGitignore(cwd: string, path: string, isDir?: boolean): Promise<{ success: boolean; error?: string }>;
+  gitAddToGitignore(cwd: string, path: string, isDir?: boolean): Promise<GitWriteResult>;
   gitBranches(cwd: string): Promise<Array<{ name: string; current: boolean; remote: boolean; tracking?: string }>>;
-  gitCreateBranch(cwd: string, name: string, from?: string): Promise<{ success: boolean; error?: string }>;
-  gitCheckout(cwd: string, ref: string, create?: boolean): Promise<{ success: boolean; error?: string }>;
-  gitDeleteBranch(cwd: string, name: string, force?: boolean): Promise<{ success: boolean; error?: string }>;
-  gitRenameBranch(cwd: string, newName: string): Promise<{ success: boolean; error?: string }>;
+  gitCreateBranch(cwd: string, name: string, from?: string): Promise<GitWriteResult>;
+  gitCheckout(cwd: string, ref: string, create?: boolean): Promise<GitWriteResult>;
+  gitDeleteBranch(cwd: string, name: string, force?: boolean): Promise<GitWriteResult>;
+  gitRenameBranch(cwd: string, newName: string): Promise<GitWriteResult>;
 
   // ── 远程同步 ──
   gitRemotes(cwd: string): Promise<Array<{ name: string; url?: string }>>;
-  gitAddRemote(cwd: string, name: string, url: string): Promise<{ success: boolean; error?: string }>;
-  gitRemoveRemote(cwd: string, name: string): Promise<{ success: boolean; error?: string }>;
-  gitFetch(cwd: string): Promise<{ success: boolean; error?: string }>;
-  gitPull(cwd: string, opts?: { rebase?: boolean }): Promise<{ success: boolean; error?: string }>;
-  gitPush(cwd: string, opts?: { force?: boolean }): Promise<{ success: boolean; error?: string }>;
-  gitSync(cwd: string, opts?: { rebase?: boolean; force?: boolean }): Promise<{ success: boolean; error?: string }>;
+  gitAddRemote(cwd: string, name: string, url: string): Promise<GitWriteResult>;
+  gitRemoveRemote(cwd: string, name: string): Promise<GitWriteResult>;
+  gitFetch(cwd: string): Promise<GitWriteResult>;
+  gitPull(cwd: string, opts?: { rebase?: boolean }): Promise<GitWriteResult>;
+  gitPush(cwd: string, opts?: { force?: boolean }): Promise<GitWriteResult>;
+  gitSync(cwd: string, opts?: { rebase?: boolean; force?: boolean }): Promise<GitWriteResult>;
   // 操作状态事件：写操作开始/结束。
   onGitOperation(cb: (payload: { cwd: string; kind: string; running: boolean }) => void): () => void;
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
@@ -146,55 +146,28 @@ export interface PiApi {
   piSettingsSet(payload: { scope: 'global' | 'project'; data?: Record<string, unknown>; raw?: string }): Promise<{ success: boolean; path: string }>;
   piModelsGet(): Promise<{ providers: Record<string, unknown> }>;
   piModelsSet(data: unknown): Promise<{ success: boolean }>;
-  piMcpConfigs(): Promise<Array<{ id: string; label: string; path: string; exists: boolean; config: unknown }>>;
+  piMcpConfigs(): Promise<PiMcpConfig[]>;
   piMcpConfigsSave(payload: { id: string; config: unknown }): Promise<{ success: boolean; path: string }>;
   piMcpStatus(): Promise<{ installed: boolean; version?: string }>;
-  piSkillsList(): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string; source: string | null; sourceUrl: string | null; sourceType: string | null }> }>;
-  piSkillsDisable(payload: { name: string; source?: string | null }): Promise<{ success: boolean; error?: string }>;
-  piSkillsEnable(name: string): Promise<{ success: boolean; error?: string }>;
-  piSkillsDelete(payload: { name: string; disabled?: boolean }): Promise<{ success: boolean; error?: string }>;
-  piSkillsBatchDisable(payload: { names: string[]; source?: string | null }): Promise<{ results: Array<{ name: string; success: boolean; error?: string }> }>;
-  piSkillsBatchDelete(payload: { names: string[] }): Promise<{ results: Array<{ name: string; success: boolean; error?: string }> }>;
-  piSkillsRefreshCache(): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string; source: string | null; sourceUrl: string | null; sourceType: string | null }> }>;
-  piExtensionsList(): Promise<{ extensions: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> }>;
-  piExtensionsDisable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
-  piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
-  piExtensionsDelete(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
+  piSkillsList(): Promise<{ skills: PiSkill[] }>;
+  piSkillsDisable(payload: { name: string; source?: string | null }): Promise<GitWriteResult>;
+  piSkillsEnable(name: string): Promise<GitWriteResult>;
+  piSkillsDelete(payload: { name: string; disabled?: boolean }): Promise<GitWriteResult>;
+  piSkillsBatchDisable(payload: { names: string[]; source?: string | null }): Promise<{ results: PiBatchResult[] }>;
+  piSkillsBatchDelete(payload: { names: string[] }): Promise<{ results: PiBatchResult[] }>;
+  piSkillsRefreshCache(): Promise<{ skills: PiSkill[] }>;
+  piExtensionsList(): Promise<{ extensions: PiExtension[] }>;
+  piExtensionsDisable(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
+  piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
+  piExtensionsDelete(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
   // 版本更新检查
-  checkUpdate(): Promise<{
-    currentVersion: string;
-    latestVersion: string | null;
-    hasUpdate: boolean;
-    releaseUrl: string | null;
-    releaseName: string | null;
-    releaseBody: string | null;
-    checkedAt: string | null;
-    error: string | null;
-    assets: Array<{ name: string; url: string; size: number }>;
-  }>;
-  getUpdateStatus(): Promise<{
-    currentVersion: string;
-    latestVersion: string | null;
-    hasUpdate: boolean;
-    releaseUrl: string | null;
-    releaseName: string | null;
-    releaseBody: string | null;
-    checkedAt: string | null;
-    error: string | null;
-    assets: Array<{ name: string; url: string; size: number }>;
-  } | null>;
+  checkUpdate(): Promise<UpdateInfo>;
+  getUpdateStatus(): Promise<UpdateInfo | null>;
   getCurrentVersion(): Promise<string>;
   downloadUpdate(): Promise<{ success: boolean; filePath: string }>;
   cancelDownload(): void;
   installUpdate(filePath: string): Promise<{ success: boolean }>;
-  onDownloadProgress(cb: (progress: {
-    status: 'downloading' | 'completed' | 'error' | 'cancelled';
-    percent: number;
-    downloadedBytes: number;
-    totalBytes: number;
-    filePath?: string;
-    error?: string;
-  }) => void): () => void;
+  onDownloadProgress(cb: (progress: UpdateProgress) => void): () => void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at
