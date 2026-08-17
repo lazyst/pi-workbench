@@ -18,6 +18,14 @@ function readPinned(cfg: AppConfig): string[] {
   return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
 }
 
+// Windows 路径规范化：把混合分隔符（\ 与 / 混用）统一为反斜杠、去尾部分隔符，
+// 供 addedDirs 存储与比较使用。渲染进程沙箱无 node:path，此轻量实现覆盖常见绝对路径场景。
+// 历史配置可能写入 "D:\\tmp/pi-test" 这类混合分隔符路径，而会话文件的 cwd 由 pi 写出为
+// 标准反斜杠形式，直接做精确字符串比较会导致会话被过滤、侧边栏不显示。
+function normalizeDir(p: string): string {
+  return p.trim().replace(/[\\/]+/g, '\\').replace(/\\+$/, '');
+}
+
 function toDisk(
   groups: { cwd: string; sessions: Array<{ key: string; name: string; time: string }> }[],
 ): DiskSession[] {
@@ -78,9 +86,15 @@ export function useSidebarState(
 
     pi.getConfig().then((cfg) => {
       setPinned(readPinned(cfg));
-      const dirs = Array.isArray(cfg.addedDirs)
+      const rawDirs = Array.isArray(cfg.addedDirs)
         ? cfg.addedDirs.filter((x) => typeof x === 'string')
         : [];
+      // 规范化分隔符（历史配置可能混入 "/"，如 "D:\tmp/pi-test"），并去重/去空；
+      // 若发生变化则写回自愈，保证与会话 cwd（反斜杠形式）精确匹配。
+      const dirs = [...new Set(rawDirs.map(normalizeDir).filter(Boolean))];
+      if (dirs.length !== rawDirs.length || dirs.some((d, i) => d !== rawDirs[i])) {
+        pi.setConfig({ addedDirs: dirs }).catch(() => {});
+      }
       const workDir = cfg.appWorkDir || '';
       if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir);
       // 首次启动：addedDirs 为空时自动添加 appWorkDir
@@ -144,12 +158,14 @@ export function useSidebarState(
 
   // ── Handlers ──
 
-  /** 把指定路径添加为左侧工作目录（去重：已存在则静默忽略）。 */
+  /** 把指定路径添加为左侧工作目录（规范化分隔符 + 去重：已存在则静默忽略）。 */
   const handleAddDirectory = useCallback((dir: string) => {
-    if (!dir) return;
+    // null / 空串 / 纯空白都会在规范化后变为空串，单个守卫即可拦截。
+    const norm = normalizeDir(dir || '');
+    if (!norm) return;
     setAddedDirs((prev) => {
-      if (prev.includes(dir)) return prev;
-      const next = [...prev, dir];
+      if (prev.includes(norm)) return prev;
+      const next = [...prev, norm];
       pi.setConfig({ addedDirs: next }).catch(() => {});
       return next;
     });

@@ -148,6 +148,17 @@ function getConfig(): AppConfig {
 function setConfig(partial: Partial<AppConfig>): void {
   ensureLoaded();
   configState = mergeConfig(configState!, partial);
+  // addedDirs：统一为平台规范路径（path.normalize 会把混合分隔符 / 相对片段规整），
+  // 避免混合分隔符（如 "D:\tmp/pi-test"）导致侧边栏精确字符串匹配失败，
+  // 使该目录下的会话无法显示（会话文件的 cwd 由 pi 写出为标准反斜杠形式）。
+  if (Array.isArray(partial.addedDirs)) {
+    const normed = [...new Set(
+      partial.addedDirs
+        .filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+        .map((x) => path.normalize(x.trim()))
+    )];
+    configState = mergeConfig(configState!, { addedDirs: normed });
+  }
   // 应用工作目录变更：确保新目录已创建（递归），使该分组下的终端 cwd 立即可用。
   if (partial.appWorkDir) {
     // 确保传入的路径是绝对路径（renderer 可能只传了相对路径）
