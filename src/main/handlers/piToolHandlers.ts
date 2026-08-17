@@ -30,11 +30,28 @@ export function registerPiToolHandlers(
     return result;
   }
 
-  // ── Settings ──
-  ipcMain.handle('pi:settings:get', (_e, scope: 'global' | 'project') => {
-    const settingsPath = scope === 'project'
+  /** 根据 scope 返回 settings.json 的完整路径。 */
+  function settingsPathFor(scope: 'global' | 'project'): string {
+    return scope === 'project'
       ? path.join(process.cwd(), '.pi', 'settings.json')
       : path.join(piAgentDir, 'settings.json');
+  }
+
+  /** 四层 MCP 配置文件的路径定义。 */
+  function getMcpConfigFiles(): Array<{ id: string; label: string; path: string }> {
+    const cwd = process.cwd();
+    const home = os.homedir();
+    return [
+      { id: 'user-global', label: '用户全局配置 (Shared)', path: path.join(home, '.config', 'mcp', 'mcp.json') },
+      { id: 'pi-global', label: 'Pi 全局覆盖 (Pi Agent)', path: path.join(piAgentDir, 'mcp.json') },
+      { id: 'project-shared', label: '项目共享 (Project)', path: path.join(cwd, '.mcp.json') },
+      { id: 'project-pi', label: 'Pi 项目覆盖 (Project Pi)', path: path.join(cwd, '.pi', 'mcp.json') },
+    ];
+  }
+
+  // ── Settings ──
+  ipcMain.handle('pi:settings:get', (_e, scope: 'global' | 'project') => {
+    const settingsPath = settingsPathFor(scope);
     const exists = fs.existsSync(settingsPath);
     let data: unknown = null;
     let raw = '';
@@ -46,9 +63,7 @@ export function registerPiToolHandlers(
   });
 
   ipcMain.handle('pi:settings:set', (_e, payload: { scope: 'global' | 'project'; data?: Record<string, unknown>; raw?: string }) => {
-    const settingsPath = payload.scope === 'project'
-      ? path.join(process.cwd(), '.pi', 'settings.json')
-      : path.join(piAgentDir, 'settings.json');
+    const settingsPath = settingsPathFor(payload.scope);
     const dir = path.dirname(settingsPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -86,15 +101,7 @@ export function registerPiToolHandlers(
 
   // ── MCP ──
   ipcMain.handle('pi:mcp:configs', () => {
-    const cwd = process.cwd();
-    const home = os.homedir();
-    const files = [
-      { id: 'user-global', label: '用户全局配置 (Shared)', path: path.join(home, '.config', 'mcp', 'mcp.json') },
-      { id: 'pi-global', label: 'Pi 全局覆盖 (Pi Agent)', path: path.join(piAgentDir, 'mcp.json') },
-      { id: 'project-shared', label: '项目共享 (Project)', path: path.join(cwd, '.mcp.json') },
-      { id: 'project-pi', label: 'Pi 项目覆盖 (Project Pi)', path: path.join(cwd, '.pi', 'mcp.json') },
-    ];
-    return files.map(f => {
+    return getMcpConfigFiles().map(f => {
       const exists = fs.existsSync(f.path);
       let config: unknown = null;
       if (exists) {
@@ -105,15 +112,8 @@ export function registerPiToolHandlers(
   });
 
   ipcMain.handle('pi:mcp:configs:save', (_e, payload: { id: string; config: unknown }) => {
-    const home = os.homedir();
-    const cwd = process.cwd();
-    const fileDefs: Record<string, string> = {
-      'user-global': path.join(home, '.config', 'mcp', 'mcp.json'),
-      'pi-global': path.join(piAgentDir, 'mcp.json'),
-      'project-shared': path.join(cwd, '.mcp.json'),
-      'project-pi': path.join(cwd, '.pi', 'mcp.json'),
-    };
-    const filePath = fileDefs[payload.id];
+    const files = getMcpConfigFiles();
+    const filePath = files.find(f => f.id === payload.id)?.path;
     if (!filePath) throw new Error('Unknown MCP config: ' + payload.id);
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -234,6 +234,32 @@ export function registerPiToolHandlers(
     sourceType: string | null;
   }
 
+  /** 扫描一个 skill 目录（启用或禁用），合并入 result 并登记 seen。 */
+  function scanSkillDir(
+    dir: string,
+    disabled: boolean,
+    seenNames: Set<string>,
+    result: SkillInfo[],
+    sources: Map<string, SkillSourceInfo>,
+  ): void {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && !seenNames.has(entry.name)) {
+        const skillDir = path.join(dir, entry.name);
+        const src = sources.get(entry.name);
+        result.push({
+          name: entry.name,
+          disabled,
+          description: readSkillDescription(skillDir),
+          source: src?.source ?? null,
+          sourceUrl: src?.sourceUrl ?? null,
+          sourceType: src?.sourceType ?? null,
+        });
+        seenNames.add(entry.name);
+      }
+    }
+  }
+
   function listSkills(): SkillInfo[] {
     // lockfile 即 skills CLI 维护的来源缓存，实时读取（小文件），无需再缓存到 pi-tool-state.json。
     const sources = readSkillSources();
@@ -241,45 +267,12 @@ export function registerPiToolHandlers(
     const result: SkillInfo[] = [];
     const seenNames = new Set<string>();
 
+    // 先扫启用目录、再扫禁用目录（同名以启用为准）。
     for (const root of SKILL_ROOTS) {
-      if (!fs.existsSync(root)) continue;
-      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-        if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          const skillDir = path.join(root, entry.name);
-          const description = readSkillDescription(skillDir);
-          const src = sources.get(entry.name);
-          result.push({
-            name: entry.name,
-            disabled: false,
-            description,
-            source: src?.source ?? null,
-            sourceUrl: src?.sourceUrl ?? null,
-            sourceType: src?.sourceType ?? null,
-          });
-          seenNames.add(entry.name);
-        }
-      }
+      scanSkillDir(root, false, seenNames, result, sources);
     }
-
     for (const root of SKILL_ROOTS) {
-      const disabledDir = path.join(root, '.disabled');
-      if (!fs.existsSync(disabledDir)) continue;
-      for (const entry of fs.readdirSync(disabledDir, { withFileTypes: true })) {
-        if (entry.isDirectory() && !entry.name.startsWith('.') && !seenNames.has(entry.name)) {
-          const skillDir = path.join(disabledDir, entry.name);
-          const description = readSkillDescription(skillDir);
-          const src = sources.get(entry.name);
-          result.push({
-            name: entry.name,
-            disabled: true,
-            description,
-            source: src?.source ?? null,
-            sourceUrl: src?.sourceUrl ?? null,
-            sourceType: src?.sourceType ?? null,
-          });
-          seenNames.add(entry.name);
-        }
-      }
+      scanSkillDir(path.join(root, '.disabled'), true, seenNames, result, sources);
     }
     return result;
   }
@@ -289,17 +282,25 @@ export function registerPiToolHandlers(
   // 刷新：lockfile 即数据源，listSkills 每次实时读取，刷新只需重新列举（瞬时）。
   ipcMain.handle('pi:skills:refreshCache', () => ({ skills: listSkills() }));
 
-  ipcMain.handle('pi:skills:disable', (_e, payload: { name: string; source?: string | null }) => {
-    const found = findSkillRoot(payload.name);
+  /** 将 skill 移动到所在 root 的 .disabled/ 目录（启用 → 禁用）。 */
+  function disableSkillByName(name: string): { success: boolean; error?: string } {
+    const found = findSkillRoot(name);
     if (!found || found.disabled) return { success: false, error: 'Skill not found or already disabled' };
-    const src = path.join(found.root, payload.name);
-    const dst = path.join(found.root, '.disabled', payload.name);
-    const disabledDir = path.join(found.root, '.disabled');
-    if (!fs.existsSync(disabledDir)) fs.mkdirSync(disabledDir, { recursive: true });
-    fs.renameSync(src, dst);
-    // 禁用只是把目录移到 .disabled/，lockfile 条目保持不变，
-    // 故 source 在 listSkills() 中仍可从 lockfile 直接读到，无需额外记录。
-    return { success: true };
+    const src = path.join(found.root, name);
+    const dst = path.join(found.root, '.disabled', name);
+    try {
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.renameSync(src, dst);
+      // 禁用只是把目录移到 .disabled/，lockfile 条目保持不变，
+      // 故 source 在 listSkills() 中仍可从 lockfile 直接读到，无需额外记录。
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  }
+
+  ipcMain.handle('pi:skills:disable', (_e, payload: { name: string; source?: string | null }) => {
+    return disableSkillByName(payload.name);
   });
 
   ipcMain.handle('pi:skills:enable', (_e, name: string) => {
@@ -311,75 +312,48 @@ export function registerPiToolHandlers(
     return { success: true };
   });
 
-  ipcMain.handle('pi:skills:delete', async (_e, payload: { name: string; disabled?: boolean }) => {
-    // 先清理 skills CLI lockfile 条目（保持 version 3 结构，不破坏 CLI 兼容）；
-    // 无论启用/禁用态都清理——禁用只是把目录移到 .disabled/，lockfile 条目仍存在。
-    removeSkillFromLock(payload.name);
-
+  /** 从所有 skill root（含 .disabled/）删除指定名称的目录。返回是否删除了任何目录。 */
+  function removeSkillDirs(name: string): boolean {
     let deleted = false;
     for (const root of SKILL_ROOTS) {
-      const normal = path.join(root, payload.name);
+      const normal = path.join(root, name);
       if (fs.existsSync(normal)) {
         fs.rmSync(normal, { recursive: true, force: true });
         deleted = true;
       }
-      const disabled = path.join(root, '.disabled', payload.name);
+      const disabled = path.join(root, '.disabled', name);
       if (fs.existsSync(disabled)) {
         fs.rmSync(disabled, { recursive: true, force: true });
         deleted = true;
       }
     }
+    return deleted;
+  }
 
+  ipcMain.handle('pi:skills:delete', async (_e, payload: { name: string; disabled?: boolean }) => {
+    // 先清理 skills CLI lockfile 条目（保持 version 3 结构，不破坏 CLI 兼容）；
+    // 无论启用/禁用态都清理——禁用只是把目录移到 .disabled/，lockfile 条目仍存在。
+    removeSkillFromLock(payload.name);
+
+    const deleted = removeSkillDirs(payload.name);
     return { success: deleted, error: deleted ? undefined : 'Skill not found' };
   });
 
   ipcMain.handle('pi:skills:batchDisable', (_e, payload: { names: string[]; source?: string | null }) => {
-    const results: Array<{ name: string; success: boolean; error?: string }> = [];
-    for (const name of payload.names) {
-      const found = findSkillRoot(name);
-      if (!found || found.disabled) {
-        results.push({ name, success: false, error: 'Skill not found or already disabled' });
-        continue;
-      }
-      const src = path.join(found.root, name);
-      const dst = path.join(found.root, '.disabled', name);
-      const disabledDir = path.join(found.root, '.disabled');
-      try {
-        if (!fs.existsSync(disabledDir)) fs.mkdirSync(disabledDir, { recursive: true });
-        fs.renameSync(src, dst);
-        results.push({ name, success: true });
-      } catch (err) {
-        results.push({ name, success: false, error: String(err) });
-      }
-    }
-    return { results };
+    return { results: payload.names.map(name => ({ name, ...disableSkillByName(name) })) };
   });
 
   ipcMain.handle('pi:skills:batchDelete', async (_e, payload: { names: string[] }) => {
-    const results: Array<{ name: string; success: boolean; error?: string }> = [];
-    for (const name of payload.names) {
-      try {
-        removeSkillFromLock(name);
-
-        let deleted = false;
-        for (const root of SKILL_ROOTS) {
-          const normal = path.join(root, name);
-          if (fs.existsSync(normal)) {
-            fs.rmSync(normal, { recursive: true, force: true });
-            deleted = true;
-          }
-          const disabled = path.join(root, '.disabled', name);
-          if (fs.existsSync(disabled)) {
-            fs.rmSync(disabled, { recursive: true, force: true });
-            deleted = true;
-          }
+    return {
+      results: payload.names.map(name => {
+        try {
+          removeSkillFromLock(name);
+          return { name, success: removeSkillDirs(name) };
+        } catch (err) {
+          return { name, success: false, error: String(err) };
         }
-        results.push({ name, success: deleted });
-      } catch (err) {
-        results.push({ name, success: false, error: String(err) });
-      }
-    }
-    return { results };
+      }),
+    };
   });
 
   // ── Extensions ──
@@ -464,6 +438,34 @@ export function registerPiToolHandlers(
     }
   }
 
+  /** 全局与项目 settings.json 的路径列表（先全局后项目，写操作顺序无影响）。 */
+  function settingsPaths(): string[] {
+    return [settingsPathFor('global'), settingsPathFor('project')];
+  }
+
+  /**
+   * 从全局与项目的 settings.json 中移除指定 source 的 packages 条目。
+   * 返回是否修改了任何文件。
+   */
+  function removePackageFromSettings(source: string): boolean {
+    let changed = false;
+    for (const sp of settingsPaths()) {
+      if (!fs.existsSync(sp)) continue;
+      try {
+        const settings = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+        if (Array.isArray(settings.packages)) {
+          const before = settings.packages.length;
+          settings.packages = settings.packages.filter((p: unknown) => getPackageSourceString(p) !== source);
+          if (settings.packages.length !== before) {
+            changed = true;
+            fs.writeFileSync(sp, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+          }
+        }
+      } catch { /* 损坏的 settings 文件忽略 */ }
+    }
+    return changed;
+  }
+
   ipcMain.handle('pi:extensions:list', () => {
     const result: ExtItem[] = [];
     const seenNames = new Set<string>();
@@ -475,8 +477,7 @@ export function registerPiToolHandlers(
     scanLocalDir(projectDisabledExtDir, true, seenNames, result);
 
     // settings.json 的 packages 与 extensions 字段。
-    const globalSettingsPath = path.join(piAgentDir, 'settings.json');
-    const projectSettingsPath = path.join(process.cwd(), '.pi', 'settings.json');
+    const [globalSettingsPath, projectSettingsPath] = settingsPaths();
     const globalPkgs = readSettingsPackages(globalSettingsPath);
     const projectPkgs = readSettingsPackages(projectSettingsPath);
     const state = readPiToolState();
@@ -535,23 +536,7 @@ export function registerPiToolHandlers(
       }
     }
     if (payload.type === 'package') {
-      const settingsPaths = [path.join(piAgentDir, 'settings.json'), path.join(process.cwd(), '.pi', 'settings.json')];
-      let changed = false;
-      for (const sp of settingsPaths) {
-        if (fs.existsSync(sp)) {
-          try {
-            const settings = JSON.parse(fs.readFileSync(sp, 'utf-8'));
-            if (Array.isArray(settings.packages)) {
-              const before = settings.packages.length;
-              settings.packages = settings.packages.filter((p: unknown) => getPackageSourceString(p) !== payload.source);
-              if (settings.packages.length !== before) {
-                changed = true;
-                fs.writeFileSync(sp, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
-              }
-            }
-          } catch { /* empty */ }
-        }
-      }
+      const changed = removePackageFromSettings(payload.source);
       if (changed) {
         const st = readPiToolState();
         const list: string[] = (st.disabledExtensions as string[]) || [];
@@ -632,23 +617,7 @@ export function registerPiToolHandlers(
       }
     }
     if (payload.type === 'package') {
-      const settingsPaths = [path.join(piAgentDir, 'settings.json'), path.join(process.cwd(), '.pi', 'settings.json')];
-      let changed = false;
-      for (const sp of settingsPaths) {
-        if (fs.existsSync(sp)) {
-          try {
-            const settings = JSON.parse(fs.readFileSync(sp, 'utf-8'));
-            if (Array.isArray(settings.packages)) {
-              const before = settings.packages.length;
-              settings.packages = settings.packages.filter((p: unknown) => getPackageSourceString(p) !== payload.source);
-              if (settings.packages.length !== before) {
-                changed = true;
-                fs.writeFileSync(sp, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
-              }
-            }
-          } catch { /* empty */ }
-        }
-      }
+      const changed = removePackageFromSettings(payload.source);
       // 无论是否从 settings 移除，都清理 disabledExtensions 中的残留记录，
       // 否则「仅禁用未启用」的包会永远删不掉、记录残留。
       let stateChanged = false;
