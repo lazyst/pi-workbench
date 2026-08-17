@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execSync } from 'node:child_process';
+
 import { PI_DESKTOP_SYNC_FILE } from '../pi-desktop-sync-source';
 
 /**
@@ -153,12 +153,70 @@ export function registerPiToolHandlers(
     return undefined;
   }
 
+  /** 从 lockfile 读取到的 skill 来源元数据。 */
+  type SkillSourceInfo = { source: string; sourceUrl: string; sourceType: string };
+
+  /**
+   * skills CLI（npm 包 `skills`）维护的全局 lockfile 路径。
+   * 与 skills CLI 的 getSkillLockPath() 规则一致：
+   *   $XDG_STATE_HOME/skills/.skill-lock.json  或  ~/.agents/.skill-lock.json
+   * 直接读写此文件即可获取/维护 skill 来源元数据，无需调用 `npx skills`。
+   */
+  function getSkillLockPath(): string {
+    const xdg = process.env.XDG_STATE_HOME;
+    if (xdg) return path.join(xdg, 'skills', '.skill-lock.json');
+    return path.join(os.homedir(), '.agents', '.skill-lock.json');
+  }
+
+  /** 读取全局 skill lockfile，返回 name → SkillSourceInfo 映射。lockfile 缺失或损坏时返回空 Map。 */
+  function readSkillSources(): Map<string, SkillSourceInfo> {
+    const map = new Map<string, SkillSourceInfo>();
+    try {
+      const lockPath = getSkillLockPath();
+      if (!fs.existsSync(lockPath)) return map;
+      const parsed = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+      const skills = parsed?.skills;
+      if (skills && typeof skills === 'object') {
+        for (const [name, entry] of Object.entries(skills as Record<string, any>)) {
+          if (entry && typeof entry === 'object' && typeof entry.source === 'string') {
+            map.set(name, {
+              source: entry.source,
+              sourceUrl: typeof entry.sourceUrl === 'string' ? entry.sourceUrl : '',
+              sourceType: typeof entry.sourceType === 'string' ? entry.sourceType : '',
+            });
+          }
+        }
+      }
+    } catch { /* lockfile 损坏或不可读：当作无来源信息 */ }
+    return map;
+  }
+
+  /**
+   * 从全局 skill lockfile 中移除一个条目（仅在条目存在时写回）。
+   * 严格保持 lockfile 的 version 3 结构与字段，避免破坏 skills CLI 兼容性。
+   */
+  function removeSkillFromLock(name: string): void {
+    try {
+      const lockPath = getSkillLockPath();
+      if (!fs.existsSync(lockPath)) return;
+      const parsed = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+      if (!parsed || typeof parsed !== 'object' || !parsed.skills || typeof parsed.skills !== 'object') return;
+      if (!(name in parsed.skills)) return;
+      delete parsed.skills[name];
+      fs.writeFileSync(lockPath, JSON.stringify(parsed, null, 2), 'utf-8');
+    } catch { /* lockfile 不可写或损坏：忽略，文件系统删除仍会执行 */ }
+  }
+
   function findSkillRoot(name: string): { root: string; disabled: boolean } | null {
+    // 先跨所有 root 查启用，再查禁用——与 listSkills 的去重优先级一致。
+    // 旧版单 root 内“先启用后禁用”的顺序，在跨 root 有残留禁用副本时会误判为已禁用。
     for (const root of SKILL_ROOTS) {
       const normal = path.join(root, name);
       if (fs.existsSync(normal) && fs.statSync(normal).isDirectory()) {
         return { root, disabled: false };
       }
+    }
+    for (const root of SKILL_ROOTS) {
       const disabled = path.join(root, '.disabled', name);
       if (fs.existsSync(disabled) && fs.statSync(disabled).isDirectory()) {
         return { root, disabled: true };
@@ -177,9 +235,8 @@ export function registerPiToolHandlers(
   }
 
   function listSkills(): SkillInfo[] {
-    const state = readPiToolState();
-    const sourceCache: Record<string, { source: string; sourceUrl: string; sourceType: string }> =
-      (state.skillSourceCache as any) || {};
+    // lockfile 即 skills CLI 维护的来源缓存，实时读取（小文件），无需再缓存到 pi-tool-state.json。
+    const sources = readSkillSources();
 
     const result: SkillInfo[] = [];
     const seenNames = new Set<string>();
@@ -190,14 +247,14 @@ export function registerPiToolHandlers(
         if (entry.isDirectory() && !entry.name.startsWith('.')) {
           const skillDir = path.join(root, entry.name);
           const description = readSkillDescription(skillDir);
-          const cached = sourceCache[entry.name];
+          const src = sources.get(entry.name);
           result.push({
             name: entry.name,
             disabled: false,
             description,
-            source: cached?.source ?? null,
-            sourceUrl: cached?.sourceUrl ?? null,
-            sourceType: cached?.sourceType ?? null,
+            source: src?.source ?? null,
+            sourceUrl: src?.sourceUrl ?? null,
+            sourceType: src?.sourceType ?? null,
           });
           seenNames.add(entry.name);
         }
@@ -211,14 +268,14 @@ export function registerPiToolHandlers(
         if (entry.isDirectory() && !entry.name.startsWith('.') && !seenNames.has(entry.name)) {
           const skillDir = path.join(disabledDir, entry.name);
           const description = readSkillDescription(skillDir);
-          const cached = sourceCache[entry.name];
+          const src = sources.get(entry.name);
           result.push({
             name: entry.name,
             disabled: true,
             description,
-            source: cached?.source ?? null,
-            sourceUrl: cached?.sourceUrl ?? null,
-            sourceType: cached?.sourceType ?? null,
+            source: src?.source ?? null,
+            sourceUrl: src?.sourceUrl ?? null,
+            sourceType: src?.sourceType ?? null,
           });
           seenNames.add(entry.name);
         }
@@ -227,40 +284,10 @@ export function registerPiToolHandlers(
     return result;
   }
 
-  function refreshSkillSourceCache(): void {
-    try {
-      const output = execSync('npx skills ls -g --json', {
-        encoding: 'utf-8',
-        timeout: 30000,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-        shell: true,
-      });
-      const npxResults: any[] = JSON.parse(output);
-      const cache: Record<string, { source: string; sourceUrl: string; sourceType: string }> = {};
-      for (const skill of npxResults) {
-        if (skill.source) {
-          cache[skill.name] = {
-            source: skill.source,
-            sourceUrl: skill.sourceUrl || '',
-            sourceType: skill.sourceType || '',
-          };
-        }
-      }
-      const state = readPiToolState();
-      state.skillSourceCache = cache;
-      writePiToolState(state);
-    } catch {
-      // npx skills 不可用时跳过
-    }
-  }
-
   ipcMain.handle('pi:skills:list', () => ({ skills: listSkills() }));
 
-  ipcMain.handle('pi:skills:refreshCache', () => {
-    refreshSkillSourceCache();
-    return { skills: listSkills() };
-  });
+  // 刷新：lockfile 即数据源，listSkills 每次实时读取，刷新只需重新列举（瞬时）。
+  ipcMain.handle('pi:skills:refreshCache', () => ({ skills: listSkills() }));
 
   ipcMain.handle('pi:skills:disable', (_e, payload: { name: string; source?: string | null }) => {
     const found = findSkillRoot(payload.name);
@@ -270,14 +297,8 @@ export function registerPiToolHandlers(
     const disabledDir = path.join(found.root, '.disabled');
     if (!fs.existsSync(disabledDir)) fs.mkdirSync(disabledDir, { recursive: true });
     fs.renameSync(src, dst);
-    if (payload.source) {
-      try {
-        const state = readPiToolState();
-        if (!state.disabledSkills) state.disabledSkills = {};
-        (state.disabledSkills as Record<string, string>)[payload.name] = payload.source;
-        writePiToolState(state);
-      } catch { /* ignore */ }
-    }
+    // 禁用只是把目录移到 .disabled/，lockfile 条目保持不变，
+    // 故 source 在 listSkills() 中仍可从 lockfile 直接读到，无需额外记录。
     return { success: true };
   });
 
@@ -287,29 +308,13 @@ export function registerPiToolHandlers(
     const src = path.join(found.root, '.disabled', name);
     const dst = path.join(found.root, name);
     fs.renameSync(src, dst);
-    try {
-      const state = readPiToolState();
-      if (state.disabledSkills && typeof state.disabledSkills === 'object') {
-        delete (state.disabledSkills as Record<string, string>)[name];
-        writePiToolState(state);
-      }
-    } catch { /* ignore */ }
     return { success: true };
   });
 
   ipcMain.handle('pi:skills:delete', async (_e, payload: { name: string; disabled?: boolean }) => {
-    if (!payload.disabled) {
-      try {
-        execSync(`npx skills remove "${payload.name}" -g -y`, {
-          timeout: 15000,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          windowsHide: true,
-          shell: true,
-        });
-      } catch {
-        // npx skills remove 失败，fallback 到文件系统
-      }
-    }
+    // 先清理 skills CLI lockfile 条目（保持 version 3 结构，不破坏 CLI 兼容）；
+    // 无论启用/禁用态都清理——禁用只是把目录移到 .disabled/，lockfile 条目仍存在。
+    removeSkillFromLock(payload.name);
 
     let deleted = false;
     for (const root of SKILL_ROOTS) {
@@ -324,14 +329,6 @@ export function registerPiToolHandlers(
         deleted = true;
       }
     }
-
-    try {
-      const state = readPiToolState();
-      if (state.disabledSkills && typeof state.disabledSkills === 'object') {
-        delete (state.disabledSkills as Record<string, string>)[payload.name];
-        writePiToolState(state);
-      }
-    } catch { /* ignore */ }
 
     return { success: deleted, error: deleted ? undefined : 'Skill not found' };
   });
@@ -355,18 +352,6 @@ export function registerPiToolHandlers(
         results.push({ name, success: false, error: String(err) });
       }
     }
-    if (payload.source) {
-      try {
-        const state = readPiToolState();
-        if (!state.disabledSkills) state.disabledSkills = {};
-        for (const r of results) {
-          if (r.success) {
-            (state.disabledSkills as Record<string, string>)[r.name] = payload.source;
-          }
-        }
-        writePiToolState(state);
-      } catch { /* ignore */ }
-    }
     return { results };
   });
 
@@ -374,14 +359,7 @@ export function registerPiToolHandlers(
     const results: Array<{ name: string; success: boolean; error?: string }> = [];
     for (const name of payload.names) {
       try {
-        try {
-          execSync(`npx skills remove "${name}" -g -y`, {
-            timeout: 15000,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            windowsHide: true,
-            shell: true,
-          });
-        } catch { /* fallback */ }
+        removeSkillFromLock(name);
 
         let deleted = false;
         for (const root of SKILL_ROOTS) {
@@ -401,17 +379,6 @@ export function registerPiToolHandlers(
         results.push({ name, success: false, error: String(err) });
       }
     }
-    try {
-      const state = readPiToolState();
-      if (state.disabledSkills && typeof state.disabledSkills === 'object') {
-        for (const r of results) {
-          if (r.success) {
-            delete (state.disabledSkills as Record<string, string>)[r.name];
-          }
-        }
-        writePiToolState(state);
-      }
-    } catch { /* ignore */ }
     return { results };
   });
 
