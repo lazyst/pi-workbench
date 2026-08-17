@@ -1,5 +1,5 @@
 import type { TerminalProfile } from '../../renderer/src/types';
-import type { UnifiedTerminalPool } from '../unifiedTerminalPool';
+import type { TerminalInfo, UnifiedTerminalPool } from '../unifiedTerminalPool';
 import type { PtyOwnershipRegistry } from '../ptyOwnershipRegistry';
 import { detectTerminalProfiles } from '../shellProfiles';
 
@@ -16,6 +16,17 @@ export function registerTerminalHandlers(
   ensureAppWorkDir: () => string,
   ptyRegistry: PtyOwnershipRegistry,
 ): void {
+  /** 创建终端后推送列表；失败时记日志并拋出友好错误。 */
+  const createAndList = (factory: () => TerminalInfo, label: string, errMsg: string): TerminalInfo => {
+    try {
+      const info = factory();
+      pushTerminalList();
+      return info;
+    } catch (err) {
+      console.error(`[terminal:${label}] failed:`, err);
+      throw new Error(errMsg);
+    }
+  };
   // 渲染进程告知主进程某个 PTY 的初始 owner key
   // 用于主进程在 PTY 退出时清理所有关联的 sub-session
   ipcMain.on('session:register-pty-owner', (_e, { ptyId, ownerKey }: { ptyId: string; ownerKey: string }) => {
@@ -26,16 +37,9 @@ export function registerTerminalHandlers(
   const terminalBuffers = new Map<string, string>();
 
   // terminal:spawn — 创建终端（pi 会话或 shell 终端，由 SpawnOptions.command 区分）
-  ipcMain.handle('terminal:spawn', async (_e, req: { command?: string; cwd: string; profile?: TerminalProfile; sessionFile?: string; name?: string; key?: string }) => {
-    try {
-      const info = unifiedPool.create(req);
-      pushTerminalList();
-      return info;
-    } catch (err) {
-      console.error('[terminal:spawn] failed:', err);
-      throw new Error('无法启动终端，请确认 pi 或 shell 可用');
-    }
-  });
+  ipcMain.handle('terminal:spawn', (_e, req: { command?: string; cwd: string; profile?: TerminalProfile; sessionFile?: string; name?: string; key?: string }) =>
+    createAndList(() => unifiedPool.create(req), 'spawn', '无法启动终端，请确认 pi 或 shell 可用'),
+  );
 
   // terminal:listProfiles — 列出可用 shell profile
   ipcMain.handle('terminal:listProfiles', () => detectTerminalProfiles());
@@ -44,29 +48,14 @@ export function registerTerminalHandlers(
   ipcMain.handle('terminal:list', () => unifiedPool.list());
 
   // terminal:create — 旧版集成终端创建入口
-  ipcMain.handle('terminal:create', (_e, req: { profile: TerminalProfile; cwd: string }) => {
-    try {
-      const info = unifiedPool.create({ command: undefined, cwd: req.cwd, profile: req.profile });
-      pushTerminalList();
-      return info;
-    } catch (err) {
-      console.error('[terminal:create] failed:', err);
-      throw new Error('无法启动集成终端');
-    }
-  });
+  ipcMain.handle('terminal:create', (_e, req: { profile: TerminalProfile; cwd: string }) =>
+    createAndList(() => unifiedPool.create({ command: undefined, cwd: req.cwd, profile: req.profile }), 'create', '无法启动集成终端'),
+  );
 
   // terminal:createInAppWorkDir — 在工作目录创建
-  ipcMain.handle('terminal:createInAppWorkDir', (_e, req: { profile: TerminalProfile }) => {
-    try {
-      const cwd = ensureAppWorkDir();
-      const info = unifiedPool.create({ command: undefined, cwd, profile: req.profile });
-      pushTerminalList();
-      return info;
-    } catch (err) {
-      console.error('[terminal:createInAppWorkDir] failed:', err);
-      throw new Error('无法在应用工作目录启动集成终端');
-    }
-  });
+  ipcMain.handle('terminal:createInAppWorkDir', (_e, req: { profile: TerminalProfile }) =>
+    createAndList(() => unifiedPool.create({ command: undefined, cwd: ensureAppWorkDir(), profile: req.profile }), 'createInAppWorkDir', '无法在应用工作目录启动集成终端'),
+  );
 
   // terminal:input — 键盘输入
   ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => unifiedPool.write(m.id, m.data));

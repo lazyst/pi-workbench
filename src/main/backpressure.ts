@@ -104,11 +104,7 @@ export class BackpressureController {
   /** 实例销毁 / 进程退出时强制恢复（对齐 VS Code clearUnacknowledgedChars + force resume）。
    * 会触发 onResume 回调恢复 PTY 输出。同时退出 writeSync 模式。 */
   dispose(): void {
-    if (this.paused) {
-      this.paused = false;
-      this.onResume();
-    }
-    this.inflight = 0;
+    this.clearUnacknowledgedChars();
     this._writeSyncMode = false;
   }
 

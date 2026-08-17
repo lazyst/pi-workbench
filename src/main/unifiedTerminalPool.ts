@@ -36,12 +36,25 @@ import {
 // 减少 IPC 消息量）。
 const DATA_BUFFER_MS = 5;
 
+/** pi-tui 模式切换序列的时间窗口：\x1b[?1049l 与 \x1b[?2004h 在此窗口内连续出现
+ * 唯一标识一次 fullscreen→regular 切换（pi 正常退出时只写前者不写后者）。 */
+const MODE_SWITCH_WINDOW_MS = 2000;
+
+/** 从 .jsonl 会话文件首行解析 cwd，不存在时回退 safeCwd。 */
+function resolveCwdFromSessionFile(sessionFile: string, safeCwd: string): string {
+  try {
+    const line = fs.readFileSync(sessionFile, 'utf8').split('\n', 1)[0];
+    const obj = JSON.parse(line);
+    return typeof obj?.cwd === 'string' && fs.existsSync(obj.cwd) ? obj.cwd : safeCwd;
+  } catch { return safeCwd; }
+}
+
 /**
  * 检查操作系统进程是否仍在运行。
  * 在 Windows conpty 下，node-pty 的 `exit` 事件通过 `WaitForSingleObject`
- * 监视进程句柄触发。理想情况下这反映进程真实退出，但某些场景下（如 conpty
- * 内部处理 alt screen 切换）进程句柄可能误触发而进程实际仍存活。
- * 此检查通过 `process.kill(pid, 0)` 验证进程真实存在性。
+ * 监视进程句柄触发。但某些场景下（如 conpty 内部处理 alt screen 切换）
+ * 进程句柄可能误触发而进程实际仍存活。
+ * 通过 `process.kill(pid, 0)` 验证进程真实存在性。
  */
 function isProcessAlive(pid: number): boolean {
   try {
@@ -264,16 +277,7 @@ export class UnifiedTerminalPool {
    * Pi 退出通过 OSC 133 D 序列检测，通知 UI 更新状态。 */
   private spawnPi(opts: SpawnOptions): TerminalInfo {
     const safeCwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : process.cwd();
-    // 打开已有 .jsonl 时从文件首行解析 cwd，优先于传入的 cwd
-    const resolvedCwd = opts.sessionFile
-      ? (() => {
-          try {
-            const line = fs.readFileSync(opts.sessionFile!, 'utf8').split('\n', 1)[0];
-            const obj = JSON.parse(line);
-            return typeof obj?.cwd === 'string' && fs.existsSync(obj.cwd) ? obj.cwd : safeCwd;
-          } catch { return safeCwd; }
-        })()
-      : safeCwd;
+    const resolvedCwd = opts.sessionFile ? resolveCwdFromSessionFile(opts.sessionFile, safeCwd) : safeCwd;
     const id = opts.key ?? `live-${randomUUID()}`;
 
     // 环境变量：不设 TERM_PROGRAM=vscode 以免触发用户的 VS Code shell integration（
@@ -418,11 +422,9 @@ export class UnifiedTerminalPool {
               doInject();
             }, POST_READY_FALLBACK_MS);
           }
-          // 剥离标记后的数据发给渲染端
-          if (result.output) this.emitData(id, result.output);
-        } else if (result.output) {
-          this.emitData(id, result.output);
         }
+        // 剥离标记后的数据发给渲染端（matched 与未匹配在此路径汇合）
+        if (result.output) this.emitData(id, result.output);
       } else {
         // 转发数据到渲染端。
         //
@@ -595,43 +597,27 @@ export class UnifiedTerminalPool {
   }
 
   /** 检测 PTY 输出中的 pi-tui 模式切换序列（\x1b[?1049l 退出 alt screen、\x1b[?2004h 启用 bracketed paste）。
-   * 两者在 2 秒窗口内连续出现唯一标识一次 fullscreen→regular 模式切换，
+   * 两者在 MODE_SWITCH_WINDOW_MS 窗口内连续出现唯一标识一次 fullscreen→regular 模式切换，
    * 用于在 exit 事件误报时抑制终端关闭。 */
   private trackTuiModeSwitch(id: string, data: string): void {
     const e = this.entries.get(id);
     if (!e) return;
     const now = Date.now();
-    // 检测 \x1b[?1049l 退出 alt screen
-    if (data.includes('\x1b[?1049l')) {
-      e.altScreenExitTime = now;
-      console.log(`[terminal] trackTuiModeSwitch: detected \\x1b[?1049l for ${id}`);
-    }
-    // 检测 \x1b[?2004h 启用 bracketed paste（新 TUI terminal.start() 写入）
-    if (data.includes('\x1b[?2004h')) {
-      e.bracketedPasteTime = now;
-      console.log(`[terminal] trackTuiModeSwitch: detected \\x1b[?2004h for ${id}`);
-    }
+    if (data.includes('\x1b[?1049l')) e.altScreenExitTime = now;
+    if (data.includes('\x1b[?2004h')) e.bracketedPasteTime = now;
   }
 
-  /** 判断 entry 是否在最近 2 秒内经历了完整的模式切换序列，
+  /** 判断 entry 是否在 MODE_SWITCH_WINDOW_MS 内经历了完整的模式切换序列，
    * 即 \x1b[?1049l（退出 alt screen）后跟 \x1b[?2004h（启用 bracketed paste）。
-   * 这个序列组合唯一标识 pi-tui 的 fullscreen→regular 切换，
-   * 而 pi 正常退出时只写 \x1b[?1049l 不写 \x1b[?2004h。 */
+   * pi 正常退出时只写前者不写后者。 */
   private isTuiModeSwitch(e: Entry): boolean {
     if (!e.altScreenExitTime || !e.bracketedPasteTime) return false;
     const now = Date.now();
-    const MODE_SWITCH_WINDOW_MS = 2000;
-    const altScreenAge = now - e.altScreenExitTime;
-    const bracketedPasteAge = now - e.bracketedPasteTime;
-    const result = (
-      altScreenAge < MODE_SWITCH_WINDOW_MS &&
-      bracketedPasteAge < MODE_SWITCH_WINDOW_MS &&
+    return (
+      now - e.altScreenExitTime < MODE_SWITCH_WINDOW_MS &&
+      now - e.bracketedPasteTime < MODE_SWITCH_WINDOW_MS &&
       e.bracketedPasteTime >= e.altScreenExitTime
     );
-    if (result) {
-      console.log(`[terminal] isTuiModeSwitch: MATCH altScreenAge=${altScreenAge}ms bracketedPasteAge=${bracketedPasteAge}ms`);
-    }
-    return result;
   }
 
   /** 键盘输入 → pty.write。 */
