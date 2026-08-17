@@ -58,16 +58,22 @@ export function acquirePane({ key, kind, pi }: AcquireOptions): XtermTerminal {
   const existing = panes.get(key);
   if (existing) return existing; // keep-alive：已存在则直接复用，不重建（避免 WebGL 重探测首帧闪）。
 
-  const channel: TerminalChannel =
-    kind === 'unified'
-      ? new UnifiedChannel(pi, key)
-      : kind === 'integrated'
-        ? new IntegratedChannel(pi, key)
-        : new SessionChannel(pi, key);
-
+  const channel = createChannel(kind, pi, key);
   const term = new XtermTerminal({ sessionKey: key, channel, pi });
   panes.set(key, term);
   return term;
+}
+
+/** 按终端种类构造对应的通道（差异仅在 channel 构造，其余逻辑复用同一 XtermTerminal）。 */
+function createChannel(kind: PaneKind, pi: PiApi, key: string): TerminalChannel {
+  switch (kind) {
+    case 'unified':
+      return new UnifiedChannel(pi, key);
+    case 'integrated':
+      return new IntegratedChannel(pi, key);
+    default:
+      return new SessionChannel(pi, key);
+  }
 }
 
 /**

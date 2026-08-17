@@ -84,7 +84,6 @@ import {
 } from '../lib/terminal/scroll';
 import type { ScrollState } from '../lib/terminal/scroll';
 import {
-  syncTerminalScrollIntentFromViewport,
   enforceTerminalCurrentScrollIntent,
 } from '../lib/terminal/scroll-intent';
 import { TerminalStructuralReplayCoordinator } from '../lib/terminal/structural-replay-coordinator'
@@ -100,152 +99,102 @@ import { attachTerminalScrollIntentTracking } from '../lib/terminal/scroll-inten
 // 双层减少 IPC 消息量和 term.write() 调用次数。
 // xterm.js 内部有 write 缓冲，短时间内大量 write() 调用会自动合并渲染。
 
-/** 从主进程注入的初始配置读取 scrollback 值，进程内恒定（不热更新）。
- * 新建终端时构造 xterm 选项用此值，已存在的终端不受滚动设置变更影响。
- * 回退默认 5000，夹在 [SCROLLBACK_MIN, SCROLLBACK_MAX] 区间。 */
-function getScrollback(): number {
+// —— 初始配置读取助手 ——
+// 各 getXxx() 共享同一模式：try/catch 读 (window as any).pi?.getInitialConfig?.()，
+// 校验/归一化字段后回退 defaultConfig()。readConfig 收编 try/catch + 回退样板，
+// 归一化器负责类型校验与 clamp/round/trim。defaultConfig() 仅在回退路径求值（惰性），
+// 与原实现一致。
+type ConfigNormalizer<T> = (raw: unknown) => T | undefined;
+
+function readConfig<T>(key: string, fallback: () => T, normalize: ConfigNormalizer<T>): T {
   try {
     const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.scrollback === 'number') {
-      return Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(cfg.scrollback)));
+    if (cfg) {
+      const v = normalize(cfg[key]);
+      if (v !== undefined) return v;
     }
   } catch {
     /* 无注入配置（如测试）时回退默认 */
   }
-  return defaultConfig().scrollback;
+  return fallback();
 }
 
-/** 从初始配置读取 cursorBlink。 */
+const asBoolean: ConfigNormalizer<boolean> = (v) => (typeof v === 'boolean' ? v : undefined);
+const asNonEmptyString: ConfigNormalizer<string> = (v) =>
+  typeof v === 'string' && v.trim() ? v.trim() : undefined;
+const clampInt = (min: number, max: number): ConfigNormalizer<number> => (v) =>
+  typeof v === 'number' ? Math.min(max, Math.max(min, Math.round(v))) : undefined;
+const clampNum = (min: number, max: number): ConfigNormalizer<number> => (v) =>
+  typeof v === 'number' ? Math.min(max, Math.max(min, v)) : undefined;
+const oneOf = <T extends string>(values: readonly T[]): ConfigNormalizer<T> => (v) =>
+  (values as readonly string[]).includes(v as string) ? (v as T) : undefined;
+
+const FONT_WEIGHTS: readonly FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+
+/** 从主进程注入的初始配置读取 scrollback 值，进程内恒定（不热更新）。
+ * 新建终端时构造 xterm 选项用此值，已存在的终端不受滚动设置变更影响。
+ * 回退默认 5000，夹在 [SCROLLBACK_MIN, SCROLLBACK_MAX] 区间。 */
+function getScrollback(): number {
+  return readConfig('scrollback', () => defaultConfig().scrollback, (v) =>
+    typeof v === 'number' ? Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(v))) : undefined);
+}
+
 function getCursorBlink(): boolean {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.cursorBlink === 'boolean') return cfg.cursorBlink;
-  } catch { /* */ }
-  return defaultConfig().cursorBlink;
+  return readConfig('cursorBlink', () => defaultConfig().cursorBlink, asBoolean);
 }
 
-/** 从初始配置读取 cursorStyle。 */
 function getCursorStyle(): 'block' | 'bar' | 'underline' {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    const v = cfg?.cursorStyle;
-    if (v === 'block' || v === 'bar' || v === 'underline') return v;
-  } catch { /* */ }
-  return defaultConfig().cursorStyle;
+  return readConfig('cursorStyle', () => defaultConfig().cursorStyle, oneOf(['block', 'bar', 'underline']));
 }
 
-/** 从初始配置读取 cursorInactiveStyle。 */
 function getCursorInactiveStyle(): 'none' | 'outline' | 'block' | 'bar' | 'underline' {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    const v = cfg?.cursorInactiveStyle;
-    if (v === 'none' || v === 'outline' || v === 'block' || v === 'bar' || v === 'underline') return v;
-  } catch { /* */ }
-  return defaultConfig().cursorInactiveStyle;
+  return readConfig('cursorInactiveStyle', () => defaultConfig().cursorInactiveStyle, oneOf(['none', 'outline', 'block', 'bar', 'underline']));
 }
 
-/** 从初始配置读取 cursorWidth。 */
 function getCursorWidth(): number {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.cursorWidth === 'number') return Math.min(25, Math.max(1, Math.round(cfg.cursorWidth)));
-  } catch { /* */ }
-  return defaultConfig().cursorWidth;
+  return readConfig('cursorWidth', () => defaultConfig().cursorWidth, clampInt(1, 25));
 }
 
-/** 从初始配置读取 fontFamily。 */
 function getFontFamily(): string {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.fontFamily === 'string' && cfg.fontFamily.trim()) return cfg.fontFamily.trim();
-  } catch { /* */ }
-  return defaultConfig().fontFamily;
+  return readConfig('fontFamily', () => defaultConfig().fontFamily, asNonEmptyString);
 }
 
-/** 从初始配置读取 lineHeight。 */
 function getLineHeight(): number {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.lineHeight === 'number') return Math.min(3.0, Math.max(0.5, cfg.lineHeight));
-  } catch { /* */ }
-  return defaultConfig().lineHeight;
+  return readConfig('lineHeight', () => defaultConfig().lineHeight, clampNum(0.5, 3.0));
 }
 
-/** 从初始配置读取 letterSpacing。 */
 function getLetterSpacing(): number {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.letterSpacing === 'number') return Math.min(20, Math.max(-5, Math.round(cfg.letterSpacing)));
-  } catch { /* */ }
-  return defaultConfig().letterSpacing;
+  return readConfig('letterSpacing', () => defaultConfig().letterSpacing, clampInt(-5, 20));
 }
 
-/** 从初始配置读取 fontWeight。 */
 function getFontWeight(): FontWeight {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    const v = cfg?.fontWeight;
-    const valid: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
-    if (valid.includes(v)) return v;
-  } catch { /* */ }
-  return defaultConfig().fontWeight;
+  return readConfig('fontWeight', () => defaultConfig().fontWeight, oneOf(FONT_WEIGHTS));
 }
 
-/** 从初始配置读取 fontWeightBold。 */
 function getFontWeightBold(): FontWeight {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    const v = cfg?.fontWeightBold;
-    const valid: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
-    if (valid.includes(v)) return v;
-  } catch { /* */ }
-  return defaultConfig().fontWeightBold;
+  return readConfig('fontWeightBold', () => defaultConfig().fontWeightBold, oneOf(FONT_WEIGHTS));
 }
 
-/** 从初始配置读取 scrollSensitivity。 */
 function getScrollSensitivity(): number {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.scrollSensitivity === 'number') return Math.min(20, Math.max(0.1, cfg.scrollSensitivity));
-  } catch { /* */ }
-  return defaultConfig().scrollSensitivity;
+  return readConfig('scrollSensitivity', () => defaultConfig().scrollSensitivity, clampNum(0.1, 20));
 }
 
-/** 从初始配置读取 fastScrollSensitivity。 */
 function getFastScrollSensitivity(): number {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.fastScrollSensitivity === 'number') return Math.min(100, Math.max(1, Math.round(cfg.fastScrollSensitivity)));
-  } catch { /* */ }
-  return defaultConfig().fastScrollSensitivity;
+  return readConfig('fastScrollSensitivity', () => defaultConfig().fastScrollSensitivity, clampInt(1, 100));
 }
 
-/** 从初始配置读取 scrollbarWidth。 */
 function getScrollbarWidth(): number {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.scrollbarWidth === 'number') return Math.min(40, Math.max(6, Math.round(cfg.scrollbarWidth)));
-  } catch { /* */ }
-  return defaultConfig().scrollbarWidth;
+  return readConfig('scrollbarWidth', () => defaultConfig().scrollbarWidth, clampInt(6, 40));
 }
 
 /** 从初始配置读取 customGlyphs（是否为 Box Drawing / Powerline 等绘制自定义字形）。 */
 function getCustomGlyphs(): boolean {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    if (cfg && typeof cfg.customGlyphs === 'boolean') return cfg.customGlyphs;
-  } catch { /* */ }
-  return defaultConfig().customGlyphs;
+  return readConfig('customGlyphs', () => defaultConfig().customGlyphs, asBoolean);
 }
 
 /** 从初始配置读取 gpuAcceleration（'auto' | 'on' | 'off'）。 */
 function getGpuAcceleration(): 'auto' | 'on' | 'off' {
-  try {
-    const cfg = (window as any).pi?.getInitialConfig?.();
-    const v = cfg?.gpuAcceleration;
-    if (v === 'auto' || v === 'on' || v === 'off') return v;
-  } catch { /* */ }
-  return defaultConfig().gpuAcceleration;
+  return readConfig('gpuAcceleration', () => defaultConfig().gpuAcceleration, oneOf(['auto', 'on', 'off']));
 }
 
 /** 对齐 VS Code IProcessDataEvent：携带 trackCommit 标记的数据事件。
@@ -375,7 +324,7 @@ export class XtermTerminal implements LiveTerminal {
   private _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // —— 写完成 Promise（对齐 VS Code IProcessDataEvent.writePromise）——
-  // 由 _writeProcessData 在 trackCommit=true 时设置，供 flush() 等待实际输出被 xterm 解析完成。
+  // 由 _writeProcessDataViaScheduler 在 trackCommit=true 时设置，供 flush() 等待实际输出被 xterm 解析完成。
   // 替代此前 (this as any)._pendingWritePromise 的类型 hack。
   private _pendingWritePromise: Promise<void> | undefined;
 
@@ -659,14 +608,6 @@ export class XtermTerminal implements LiveTerminal {
         }
       }, 20);
     });
-  }
-
-  /** 刷出剩余未确认的 ack 字符。
-   * 当需要立即发送 ack 时调用（如 unmount/flush 时），确保 ackBufferer 中不足
-   * CharCountAckSize 的剩余字符被立即发送，避免尾部 ack 积压。
-   * 代理到 ackBufferer.flush()，确保状态单一来源。 */
-  private flushAck(): void {
-    this.ackBufferer?.flush();
   }
 
   /**
@@ -1510,27 +1451,12 @@ export class XtermTerminal implements LiveTerminal {
         const classifier = MouseWheelClassifier.INSTANCE;
         classifier.accept(e.deltaX, e.deltaY);
         const isPhysical = classifier.isPhysicalMouseWheel();
-        // 触控板/魔术鼠标：无论用户偏好如何，始终禁用平滑滚动，
-        // 避免与系统触控板手势冲突。
-        if (!isPhysical) {
-          const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
-          if (currentDuration !== 0) {
-            this.term!.options.smoothScrollDuration = 0;
-          }
-          return;
-        }
-        // 物理滚轮：仅当用户启用了平滑滚动时才启用
-        if (!this._smoothScrolling) {
-          const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
-          if (currentDuration !== 0) {
-            this.term!.options.smoothScrollDuration = 0;
-          }
-          return;
-        }
-        // 用户启用平滑滚动 + 物理滚轮 → 启用平滑滚动动画
+        // 目标时长：触控板始终为 0（避免与系统触控板手势冲突）；
+        // 物理滚轮仅当用户启用了平滑滚动时才为 125，否则为 0。
+        const targetDuration = isPhysical && this._smoothScrolling ? 125 : 0;
         const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
-        if (currentDuration !== 125) {
-          this.term!.options.smoothScrollDuration = 125;
+        if (currentDuration !== targetDuration) {
+          this.term!.options.smoothScrollDuration = targetDuration;
         }
       };
       term.element?.addEventListener('wheel', wheelHandler, { passive: true });
@@ -1553,11 +1479,11 @@ export class XtermTerminal implements LiveTerminal {
     });
 
     // 输出：主进程 pty 数据（经主进程 emitData 5ms 聚合）→ IPC → 渲染端二次聚合（5ms 时间窗 + 64KB 上限）
-    // → 聚合后统一 _segmentByShellIntegration → _writeProcessData。双层聚合减少 term.write() 调用次数。
+    // → 聚合后统一 _segmentByShellIntegration → _writeProcessDataViaScheduler。双层聚合减少 term.write() 调用次数。
     this.stopBuffering = this.channel.onData((data) => this.handleProcessData(this.sessionKey, data));
 
     // 背压累积缓冲（对齐 VS Code AckDataBufferer 独立类）：
-    // 在 _writeProcessData 的 xterm.write 回调中调用 ackBufferer.ack(data.length)，
+    // 在 _writeProcessDataViaScheduler 的 xterm.write 回调中调用 ackBufferer.ack(data.length)，
     // 累积到 CharCountAckSize 阈值时发送 ack IPC，减少通信频次。
     this.ackBufferer = new AckDataBufferer(
       (len) => this.pi.acknowledgeDataEvent?.(this.sessionKey, len),
@@ -1739,9 +1665,7 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /** 启动 WebGL 渲染去同步检测器。仅当 WebGL 启用时有效。
-   * 检测器内部守卫 this.webgl 和 this.active，非 WebGL 模式静默跳过。
-  /** 处理 PTY 输出数据：按 OSC 633 切分后写入 xterm。 } */
+  /** 处理 PTY 输出数据：按 OSC 633 切分后写入 xterm。 */
   private handleProcessData(id: string, data: string): void {
     if (id !== this.sessionKey || !this.term) return;
 
@@ -1867,152 +1791,6 @@ export class XtermTerminal implements LiveTerminal {
     if (cmdCap?.handleSequence(body)) return;
     const cwdCap = this.caps.get<CwdDetectionCapability>(TerminalCapability.CwdDetection);
     cwdCap?.handleProperty(body);
-  }
-
-  /** 写入一段数据，回复背压 ack，但**不创建 writePromise**（对齐 VS Code _writeProcessData 的 trackCommit=false 语义）。
-   * 用于 shell integration 的 OSC 633 前导标记（如 \x1b]633;C\x07 等），不携带实际输出，
-   * 不需要调用方 await 写完成，故不创建 writePromise。
-   *
-   * 与 VSCode 对齐：VSCode 在 _writeProcessData 中为所有写入（包括前导段）都调用
-   * acknowledgeDataEvent(data.length)，本方法同样调用 ackBufferer.ack(data.length)，
-   * 使 inflight 准确反映所有已发出但未确认的字符（含 OSC 标记），确保背压水位正确。
-   *
-   * 与 _writeProcessData 的区别：仅缺少 trackCommit（不创建 writePromise），
-   * ack 行为完全一致——所有段都调 ackBufferer.ack，用 inflight 准确反映。
-   *
-   * flush 对齐：递增 _latestWriteSeq 并在回调中推进 _latestParsedSeq，
-   * 使 flush 的写完成确认涵盖所有写入段。 */
-  private _writeProcessDataUnsafe(data: string): void {
-    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
-    const term = this.term;
-    const seq = ++this._latestWriteSeq;
-
-    // 对齐 VS Code _onWillData：写前通知外部消费者
-    this.onWillData?.(data);
-
-    // 对齐 VS Code：写前保存滚动位置
-    const savedState = this.captureScrollState();
-
-    try {
-      term.write(data, () => {
-        // 使用 runGuardedWriteCompletionStep 保护每一步，防止同步 throw 逃逸到 xterm WriteBuffer
-        // （见 write-callback-guard.ts 的说明：未捕获的异常会永久冻结终端面板）
-        runGuardedWriteCompletionStep('write-parsed', () => {
-          // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
-          this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
-        });
-
-        runGuardedWriteCompletionStep('ack', () => {
-          // 背压 ack：对齐 VS Code，所有写入段（含前导 OSC 标记）都调 acknowledgeDataEvent
-          this.ackBufferer?.ack(data.length);
-        });
-
-        runGuardedWriteCompletionStep('restore-scroll', () => {
-          // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-          // 视口在底部时跳过：pi-tui 等全屏 TUI 自己管理视口贴底，
-          // 外部 restoreScrollState 会与差分渲染器打架导致跳动。
-          if (savedState && !savedState.wasAtBottom) {
-            this.restoreScrollState(savedState);
-          }
-        });
-
-        runGuardedWriteCompletionStep('on-data', () => {
-          // 对齐 VS Code _onData：写解析完毕后通知外部消费者
-          this.onData?.(data);
-        });
-
-        runGuardedWriteCompletionStep('sync-scroll-intent', () => {
-          // 从当前视口位置同步滚动意图
-          // 确保新数据写入后视口意图反映真实状态
-          syncTerminalScrollIntentFromViewport(term);
-        });
-      });
-    } catch {
-      /* 终端已销毁等边界 */
-    }
-  }
-
-  /** 写入一段数据并回传背压（对齐 VS Code TerminalInstance._writeProcessData）。
-   * 单一 term.write（无行切片/rAF 逐批 hack），回调里推进解析序号 + acknowledgeDataEvent。
-   *
-   * 对齐 VS Code：写前/写后分别触发 onWillData / onData 事件，并在写前后自动 save/restore
-   * 滚动位置，防止新增输出导致用户已上滚的视口意外跳到底部或顶部。
-   *
-   * 与 _writeProcessDataUnsafe 的区别：本方法带 commit 跟踪（推进 _latestParsedSeq）
-   * 和背压回传（通过 ackBufferer.ack），适用于携带实际输出数据的最后一段。
-   *
-   * @param trackCommit 是否跟踪写完成确认。true 时记录 writePromise 供外部 await。
-   *                    对齐 VS Code IProcessDataEvent.trackCommit 语义。 */
-  private _writeProcessData(data: string, trackCommit = false): void {
-    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
-    const term = this.term;
-    const seq = ++this._latestWriteSeq;
-
-    // 对齐 VS Code _onWillData：写前通知外部消费者
-    this.onWillData?.(data);
-
-    // 对齐 VS Code：写前保存滚动位置，防止写入过程中 xterm 因 buffer 滚动/ED2/ED3 等
-    // 操作意外改变视口位置。captureScrollState 使用 marker 做精确逻辑行跟踪。
-    const savedState = this.captureScrollState();
-
-    // 对齐 VS Code IProcessDataEvent.writePromise：当 trackCommit=true 时，
-    // 创建一个 Promise 供调用方（如 flush()）等待写完成确认。
-    let resolveWrite: (() => void) | null = null;
-    const writePromise = trackCommit ? new Promise<void>((r) => { resolveWrite = r; }) : undefined;
-
-    try {
-      term.write(data, () => {
-        // 使用 runGuardedWriteCompletionStep 保护每一步，防止同步 throw 逃逸到 xterm WriteBuffer
-        // （见 write-callback-guard.ts 的说明：未捕获的异常会永久冻结终端面板）
-        runGuardedWriteCompletionStep('write-parsed', () => {
-          this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
-        });
-
-        runGuardedWriteCompletionStep('ack', () => {
-          // 背压回传（对齐 VSCode AckDataBufferer 独立类）：
-          // 通过 ackBufferer.ack 累积消费字符数到阈值再发 IPC，
-          // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
-          // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
-          this.ackBufferer?.ack(data.length);
-        });
-
-        runGuardedWriteCompletionStep('resolve-write', () => {
-          // 对齐 VS Code cb?.()：写完成回调（resolve writePromise），
-          // 在 onData 之前触发，与 VSCode 的 cb?.() → _onData 顺序一致。
-          resolveWrite?.();
-        });
-
-        runGuardedWriteCompletionStep('on-data', () => {
-          // 对齐 VS Code _onData：写解析完毕后通知外部消费者
-          this.onData?.(data);
-        });
-
-        runGuardedWriteCompletionStep('restore-scroll', () => {
-          // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-          // 视口在底部时跳过：pi-tui 等全屏 TUI 自己管理视口贴底，
-          // 外部 restoreScrollState 会与差分渲染器打架导致跳动。
-          if (savedState && !savedState.wasAtBottom) {
-            this.restoreScrollState(savedState);
-          }
-        });
-
-        runGuardedWriteCompletionStep('sync-scroll-intent', () => {
-          // 从当前视口位置同步滚动意图
-          // 确保新数据写入后视口意图反映真实状态
-          syncTerminalScrollIntentFromViewport(term);
-        });
-      });
-    } catch {
-      /* 终端已销毁等边界 */
-      (resolveWrite as (() => void) | null)?.();
-    }
-
-    // 对齐 VS Code：将 writePromise 挂载到 _pendingWritePromise 私有字段上
-    // 供外部调用方（如 flush）等待实际输出的写完成确认。
-    // 替代此前 (this as any)._pendingWritePromise 的类型 hack。
-    if (trackCommit && writePromise) {
-      this._pendingWritePromise = writePromise;
-    }
   }
 
   /** 仅在 cols/rows 真变时才通知 PTY（对齐 VS Code 整数 dims 比较，避免无谓 resize）。 */

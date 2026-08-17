@@ -93,7 +93,6 @@ export class TerminalResizeDebouncer {
 
     // 可见：Y 即时（便宜），X 防抖 100ms（昂贵）。
     this._resizeYCallback(rows);
-    this._latestX = cols;
     if (this._resizeXTimer != null) clearTimeout(this._resizeXTimer);
     this._resizeXTimer = setTimeout(() => {
       if (this._disposed) return;

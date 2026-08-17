@@ -49,7 +49,7 @@ export class DecorationAddon implements ITerminalAddon {
   }
 
   dispose(): void {
-    this._disposeAllDecorations();
+    this.clearDecorations();
   }
 
   /**
@@ -168,10 +168,6 @@ export class DecorationAddon implements ITerminalAddon {
       }
       this._placeholderDecoration = undefined;
     }
-  }
-
-  private _disposeAllDecorations(): void {
-    this.clearDecorations();
   }
 
   private _getDecorationColor(command?: { exitCode?: number }): string | undefined {

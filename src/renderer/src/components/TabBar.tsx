@@ -418,11 +418,25 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
   // leaf 级 droppable（拖到 TabBar 空白区域时定位到 leaf 容器）
   const { setNodeRef: setDroppableRef } = useDroppable({ id: leafId ? `leaf-${leafId}` : 'unknown' });
 
-  // 渲染 tab 列表（共享逻辑，用于两个分支）
-  const renderTabs = () => rows.map((row, i) =>
-    row.type === 'sep' ? (
-      <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
-    ) : (
+  // 渲染分组后的行：sep 为视觉分隔符，tab 项按是否启用拖拽重排选择 SortableTab 或纯展示 div。
+  const renderRows = () => rows.map((row, i) => {
+    if (row.type === 'sep') {
+      return <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />;
+    }
+    if (onReorder) {
+      return (
+        <SortableTab
+          key={row.item.id}
+          item={row.item}
+          activeId={activeId}
+          onSelect={onSelect}
+          onClose={onClose}
+          dirty={tabDirty?.[row.item.id]}
+          onContextMenu={onTabContextMenu}
+        />
+      );
+    }
+    return (
       <div
         key={row.item.id}
         role="tab"
@@ -450,32 +464,15 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
           </button>
         )}
       </div>
-    ),
-  );
-
-  // 渲染 SortableTab 列表
-  const renderSortableTabs = () => rows.map((row, i) =>
-    row.type === 'sep' ? (
-      <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
-    ) : (
-      <SortableTab
-        key={row.item.id}
-        item={row.item}
-        activeId={activeId}
-        onSelect={onSelect}
-        onClose={onClose}
-        dirty={tabDirty?.[row.item.id]}
-        onContextMenu={onTabContextMenu}
-      />
-    ),
-  );
+    );
+  });
 
   // 无可重排（无 onReorder）时退化为纯展示
   if (!onReorder) {
     return (
       <div className="terminal-tabbar" role="tablist" ref={setDroppableRef}>
         <ScrollableTabBar leafId={leafId}>
-          {renderTabs()}
+          {renderRows()}
         </ScrollableTabBar>
         <TabBarActions
           newVisible={newVisible}
@@ -497,7 +494,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
     <SortableContext items={items} strategy={horizontalListSortingStrategy}>
       <div className="terminal-tabbar" role="tablist" ref={setDroppableRef}>
         <ScrollableTabBar leafId={leafId}>
-          {renderSortableTabs()}
+          {renderRows()}
         </ScrollableTabBar>
         <TabBarActions
           newVisible={newVisible}

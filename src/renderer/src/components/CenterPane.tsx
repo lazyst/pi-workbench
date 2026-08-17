@@ -130,11 +130,6 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
     traverse(tree);
   }, [activeCwd, cwdTrees]);
 
-  /** 包装 setActiveCwd。 */
-  const handleSetActiveCwd = useCallback((cwd: string) => {
-    setActiveCwd(cwd);
-  }, [setActiveCwd]);
-
   return (
     <div className="center-pane">
       {/* 目录标签：下拉菜单切换工作区 */}
@@ -163,7 +158,7 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
                     key={c}
                     className={`cwd-dropdown-item${isActive ? ' active' : ''}`}
                     onClick={() => {
-                      handleSetActiveCwd(c);
+                      setActiveCwd(c);
                       setCwdDropdownOpen(false);
                     }}
                   >

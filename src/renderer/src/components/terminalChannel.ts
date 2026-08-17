@@ -16,6 +16,9 @@ import type { PiApi } from '../ipc';
  *    onData / onStatus / resize` 调用。
  *  - 原「会话结束收尾 resize」由 `pi.onStatus('dead')` 触发；这里统一收敛到 `onExit`（exit 即
  *    dead，语义等价），会话终端与集成终端走同一收尾路径，XtermTerminal 无需保留 onStatus 分支。
+ *
+ * 三条通道差异仅在「订阅哪个原始事件 / 调哪个 IPC 方法」，id 过滤订阅逻辑完全相同，
+ * 故收编到 TerminalChannelBase 的 onData/onExit，子类只补 4 个 pi 方法绑定。
  */
 export interface TerminalChannel {
   // 订阅 PTY 输出；返回取消订阅函数
@@ -28,87 +31,77 @@ export interface TerminalChannel {
   resize(cols: number, rows: number): void;
 }
 
-// 会话终端通道：包现有的 session:* IPC（与当前 XtermTerminal 硬编码行为一致）
-export class SessionChannel implements TerminalChannel {
+/**
+ * 共享基类：持有 pi 与 id，统一实现 onData/onExit 的 id 过滤订阅。
+ * 子类只需绑定「订阅原始事件」与「发送输入/尺寸」对应的 pi 方法。
+ */
+abstract class TerminalChannelBase implements TerminalChannel {
   constructor(
-    private readonly pi: PiApi,
-    private readonly sessionKey: string,
+    protected readonly pi: PiApi,
+    protected readonly id: string,
   ) {}
 
   onData(cb: (data: string) => void): () => void {
-    return this.pi.onData((key, data) => {
-      if (key === this.sessionKey) cb(data);
+    // 原始订阅回调带 key/id，仅当匹配本通道 id 时才转发给消费者。
+    return this.subscribeData((key, data) => {
+      if (key === this.id) cb(data);
     });
   }
 
   onExit(cb: () => void): () => void {
-    return this.pi.onExit((key) => {
-      if (key === this.sessionKey) cb();
+    return this.subscribeExit((key) => {
+      if (key === this.id) cb();
     });
   }
 
-  send(data: string): void {
-    this.pi.input(this.sessionKey, data);
-  }
+  /** 订阅原始 (key, data) 数据事件，返回取消订阅函数。 */
+  protected abstract subscribeData(cb: (key: string, data: string) => void): () => void;
+  /** 订阅原始 (key) 退出事件，返回取消订阅函数。 */
+  protected abstract subscribeExit(cb: (key: string) => void): () => void;
+  // send / resize 由子类直接绑定到对应 pi 方法（见各子类）。
+  abstract send(data: string): void;
+  abstract resize(cols: number, rows: number): void;
+}
 
+// 会话终端通道：包现有的 session:* IPC（与当前 XtermTerminal 硬编码行为一致）
+export class SessionChannel extends TerminalChannelBase {
+  constructor(pi: PiApi, sessionKey: string) {
+    super(pi, sessionKey);
+  }
+  protected subscribeData(cb: (key: string, data: string) => void): () => void {
+    return this.pi.onData(cb);
+  }
+  protected subscribeExit(cb: (key: string) => void): () => void {
+    return this.pi.onExit(cb);
+  }
+  send(data: string): void {
+    this.pi.input(this.id, data);
+  }
   resize(cols: number, rows: number): void {
-    this.pi.resize(this.sessionKey, cols, rows);
+    this.pi.resize(this.id, cols, rows);
   }
 }
 
-// 统一终端通道：同时支持 pi 会话和 shell 终端的 UnifiedChannel
-// 收编 SessionChannel + IntegratedChannel，统一通过 unified `term:*` IPC 通信。
-export class UnifiedChannel implements TerminalChannel {
-  constructor(
-    private readonly pi: PiApi,
-    private readonly id: string,
-  ) {}
-
-  onData(cb: (data: string) => void): () => void {
-    return this.pi.onTerminalData((id, data) => {
-      if (id === this.id) cb(data);
-    });
+// 集成终端通道：包 terminal:* IPC（T5 壳会用）
+export class IntegratedChannel extends TerminalChannelBase {
+  constructor(pi: PiApi, terminalId: string) {
+    super(pi, terminalId);
   }
-
-  onExit(cb: () => void): () => void {
-    return this.pi.onTerminalExit((id) => {
-      if (id === this.id) cb();
-    });
+  protected subscribeData(cb: (key: string, data: string) => void): () => void {
+    return this.pi.onTerminalData(cb);
   }
-
+  protected subscribeExit(cb: (key: string) => void): () => void {
+    return this.pi.onTerminalExit(cb);
+  }
   send(data: string): void {
     this.pi.terminalInput(this.id, data);
   }
-
   resize(cols: number, rows: number): void {
     this.pi.terminalResize(this.id, cols, rows);
   }
 }
 
-// 集成终端通道：包 terminal:* IPC（T5 壳会用）
-export class IntegratedChannel implements TerminalChannel {
-  constructor(
-    private readonly pi: PiApi,
-    private readonly terminalId: string,
-  ) {}
-
-  onData(cb: (data: string) => void): () => void {
-    return this.pi.onTerminalData((id, data) => {
-      if (id === this.terminalId) cb(data);
-    });
-  }
-
-  onExit(cb: () => void): () => void {
-    return this.pi.onTerminalExit((id) => {
-      if (id === this.terminalId) cb();
-    });
-  }
-
-  send(data: string): void {
-    this.pi.terminalInput(this.terminalId, data);
-  }
-
-  resize(cols: number, rows: number): void {
-    this.pi.terminalResize(this.terminalId, cols, rows);
-  }
-}
+// 统一终端通道：同时支持 pi 会话和 shell 终端的 UnifiedChannel。
+// 收编 SessionChannel + IntegratedChannel，统一通过 term:* IPC 通信。
+// 与 IntegratedChannel 行为一致（共享 term:* IPC），独立成类以保留语义标识（未来新代码首选）。
+export class UnifiedChannel extends IntegratedChannel {}
