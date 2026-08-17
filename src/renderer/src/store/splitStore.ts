@@ -133,11 +133,6 @@ function createLeaf(): SplitLeaf {
   return { type: 'leaf', id: uid(), tabs: [], activeTabId: null };
 }
 
-/** 创建初始 cwd 分屏树（单 leaf）。 */
-function createTree(): SplitTree {
-  return createLeaf();
-}
-
 /** 为新增 tab 计算下一个 order。 */
 function nextOrder(tabs: Tab[]): number {
   if (tabs.length === 0) return 0;
@@ -288,20 +283,15 @@ function captureOldCwdScrollStates(tabs: Tab[], activeCwd: string | null): void 
 
 // ── 树遍历辅助函数 ──
 
-/** 遍历树中的所有 leaf。 */
-function* iterateLeaves(node: SplitChild): Generator<SplitLeaf> {
+/** 遍历树中的所有 leaf（含嵌套 split 节点）。 */
+function* allLeaves(node: SplitChild): Generator<SplitLeaf> {
   if (node.type === 'leaf') {
     yield node;
-  } else {
-    for (const child of node.children) {
-      yield* iterateLeaves(child);
-    }
+    return;
   }
-}
-
-/** 遍历树中的所有 leaf（从 tree 根开始）。 */
-function* allLeaves(tree: SplitTree): Generator<SplitLeaf> {
-  yield* iterateLeaves(tree);
+  for (const child of node.children) {
+    yield* allLeaves(child);
+  }
 }
 
 /** 遍历所有 cwd 的所有 leaf。 */
@@ -424,36 +414,61 @@ function removeLeafFromTree(tree: SplitTree, leafId: string): SplitTree | null {
   if (tree.type === 'leaf') {
     return tree.id === leafId ? null : tree;
   }
-  const node = tree;
-  const remaining = node.children
+  const remaining = tree.children
     .map((child) => removeLeafFromTree(child, leafId))
     .filter((child): child is SplitChild => child !== null);
   if (remaining.length === 0) return null;
   if (remaining.length === 1) return remaining[0];
   // 重新计算 ratios
-  const keptIndices = node.children
+  const keptIndices = tree.children
     .map((child, idx) => (removeLeafFromTree(child, leafId) !== null ? idx : -1))
     .filter((idx) => idx >= 0);
-  const newRatios = keptIndices.map((idx) => node.ratios[idx]);
+  const newRatios = keptIndices.map((idx) => tree.ratios[idx]);
   const total = newRatios.reduce((a, b) => a + b, 0);
   return {
     type: 'split',
-    id: node.id,
-    direction: node.direction,
+    id: tree.id,
+    direction: tree.direction,
     ratios: total > 0 ? newRatios.map((r) => r / total) : newRatios.map(() => 1 / newRatios.length),
     children: remaining,
   };
 }
 
-/** 用 SplitNode 替换指定 leaf。 */
-function replaceLeafWithNode(tree: SplitTree, leafId: string, newNode: SplitNode): SplitTree | null {
+/** 在树中按 id 替换指定 leaf（replacement 可为普通 leaf 或 split 节点）；未找到时返回原树。 */
+function updateLeaf(tree: SplitTree, leafId: string, replacement: SplitLeaf | SplitNode): SplitTree {
   if (tree.type === 'leaf') {
-    return tree.id === leafId ? newNode : tree;
+    return tree.id === leafId ? replacement : tree;
   }
-  return {
-    ...tree,
-    children: tree.children.map((child) => replaceLeafWithNode(child, leafId, newNode)),
-  } as SplitNode;
+  const children = tree.children.map((child) => updateLeaf(child, leafId, replacement));
+  return children.every((child, i) => child === tree.children[i]) ? tree : { ...tree, children };
+}
+
+/** 对树做后序映射：visit 先看到 children 已映射完的节点；未变化的路径保持原对象引用。 */
+function mapTree(tree: SplitTree, visit: (node: SplitChild) => SplitChild): SplitTree {
+  if (tree.type === 'leaf') return visit(tree);
+  const children = tree.children.map((child) => mapTree(child, visit));
+  const node: SplitChild = children.every((child, i) => child === tree.children[i]) ? tree : { ...tree, children };
+  return visit(node);
+}
+
+/** 对所有 cwd 树各应用一次 mapTree，返回新的 cwdTrees 与是否有变化（引用比较）。 */
+function mapCwdTrees(
+  cwdTrees: Record<string, SplitTree>,
+  visit: (node: SplitChild) => SplitChild,
+): { cwdTrees: Record<string, SplitTree>; changed: boolean } {
+  const next: Record<string, SplitTree> = {};
+  let changed = false;
+  for (const [cwd, tree] of Object.entries(cwdTrees)) {
+    const updated = mapTree(tree, visit);
+    if (updated !== tree) changed = true;
+    next[cwd] = updated;
+  }
+  return { cwdTrees: next, changed };
+}
+
+/** 取树中第一个 leaf（空树返回 null）。 */
+function firstLeaf(tree: SplitTree): SplitLeaf | null {
+  return allLeaves(tree).next().value ?? null;
 }
 
 // ── Store ──
@@ -463,12 +478,13 @@ export interface SplitStore {
   cwdTrees: Record<string, SplitTree>;
   activeCwd: string | null;
   activeLeafId: string | null;
+  /** 当前激活 tab id（由 active leaf 派生写入，兼容旧版直接读取）。 */
+  activeTabId: string | null;
   cwdOrder: string[];
   cwdActiveLeafId: Record<string, string | null>; // per-cwd active leaf
   cwdActiveTab: Record<string, string | null>; // 各目录最后激活的 tab id（保持向后兼容）
   cwdTabHistory: Record<string, string[]>; // 各目录 tab 访问历史
   terminals: IntegratedTerminalInfo[];
-
 
   // Tab 管理 action（leafId 可选，默认使用 activeLeafId）
   setActiveCwd: (cwd: string) => void;
@@ -507,35 +523,138 @@ function resolveLeafId(state: SplitStore, leafId?: string): string | null {
   return leafId ?? state.activeLeafId;
 }
 
-/** 获取当前活跃 leaf（优先指定 leafId，否则用 activeLeafId）。 */
-function resolveLeaf(state: SplitStore, leafId?: string): SplitLeaf | null {
-  const id = resolveLeafId(state, leafId);
-  if (!id) return null;
-  const found = findLeaf(state.cwdTrees, id);
-  return found?.leaf ?? null;
-}
-
-/** 获取当前活跃 leaf 的 tabs（优先指定 leafId，否则用 activeLeafId）。 */
-function resolveLeafTabs(state: SplitStore, leafId?: string): Tab[] {
-  const leaf = resolveLeaf(state, leafId);
-  return leaf?.tabs ?? [];
-}
-
-/** 获取当前活跃 leaf 的 cwd。 */
-function resolveLeafCwd(state: SplitStore, leafId?: string): string | null {
-  const id = resolveLeafId(state, leafId);
-  if (!id) return null;
-  const found = findLeaf(state.cwdTrees, id);
-  return found?.cwd ?? null;
-}
-
 /** 确保指定 cwd 在 cwdTrees 中有树，若无则创建。 */
 function ensureCwdTree(state: SplitStore, cwd: string): { tree: SplitTree; isNew: boolean } {
   if (state.cwdTrees[cwd]) {
     return { tree: state.cwdTrees[cwd], isNew: false };
   }
-  const tree = createTree();
-  return { tree, isNew: true };
+  return { tree: createLeaf(), isNew: true };
+}
+
+/** 在 cwd 树中定位目标 leaf：优先 preferredId，其次第一个 leaf；无树或无 leaf 返回 null。 */
+function findTargetLeaf(tree: SplitTree | undefined, preferredId: string | null): SplitLeaf | null {
+  if (preferredId && tree) {
+    const found = findLeafInTree(tree, preferredId);
+    if (found) return found;
+  }
+  return tree ? firstLeaf(tree) : null;
+}
+
+/** diff tab 的标题：有文件路径取文件名，否则取短 hash；工作区 diff 用固定文案。 */
+function diffTabTitle(filePath: string | null | undefined, commitHash: string | null): string {
+  if (filePath) return filePath.split('/').pop() ?? filePath;
+  return commitHash ? commitHash.slice(0, 8) : '工作区改动';
+}
+
+/**
+ * 打开/激活 tab 的公共收尾：已存在则取消隐藏并激活，否则在目标 leaf 新建并激活。
+ * 统一了 openSession/openPreview/openDiff/openSessionContent/openTerminal 五个 action 的样板。
+ */
+function upsertTab(
+  state: SplitStore,
+  opts: {
+    cwd: string; // 新建分支归属的 cwd
+    id: string; // tab id
+    existing: TabLoc | null; // 预先查重结果（null = 新建）
+    scrollCompareCwd: string | null; // 切换离开旧 cwd 前保存滚动位置；null = 不保存
+    preferredLeafId: string | null; // 目标 leaf（默认 activeLeafId）
+    createTab: (leaf: SplitLeaf) => Tab; // 依据目标 leaf 构造新 tab
+  },
+): Partial<SplitStore> {
+  const captureOldScroll = () => captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
+
+  if (opts.existing) {
+    const { cwd, leaf, tab } = opts.existing;
+    const tabs = leaf.tabs.map((t) => (t.id === tab.id ? { ...t, hidden: false } : t));
+    const updatedLeaf: SplitLeaf = { ...leaf, tabs, activeTabId: tab.id };
+    if (opts.scrollCompareCwd && opts.scrollCompareCwd !== state.activeCwd) captureOldScroll();
+    return {
+      cwdTrees: { ...state.cwdTrees, [cwd]: updateLeaf(state.cwdTrees[cwd], leaf.id, updatedLeaf) },
+      activeCwd: cwd,
+      activeLeafId: leaf.id,
+      cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: leaf.id },
+      cwdTabHistory: pushTabHistory(state.cwdTabHistory, cwd, tab.id),
+      cwdOrder: ensureCwdOrder(state.cwdOrder, cwd),
+    };
+  }
+
+  if (opts.scrollCompareCwd && opts.scrollCompareCwd !== state.activeCwd) captureOldScroll();
+  const { tree, isNew } = ensureCwdTree(state, opts.cwd);
+  let cwdTrees = isNew ? { ...state.cwdTrees, [opts.cwd]: tree } : state.cwdTrees;
+
+  let targetLeaf = findTargetLeaf(cwdTrees[opts.cwd], opts.preferredLeafId);
+  if (!targetLeaf) {
+    targetLeaf = createLeaf();
+    cwdTrees = { ...cwdTrees, [opts.cwd]: targetLeaf };
+  }
+  const tab = opts.createTab(targetLeaf);
+  const updatedLeaf: SplitLeaf = { ...targetLeaf, tabs: [...targetLeaf.tabs, tab], activeTabId: opts.id };
+  cwdTrees = { ...cwdTrees, [opts.cwd]: updateLeaf(cwdTrees[opts.cwd], targetLeaf.id, updatedLeaf) };
+
+  return {
+    cwdTrees,
+    activeCwd: opts.cwd,
+    activeLeafId: updatedLeaf.id,
+    cwdActiveLeafId: { ...state.cwdActiveLeafId, [opts.cwd]: updatedLeaf.id },
+    cwdTabHistory: pushTabHistory(state.cwdTabHistory, opts.cwd, opts.id),
+    cwdOrder: ensureCwdOrder(state.cwdOrder, opts.cwd),
+  };
+}
+
+/**
+ * 关闭 leaf 内最后一个 tab 的公共收尾：摘除该 leaf；若树因此为空则回退为空 leaf。
+ * keepCwdActiveTab=true 时（closeTab 语义）只清理指向已删 tab 的记忆，否则清空该 cwd 的映射（remove* 语义）。
+ */
+function closeEmptyLeaf(
+  state: SplitStore,
+  cwd: string,
+  leafId: string,
+  keepCwdActiveTab: boolean,
+): Partial<SplitStore> {
+  const newTree = removeLeafFromTree(state.cwdTrees[cwd], leafId);
+  if (!newTree) {
+    const emptyLeaf = createLeaf();
+    return {
+      cwdTrees: { ...state.cwdTrees, [cwd]: emptyLeaf },
+      activeTabId: null,
+      activeLeafId: emptyLeaf.id,
+      cwdActiveTab: keepCwdActiveTab ? updateCwdActiveTab(state.cwdActiveTab, [], cwd, null) : {},
+      cwdTabHistory: {},
+    };
+  }
+  const nextLeaf = firstLeaf(newTree);
+  const nextActiveTabId = nextLeaf?.activeTabId ?? null;
+  return {
+    cwdTrees: { ...state.cwdTrees, [cwd]: newTree },
+    activeTabId: nextActiveTabId,
+    activeLeafId: nextLeaf?.id ?? null,
+    cwdActiveTab: keepCwdActiveTab ? updateCwdActiveTab(state.cwdActiveTab, [], cwd, nextActiveTabId) : {},
+    cwdTabHistory: cleanTabHistory(state.cwdTabHistory, nextLeaf?.tabs ?? []),
+  };
+}
+
+/** 移除 leaf 中部分 tab 后的公共收尾：选定下一个激活 tab 并用更新后的 leaf 替换进树。 */
+function removeTabsFromLeaf(
+  state: SplitStore,
+  cwd: string,
+  leaf: SplitLeaf,
+  remaining: Tab[],
+  removedId: string,
+  removedCwd: string,
+): Partial<SplitStore> {
+  const next = selectNextTabOnClose(
+    remaining, removedId, removedCwd,
+    leaf.activeTabId, state.activeCwd,
+    state.cwdActiveTab, state.cwdTabHistory,
+  );
+  const updatedLeaf: SplitLeaf = {
+    ...leaf,
+    tabs: remaining,
+    ...(next ? { activeTabId: next.activeTabId } : {}),
+  };
+  const cwdTrees = { ...state.cwdTrees, [cwd]: updateLeaf(state.cwdTrees[cwd], leaf.id, updatedLeaf) };
+  if (!next) return { cwdTrees };
+  return { cwdTrees, activeTabId: next.activeTabId, cwdActiveTab: next.cwdActiveTab, cwdTabHistory: next.cwdTabHistory };
 }
 
 export const useSplitStore = create<SplitStore>((set, get) => ({
@@ -544,6 +663,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
   cwdTrees: {},
   activeCwd: null,
   activeLeafId: null,
+  activeTabId: null,
   cwdOrder: [],
   cwdActiveLeafId: {},
   cwdActiveTab: {},
@@ -576,10 +696,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       }
       // 若没有活跃 leaf，用第一个 leaf
       if (activeLeafId == null) {
-        for (const leaf of allLeaves(cwdTrees[cwd])) {
-          activeLeafId = leaf.id;
-          break;
-        }
+        activeLeafId = firstLeaf(cwdTrees[cwd])?.id ?? null;
       }
 
       // 获取该 leaf 的 activeTabId
@@ -594,7 +711,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         activeCwd: cwd,
         activeLeafId,
         cwdActiveLeafId,
-        activeTabId: activeTabId as any, // 兼容旧代码读取
+        activeTabId: activeTabId, // 由 active leaf 派生，供旧版读取
         cwdTabHistory: activeTabId
           ? pushTabHistory(state.cwdTabHistory, cwd, activeTabId)
           : state.cwdTabHistory,
@@ -606,461 +723,127 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
     set((state) => {
       const cwdVal = req.cwd || req.key || '';
       const key = req.key ?? cwdVal;
-
-      // 全局去重：检查 key 是否已存在
-      const existing = findTabByKey(state.cwdTrees, key);
-      if (existing) {
-        // 已存在 → 取消隐藏，切换到该 leaf
-        const leaf = existing.leaf;
-        const tabs = leaf.tabs.map((t) =>
-          t.id === existing.tab.id ? { ...t, hidden: false } : t,
-        );
-        // 更新 tree 中的 leaf
-        const updateTree = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === leaf.id ? { ...tree, tabs, activeTabId: existing.tab.id } : tree;
-          }
-          return { ...tree, children: tree.children.map(updateTree) };
-        };
-        const cwdTrees = { ...state.cwdTrees, [existing.cwd]: updateTree(state.cwdTrees[existing.cwd]) };
-
-        if (cwdVal !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-        return {
-          cwdTrees,
-          activeCwd: existing.cwd,
-          activeLeafId: leaf.id,
-          cwdActiveLeafId: { ...state.cwdActiveLeafId, [existing.cwd]: leaf.id },
-          cwdTabHistory: pushTabHistory(state.cwdTabHistory, existing.cwd, existing.tab.id),
-          cwdOrder: ensureCwdOrder(state.cwdOrder, existing.cwd),
-        };
-      }
-
-      // 新建
-      if (cwdVal !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-      // 确保 cwd 树存在
-      const { tree, isNew } = ensureCwdTree(state, cwdVal);
-      let cwdTrees = isNew ? { ...state.cwdTrees, [cwdVal]: tree } : state.cwdTrees;
-
-      // 确定目标 leaf
-      const targetLeafId = resolveLeafId(state, leafId) ?? null;
-      let targetLeaf: SplitLeaf | null = null;
-      if (targetLeafId) {
-        targetLeaf = findLeafInTree(cwdTrees[cwdVal], targetLeafId);
-      }
-      if (!targetLeaf) {
-        // 取 cwd 的第一个 leaf
-        for (const leaf of allLeaves(cwdTrees[cwdVal])) {
-          targetLeaf = leaf;
-          break;
-        }
-      }
-      if (!targetLeaf) {
-        // 创建新 leaf
-        targetLeaf = createLeaf();
-        cwdTrees = { ...cwdTrees, [cwdVal]: targetLeaf };
-      }
-
-      const leafTabs = targetLeaf.tabs;
-      const id = key;
-      const tab: SessionTab = {
-        id,
-        kind: 'session',
-        location: 'editor',
-        title: req.name || id,
-        hidden: false,
-        order: nextOrder(leafTabs),
-        key: id,
+      const name = req.name || key;
+      return upsertTab(state, {
         cwd: cwdVal,
-        name: req.name || id,
-      };
-
-      const updatedLeaf: SplitLeaf = {
-        ...targetLeaf,
-        tabs: [...leafTabs, tab],
-        activeTabId: id,
-      };
-
-      // 替换树中的 leaf
-      const replaceFunc = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === updatedLeaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(replaceFunc) };
-      };
-      cwdTrees = { ...cwdTrees, [cwdVal]: replaceFunc(cwdTrees[cwdVal]) };
-
-      return {
-        cwdTrees,
-        activeCwd: cwdVal,
-        activeLeafId: updatedLeaf.id,
-        cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwdVal]: updatedLeaf.id },
-        cwdTabHistory: pushTabHistory(state.cwdTabHistory, cwdVal, id),
-        cwdOrder: ensureCwdOrder(state.cwdOrder, cwdVal),
-      };
+        id: key,
+        existing: findTabByKey(state.cwdTrees, key),
+        scrollCompareCwd: cwdVal,
+        preferredLeafId: resolveLeafId(state, leafId),
+        createTab: (leaf) => ({
+          id: key,
+          kind: 'session',
+          location: 'editor',
+          title: name,
+          hidden: false,
+          order: nextOrder(leaf.tabs),
+          key,
+          cwd: cwdVal,
+          name,
+        }),
+      });
     }),
   openPreview: (root, path, fileName, leafId) =>
     set((state) => {
       const id = `preview:${root}//${path}`;
-
-      // 全局去重
-      const existing = findTabById(state.cwdTrees, id);
-      if (existing) {
-        const leaf = existing.leaf;
-        const tabs = leaf.tabs.map((t) =>
-          t.id === id ? { ...t, hidden: false } : t,
-        );
-        const updateTree = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === leaf.id ? { ...tree, tabs, activeTabId: id } : tree;
-          }
-          return { ...tree, children: tree.children.map(updateTree) };
-        };
-        const cwdTrees = { ...state.cwdTrees, [existing.cwd]: updateTree(state.cwdTrees[existing.cwd]) };
-
-        if (root !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-        return {
-          cwdTrees,
-          activeCwd: existing.cwd,
-          activeLeafId: leaf.id,
-          cwdActiveLeafId: { ...state.cwdActiveLeafId, [existing.cwd]: leaf.id },
-          cwdTabHistory: pushTabHistory(state.cwdTabHistory, existing.cwd, id),
-          cwdOrder: ensureCwdOrder(state.cwdOrder, existing.cwd),
-        };
-      }
-
-      if (root !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-      const { tree, isNew } = ensureCwdTree(state, root);
-      let cwdTrees = isNew ? { ...state.cwdTrees, [root]: tree } : state.cwdTrees;
-
-      const targetLeafId = resolveLeafId(state, leafId) ?? null;
-      let targetLeaf: SplitLeaf | null = null;
-      if (targetLeafId) {
-        targetLeaf = findLeafInTree(cwdTrees[root], targetLeafId);
-      }
-      if (!targetLeaf) {
-        for (const leaf of allLeaves(cwdTrees[root])) {
-          targetLeaf = leaf;
-          break;
-        }
-      }
-      if (!targetLeaf) {
-        targetLeaf = createLeaf();
-        cwdTrees = { ...cwdTrees, [root]: targetLeaf };
-      }
-
-      const tab: PreviewTab = {
+      return upsertTab(state, {
+        cwd: root,
         id,
-        kind: 'preview',
-        location: 'editor',
-        title: fileName || path.split('/').pop() || path,
-        hidden: false,
-        order: nextOrder(targetLeaf.tabs),
-        root,
-        path,
-      };
-
-      const updatedLeaf: SplitLeaf = {
-        ...targetLeaf,
-        tabs: [...targetLeaf.tabs, tab],
-        activeTabId: id,
-      };
-
-      const replaceFunc = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === updatedLeaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(replaceFunc) };
-      };
-      cwdTrees = { ...cwdTrees, [root]: replaceFunc(cwdTrees[root]) };
-
-      return {
-        cwdTrees,
-        activeCwd: root,
-        activeLeafId: updatedLeaf.id,
-        cwdActiveLeafId: { ...state.cwdActiveLeafId, [root]: updatedLeaf.id },
-        cwdTabHistory: pushTabHistory(state.cwdTabHistory, root, id),
-        cwdOrder: ensureCwdOrder(state.cwdOrder, root),
-      };
+        existing: findTabById(state.cwdTrees, id),
+        scrollCompareCwd: root,
+        preferredLeafId: resolveLeafId(state, leafId),
+        createTab: (leaf) => ({
+          id,
+          kind: 'preview',
+          location: 'editor',
+          title: fileName || path.split('/').pop() || path,
+          hidden: false,
+          order: nextOrder(leaf.tabs),
+          root,
+          path,
+        }),
+      });
     }),
 
   openDiff: (cwd, commitHash, leafId, filePath, singleColumn) =>
     set((state) => {
       const fp = filePath ?? '';
       const id = `diff:${cwd}//${commitHash ?? 'work'}` + (fp ? `/${fp}` : '');
-
-      const existing = findTabById(state.cwdTrees, id);
-      if (existing) {
-        const leaf = existing.leaf;
-        const tabs = leaf.tabs.map((t) =>
-          t.id === id ? { ...t, hidden: false } : t,
-        );
-        const updateTree = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === leaf.id ? { ...tree, tabs, activeTabId: id } : tree;
-          }
-          return { ...tree, children: tree.children.map(updateTree) };
-        };
-        const cwdTrees = { ...state.cwdTrees, [existing.cwd]: updateTree(state.cwdTrees[existing.cwd]) };
-
-        if (cwd !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-        return {
-          cwdTrees,
-          activeCwd: existing.cwd,
-          activeLeafId: leaf.id,
-          cwdActiveLeafId: { ...state.cwdActiveLeafId, [existing.cwd]: leaf.id },
-          cwdTabHistory: pushTabHistory(state.cwdTabHistory, existing.cwd, id),
-          cwdOrder: ensureCwdOrder(state.cwdOrder, existing.cwd),
-        };
-      }
-
-      if (cwd !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-      const { tree, isNew } = ensureCwdTree(state, cwd);
-      let cwdTrees = isNew ? { ...state.cwdTrees, [cwd]: tree } : state.cwdTrees;
-
-      const targetLeafId = resolveLeafId(state, leafId) ?? null;
-      let targetLeaf: SplitLeaf | null = null;
-      if (targetLeafId) {
-        targetLeaf = findLeafInTree(cwdTrees[cwd], targetLeafId);
-      }
-      if (!targetLeaf) {
-        for (const leaf of allLeaves(cwdTrees[cwd])) {
-          targetLeaf = leaf;
-          break;
-        }
-      }
-      if (!targetLeaf) {
-        targetLeaf = createLeaf();
-        cwdTrees = { ...cwdTrees, [cwd]: targetLeaf };
-      }
-
-      const tab: DiffTab = {
-        id,
-        kind: 'diff',
-        location: 'editor',
-        title: filePath ? filePath.split('/').pop() ?? filePath : (commitHash ? commitHash.slice(0, 8) : '工作区改动'),
-        hidden: false,
-        order: nextOrder(targetLeaf.tabs),
+      return upsertTab(state, {
         cwd,
-        commitHash,
-        filePath,
-        singleColumn,
-      };
-
-      const updatedLeaf: SplitLeaf = {
-        ...targetLeaf,
-        tabs: [...targetLeaf.tabs, tab],
-        activeTabId: id,
-      };
-
-      const replaceFunc = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === updatedLeaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(replaceFunc) };
-      };
-      cwdTrees = { ...cwdTrees, [cwd]: replaceFunc(cwdTrees[cwd]) };
-
-      return {
-        cwdTrees,
-        activeCwd: cwd,
-        activeLeafId: updatedLeaf.id,
-        cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: updatedLeaf.id },
-        cwdTabHistory: pushTabHistory(state.cwdTabHistory, cwd, id),
-        cwdOrder: ensureCwdOrder(state.cwdOrder, cwd),
-      };
+        id,
+        existing: findTabById(state.cwdTrees, id),
+        scrollCompareCwd: cwd,
+        preferredLeafId: resolveLeafId(state, leafId),
+        createTab: (leaf) => ({
+          id,
+          kind: 'diff',
+          location: 'editor',
+          title: diffTabTitle(filePath, commitHash),
+          hidden: false,
+          order: nextOrder(leaf.tabs),
+          cwd,
+          commitHash,
+          filePath,
+          singleColumn,
+        }),
+      });
     }),
 
   openSessionContent: (sessionKey, sessionName, cwd, leafId) =>
     set((state) => {
       const id = `session-content:${sessionKey}`;
-
-      const existing = findTabById(state.cwdTrees, id);
-      if (existing) {
-        const leaf = existing.leaf;
-        const tabs = leaf.tabs.map((t) =>
-          t.id === id ? { ...t, hidden: false } : t,
-        );
-        const updateTree = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === leaf.id ? { ...tree, tabs, activeTabId: id } : tree;
-          }
-          return { ...tree, children: tree.children.map(updateTree) };
-        };
-        const cwdTrees = { ...state.cwdTrees, [existing.cwd]: updateTree(state.cwdTrees[existing.cwd]) };
-
-        if (cwd !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-        return {
-          cwdTrees,
-          activeCwd: existing.cwd,
-          activeLeafId: leaf.id,
-          cwdActiveLeafId: { ...state.cwdActiveLeafId, [existing.cwd]: leaf.id },
-          cwdTabHistory: pushTabHistory(state.cwdTabHistory, existing.cwd, id),
-          cwdOrder: ensureCwdOrder(state.cwdOrder, existing.cwd),
-        };
-      }
-
-      if (cwd !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
-
-      const { tree, isNew } = ensureCwdTree(state, cwd);
-      let cwdTrees = isNew ? { ...state.cwdTrees, [cwd]: tree } : state.cwdTrees;
-
-      const targetLeafId = resolveLeafId(state, leafId) ?? null;
-      let targetLeaf: SplitLeaf | null = null;
-      if (targetLeafId) {
-        targetLeaf = findLeafInTree(cwdTrees[cwd], targetLeafId);
-      }
-      if (!targetLeaf) {
-        for (const leaf of allLeaves(cwdTrees[cwd])) {
-          targetLeaf = leaf;
-          break;
-        }
-      }
-      if (!targetLeaf) {
-        targetLeaf = createLeaf();
-        cwdTrees = { ...cwdTrees, [cwd]: targetLeaf };
-      }
-
-      const tab: SessionContentTab = {
-        id,
-        kind: 'session-content',
-        location: 'editor',
-        title: sessionName,
-        hidden: false,
-        order: nextOrder(targetLeaf.tabs),
-        sessionKey,
-        sessionName,
+      return upsertTab(state, {
         cwd,
-      };
-
-      const updatedLeaf: SplitLeaf = {
-        ...targetLeaf,
-        tabs: [...targetLeaf.tabs, tab],
-        activeTabId: id,
-      };
-
-      const replaceFunc = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === updatedLeaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(replaceFunc) };
-      };
-      cwdTrees = { ...cwdTrees, [cwd]: replaceFunc(cwdTrees[cwd]) };
-
-      return {
-        cwdTrees,
-        activeCwd: cwd,
-        activeLeafId: updatedLeaf.id,
-        cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: updatedLeaf.id },
-        cwdTabHistory: pushTabHistory(state.cwdTabHistory, cwd, id),
-        cwdOrder: ensureCwdOrder(state.cwdOrder, cwd),
-      };
+        id,
+        existing: findTabById(state.cwdTrees, id),
+        scrollCompareCwd: cwd,
+        preferredLeafId: resolveLeafId(state, leafId),
+        createTab: (leaf) => ({
+          id,
+          kind: 'session-content',
+          location: 'editor',
+          title: sessionName,
+          hidden: false,
+          order: nextOrder(leaf.tabs),
+          sessionKey,
+          sessionName,
+          cwd,
+        }),
+      });
     }),
 
   openTerminal: (id, cwd, title, leafId) =>
-    set((state) => {
-      const existing = findTabById(state.cwdTrees, id);
-      if (existing) {
-        const leaf = existing.leaf;
-        const tabs = leaf.tabs.map((t) =>
-          t.id === id ? { ...t, hidden: false } : t,
-        );
-        const updateTree = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === leaf.id ? { ...tree, tabs, activeTabId: id } : tree;
-          }
-          return { ...tree, children: tree.children.map(updateTree) };
-        };
-        const cwdTrees = { ...state.cwdTrees, [existing.cwd]: updateTree(state.cwdTrees[existing.cwd]) };
-
-        return {
-          cwdTrees,
-          activeCwd: existing.cwd,
-          activeLeafId: leaf.id,
-          cwdActiveLeafId: { ...state.cwdActiveLeafId, [existing.cwd]: leaf.id },
-          cwdTabHistory: pushTabHistory(state.cwdTabHistory, existing.cwd, id),
-          cwdOrder: ensureCwdOrder(state.cwdOrder, existing.cwd),
-        };
-      }
-
-      const { tree, isNew } = ensureCwdTree(state, cwd);
-      let cwdTrees = isNew ? { ...state.cwdTrees, [cwd]: tree } : state.cwdTrees;
-
-      const targetLeafId = resolveLeafId(state, leafId) ?? null;
-      let targetLeaf: SplitLeaf | null = null;
-      if (targetLeafId) {
-        targetLeaf = findLeafInTree(cwdTrees[cwd], targetLeafId);
-      }
-      if (!targetLeaf) {
-        for (const leaf of allLeaves(cwdTrees[cwd])) {
-          targetLeaf = leaf;
-          break;
-        }
-      }
-      if (!targetLeaf) {
-        targetLeaf = createLeaf();
-        cwdTrees = { ...cwdTrees, [cwd]: targetLeaf };
-      }
-
-      const tab: IntegratedTerminalTab = {
-        id,
-        kind: 'integrated-terminal',
-        location: 'editor',
-        title,
-        hidden: false,
-        order: nextOrder(targetLeaf.tabs),
+    set((state) =>
+      upsertTab(state, {
         cwd,
-      };
-
-      const updatedLeaf: SplitLeaf = {
-        ...targetLeaf,
-        tabs: [...targetLeaf.tabs, tab],
-        activeTabId: id,
-      };
-
-      const replaceFunc = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === updatedLeaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(replaceFunc) };
-      };
-      cwdTrees = { ...cwdTrees, [cwd]: replaceFunc(cwdTrees[cwd]) };
-
-      return {
-        cwdTrees,
-        activeCwd: cwd,
-        activeLeafId: updatedLeaf.id,
-        cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: updatedLeaf.id },
-        cwdTabHistory: pushTabHistory(state.cwdTabHistory, cwd, id),
-        cwdOrder: ensureCwdOrder(state.cwdOrder, cwd),
-      };
-    }),
+        id,
+        existing: findTabById(state.cwdTrees, id),
+        // 终端 tab 由主进程 create/destroy 事件驱动，不需要在切换 cwd 时保存旧 cwd 的滚动位置
+        scrollCompareCwd: null,
+        preferredLeafId: resolveLeafId(state, leafId),
+        createTab: (leaf) => ({
+          id,
+          kind: 'integrated-terminal',
+          location: 'editor',
+          title,
+          hidden: false,
+          order: nextOrder(leaf.tabs),
+          cwd,
+        }),
+      }),
+    ),
 
   selectTab: (id) =>
     set((state) => {
-      // 在所有 cwd 和 leaf 中查找 tab
       const found = findTabById(state.cwdTrees, id);
       if (!found) return {};
       const { cwd, leaf } = found;
 
-      // 更新 leaf 的 activeTabId
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? { ...tree, activeTabId: id } : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
       if (cwd !== state.activeCwd) captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
 
       return {
-        cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) },
+        cwdTrees: { ...state.cwdTrees, [cwd]: updateLeaf(state.cwdTrees[cwd], leaf.id, { ...leaf, activeTabId: id }) },
         activeCwd: cwd,
         activeLeafId: leaf.id,
         cwdActiveLeafId: { ...state.cwdActiveLeafId, [cwd]: leaf.id },
@@ -1074,79 +857,12 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       const found = findTabById(state.cwdTrees, id);
       if (!found) return {};
       const { cwd, leaf } = found;
-
-      const leafTabs = leaf.tabs.filter((t) => t.id !== id);
-      const isLastTab = leafTabs.length === 0;
-
-      if (isLastTab) {
-        // 最后一个 tab → 关闭 leaf
-        const tree = state.cwdTrees[cwd];
-        const newTree = removeLeafFromTree(tree, leaf.id);
-        if (!newTree) {
-          // 树空了 → 创建空 leaf
-          const emptyLeaf = createLeaf();
-          const cwdTrees = { ...state.cwdTrees, [cwd]: emptyLeaf };
-          const cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, [], cwd, null);
-          return {
-            cwdTrees,
-            activeTabId: null,
-            activeLeafId: emptyLeaf.id,
-            cwdActiveTab: { ...cwdActiveTab, [cwd]: null },
-            cwdTabHistory: {},
-          };
-        }
-        const cwdTrees = { ...state.cwdTrees, [cwd]: newTree };
-
-        // 找下一个活跃 leaf
-        let nextLeaf: SplitLeaf | null = null;
-        for (const lf of allLeaves(newTree)) {
-          nextLeaf = lf;
-          break;
-        }
-
-        const cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, leafTabs, cwd, nextLeaf?.activeTabId ?? null);
-        return {
-          cwdTrees,
-          activeTabId: nextLeaf?.activeTabId ?? null,
-          activeLeafId: nextLeaf?.id ?? null,
-          cwdActiveTab: { ...cwdActiveTab, [cwd]: nextLeaf?.activeTabId ?? null },
-          cwdTabHistory: cleanTabHistory(state.cwdTabHistory, nextLeaf?.tabs ?? []),
-        };
+      const remaining = leaf.tabs.filter((t) => t.id !== id);
+      if (remaining.length === 0) {
+        // 最后一个 tab → 关闭 leaf（cwdActiveTab 只清理指向已删 tab 的记忆）
+        return closeEmptyLeaf(state, cwd, leaf.id, true);
       }
-
-      // 普通关闭 tab
-      const updatedLeaf: SplitLeaf = {
-        ...leaf,
-        tabs: leafTabs,
-      };
-
-      const tabCwd = getTabCwd(found.tab);
-      const next = selectNextTabOnClose(
-        leafTabs, id, tabCwd,
-        leaf.activeTabId, state.activeCwd,
-        state.cwdActiveTab, state.cwdTabHistory,
-      );
-
-      if (next) {
-        updatedLeaf.activeTabId = next.activeTabId;
-      }
-
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      const patch: any = {
-        cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) },
-      };
-      if (next) {
-        patch.activeTabId = next.activeTabId;
-        patch.cwdActiveTab = next.cwdActiveTab;
-        patch.cwdTabHistory = next.cwdTabHistory;
-      }
-      return patch;
+      return removeTabsFromLeaf(state, cwd, leaf, remaining, id, getTabCwd(found.tab));
     }),
 
   hideTab: (id) =>
@@ -1160,9 +876,8 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
 
       const patch: any = {};
       if (leaf.activeTabId === id) {
-        const tabCwd = getTabCwd(found.tab);
         const next = selectNextTabOnClose(
-          tabs, id, tabCwd,
+          tabs, id, getTabCwd(found.tab),
           leaf.activeTabId, state.activeCwd,
           state.cwdActiveTab, state.cwdTabHistory,
         );
@@ -1174,14 +889,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         }
       }
 
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      patch.cwdTrees = { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) };
+      patch.cwdTrees = { ...state.cwdTrees, [cwd]: updateLeaf(state.cwdTrees[cwd], leaf.id, updatedLeaf) };
       return patch;
     }),
 
@@ -1196,7 +904,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
 
       const patch: any = {};
       if (!hidden && leaf.activeTabId === null) {
-        // 取消隐藏且当前无激活
+        // 取消隐藏且当前无激活 → 激活它
         updatedLeaf.activeTabId = id;
         patch.activeTabId = id;
         if (state.activeCwd) {
@@ -1204,9 +912,8 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
           patch.cwdTabHistory = pushTabHistory(state.cwdTabHistory, state.activeCwd, id);
         }
       } else if (hidden && leaf.activeTabId === id) {
-        const tabCwd = getTabCwd(found.tab);
         const next = selectNextTabOnClose(
-          tabs, id, tabCwd,
+          tabs, id, getTabCwd(found.tab),
           leaf.activeTabId, state.activeCwd,
           state.cwdActiveTab, state.cwdTabHistory,
         );
@@ -1218,14 +925,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         }
       }
 
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      patch.cwdTrees = { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) };
+      patch.cwdTrees = { ...state.cwdTrees, [cwd]: updateLeaf(state.cwdTrees[cwd], leaf.id, updatedLeaf) };
       return patch;
     }),
 
@@ -1235,22 +935,14 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       if (!found) return {};
       const { cwd, leaf } = found;
 
-      const orderMap = new Map<string, number>();
-      orderedIds.forEach((id, idx) => orderMap.set(id, idx));
+      const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
       const tabs = leaf.tabs.map((t) => {
-        if (orderMap.has(t.id)) return { ...t, order: orderMap.get(t.id)! };
-        return t;
+        const order = orderMap.get(t.id);
+        return order !== undefined ? { ...t, order } : t;
       });
 
       const updatedLeaf: SplitLeaf = { ...leaf, tabs };
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      return { cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) } };
+      return { cwdTrees: { ...state.cwdTrees, [cwd]: updateLeaf(state.cwdTrees[cwd], leaf.id, updatedLeaf) } };
     }),
 
   setTerminals: (list) => set({ terminals: list }),
@@ -1265,65 +957,8 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         (t) => !(t.kind === 'session' && (t as SessionTab).key === key),
       );
       if (remaining.length === leaf.tabs.length) return {};
-
-      const isLastTab = remaining.length === 0;
-      if (isLastTab) {
-        const tree = state.cwdTrees[cwd];
-        const newTree = removeLeafFromTree(tree, leaf.id);
-        if (!newTree) {
-          const emptyLeaf = createLeaf();
-          return {
-            cwdTrees: { ...state.cwdTrees, [cwd]: emptyLeaf },
-            activeTabId: null,
-            activeLeafId: emptyLeaf.id,
-            cwdActiveTab: {},
-            cwdTabHistory: {},
-          };
-        }
-        const cwdTrees = { ...state.cwdTrees, [cwd]: newTree };
-        let nextLeaf: SplitLeaf | null = null;
-        for (const lf of allLeaves(newTree)) {
-          nextLeaf = lf;
-          break;
-        }
-        return {
-          cwdTrees,
-          activeTabId: nextLeaf?.activeTabId ?? null,
-          activeLeafId: nextLeaf?.id ?? null,
-          cwdActiveTab: {},
-          cwdTabHistory: cleanTabHistory(state.cwdTabHistory, nextLeaf?.tabs ?? []),
-        };
-      }
-
-      const tabCwd = getTabCwd(found.tab);
-      const next = selectNextTabOnClose(
-        remaining, found.tab.id, tabCwd,
-        leaf.activeTabId, state.activeCwd,
-        state.cwdActiveTab, state.cwdTabHistory,
-      );
-
-      const updatedLeaf: SplitLeaf = {
-        ...leaf,
-        tabs: remaining,
-        activeTabId: next?.activeTabId ?? leaf.activeTabId,
-      };
-
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      const patch: any = {
-        cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) },
-      };
-      if (next) {
-        patch.activeTabId = next.activeTabId;
-        patch.cwdActiveTab = next.cwdActiveTab;
-        patch.cwdTabHistory = next.cwdTabHistory;
-      }
-      return patch;
+      if (remaining.length === 0) return closeEmptyLeaf(state, cwd, leaf.id, false);
+      return removeTabsFromLeaf(state, cwd, leaf, remaining, found.tab.id, getTabCwd(found.tab));
     }),
 
   removeTerminalTab: (id) =>
@@ -1336,65 +971,8 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         (t) => !(t.kind === 'integrated-terminal' && t.id === id),
       );
       if (remaining.length === leaf.tabs.length) return {};
-
-      const isLastTab = remaining.length === 0;
-      if (isLastTab) {
-        const tree = state.cwdTrees[cwd];
-        const newTree = removeLeafFromTree(tree, leaf.id);
-        if (!newTree) {
-          const emptyLeaf = createLeaf();
-          return {
-            cwdTrees: { ...state.cwdTrees, [cwd]: emptyLeaf },
-            activeTabId: null,
-            activeLeafId: emptyLeaf.id,
-            cwdActiveTab: {},
-            cwdTabHistory: {},
-          };
-        }
-        const cwdTrees = { ...state.cwdTrees, [cwd]: newTree };
-        let nextLeaf: SplitLeaf | null = null;
-        for (const lf of allLeaves(newTree)) {
-          nextLeaf = lf;
-          break;
-        }
-        return {
-          cwdTrees,
-          activeTabId: nextLeaf?.activeTabId ?? null,
-          activeLeafId: nextLeaf?.id ?? null,
-          cwdActiveTab: {},
-          cwdTabHistory: cleanTabHistory(state.cwdTabHistory, nextLeaf?.tabs ?? []),
-        };
-      }
-
-      const tabCwd = getTabCwd(found.tab);
-      const next = selectNextTabOnClose(
-        remaining, id, tabCwd,
-        leaf.activeTabId, state.activeCwd,
-        state.cwdActiveTab, state.cwdTabHistory,
-      );
-
-      const updatedLeaf: SplitLeaf = {
-        ...leaf,
-        tabs: remaining,
-        activeTabId: next?.activeTabId ?? leaf.activeTabId,
-      };
-
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      const patch: any = {
-        cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) },
-      };
-      if (next) {
-        patch.activeTabId = next.activeTabId;
-        patch.cwdActiveTab = next.cwdActiveTab;
-        patch.cwdTabHistory = next.cwdTabHistory;
-      }
-      return patch;
+      if (remaining.length === 0) return closeEmptyLeaf(state, cwd, leaf.id, false);
+      return removeTabsFromLeaf(state, cwd, leaf, remaining, id, getTabCwd(found.tab));
     }),
 
   closeCenterTab: (id) =>
@@ -1402,211 +980,45 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       const found = findTabById(state.cwdTrees, id);
       if (!found) return {};
       const { cwd, leaf } = found;
-
-      const tab = found.tab;
-      if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
-        const remaining = leaf.tabs.filter((t) => t.id !== id);
-        const isLastTab = remaining.length === 0;
-        if (isLastTab) {
-          const tree = state.cwdTrees[cwd];
-          const newTree = removeLeafFromTree(tree, leaf.id);
-          if (!newTree) {
-            const emptyLeaf = createLeaf();
-            return {
-              cwdTrees: { ...state.cwdTrees, [cwd]: emptyLeaf },
-              activeTabId: null,
-              activeLeafId: emptyLeaf.id,
-              cwdActiveTab: {},
-              cwdTabHistory: {},
-            };
-          }
-          const cwdTrees = { ...state.cwdTrees, [cwd]: newTree };
-          let nextLeaf: SplitLeaf | null = null;
-          for (const lf of allLeaves(newTree)) {
-            nextLeaf = lf;
-            break;
-          }
-          return {
-            cwdTrees,
-            activeTabId: nextLeaf?.activeTabId ?? null,
-            activeLeafId: nextLeaf?.id ?? null,
-            cwdActiveTab: {},
-            cwdTabHistory: cleanTabHistory(state.cwdTabHistory, nextLeaf?.tabs ?? []),
-          };
-        }
-
-        const tabCwd = getTabCwd(tab);
-        const next = selectNextTabOnClose(
-          remaining, id, tabCwd,
-          leaf.activeTabId, state.activeCwd,
-          state.cwdActiveTab, state.cwdTabHistory,
-        );
-
-        const updatedLeaf: SplitLeaf = {
-          ...leaf,
-          tabs: remaining,
-          activeTabId: next?.activeTabId ?? leaf.activeTabId,
-        };
-
-        const updateTree = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === leaf.id ? updatedLeaf : tree;
-          }
-          return { ...tree, children: tree.children.map(updateTree) };
-        };
-
-        const patch: any = {
-          cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) },
-        };
-        if (next) {
-          patch.activeTabId = next.activeTabId;
-          patch.cwdActiveTab = next.cwdActiveTab;
-          patch.cwdTabHistory = next.cwdTabHistory;
-        }
-        return patch;
-      }
-
-      // preview / diff：真移除
+      // session/terminal 与 preview/diff 均为真移除（非 keep-alive），走同一套收尾逻辑
       const remaining = leaf.tabs.filter((t) => t.id !== id);
-      const isLastTab = remaining.length === 0;
-      if (isLastTab) {
-        const tree = state.cwdTrees[cwd];
-        const newTree = removeLeafFromTree(tree, leaf.id);
-        if (!newTree) {
-          const emptyLeaf = createLeaf();
-          return {
-            cwdTrees: { ...state.cwdTrees, [cwd]: emptyLeaf },
-            activeTabId: null,
-            activeLeafId: emptyLeaf.id,
-            cwdActiveTab: {},
-            cwdTabHistory: {},
-          };
-        }
-        const cwdTrees = { ...state.cwdTrees, [cwd]: newTree };
-        let nextLeaf: SplitLeaf | null = null;
-        for (const lf of allLeaves(newTree)) {
-          nextLeaf = lf;
-          break;
-        }
-        return {
-          cwdTrees,
-          activeTabId: nextLeaf?.activeTabId ?? null,
-          activeLeafId: nextLeaf?.id ?? null,
-          cwdActiveTab: {},
-          cwdTabHistory: cleanTabHistory(state.cwdTabHistory, nextLeaf?.tabs ?? []),
-        };
-      }
-
-      const tabCwd = getTabCwd(tab);
-      const next = selectNextTabOnClose(
-        remaining, id, tabCwd,
-        leaf.activeTabId, state.activeCwd,
-        state.cwdActiveTab, state.cwdTabHistory,
-      );
-
-      const updatedLeaf: SplitLeaf = {
-        ...leaf,
-        tabs: remaining,
-        activeTabId: next?.activeTabId ?? leaf.activeTabId,
-      };
-
-      const updateTree = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === leaf.id ? updatedLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(updateTree) };
-      };
-
-      const patch: any = {
-        cwdTrees: { ...state.cwdTrees, [cwd]: updateTree(state.cwdTrees[cwd]) },
-      };
-      if (next) {
-        patch.activeTabId = next.activeTabId;
-        patch.cwdActiveTab = next.cwdActiveTab;
-        patch.cwdTabHistory = next.cwdTabHistory;
-      }
-      return patch;
+      if (remaining.length === 0) return closeEmptyLeaf(state, cwd, leaf.id, false);
+      return removeTabsFromLeaf(state, cwd, leaf, remaining, id, getTabCwd(found.tab));
     }),
 
   promoteTabNames: (diskList) =>
     set((state) => {
-      let changed = false;
-      let cwdTrees = { ...state.cwdTrees };
-      for (const [cwd, tree] of Object.entries(cwdTrees)) {
-        const updateTree = (t: SplitTree): SplitTree => {
-          if (t.type === 'leaf') {
-            let changedLeaf = false;
-            const tabs = t.tabs.map((tab) => {
-              if (tab.kind !== 'session') return tab;
-              const d = diskList.find((x) => x.key === (tab as SessionTab).key);
-              if (d && d.name && d.name !== tab.name) {
-                changedLeaf = true;
-                return { ...tab, name: d.name, title: d.name };
-              }
-              return tab;
-            });
-            return changedLeaf ? { ...t, tabs } : t;
-          }
-          return { ...t, children: t.children.map(updateTree) };
-        };
-        const updated = updateTree(tree);
-        if (updated !== tree) {
-          changed = true;
-          cwdTrees[cwd] = updated;
-        }
-      }
+      const { cwdTrees, changed } = mapCwdTrees(state.cwdTrees, (node) => {
+        if (node.type !== 'leaf') return node;
+        const tabs = node.tabs.map((tab) => {
+          if (tab.kind !== 'session') return tab;
+          const d = diskList.find((x) => x.key === (tab as SessionTab).key);
+          return d && d.name && d.name !== tab.name ? { ...tab, name: d.name, title: d.name } : tab;
+        });
+        return tabs.every((t, i) => t === node.tabs[i]) ? node : { ...node, tabs };
+      });
       return changed ? { cwdTrees } : {};
     }),
 
   renameSessionTab: (key, name) =>
     set((state) => {
-      let changed = false;
-      let cwdTrees = { ...state.cwdTrees };
-      for (const [cwd, tree] of Object.entries(cwdTrees)) {
-        const updateTree = (t: SplitTree): SplitTree => {
-          if (t.type === 'leaf') {
-            let changedLeaf = false;
-            const tabs = t.tabs.map((tab) => {
-              if (tab.kind !== 'session' || (tab as SessionTab).key !== key) return tab;
-              changedLeaf = true;
-              return { ...tab, name, title: name };
-            });
-            return changedLeaf ? { ...t, tabs } : t;
-          }
-          return { ...t, children: t.children.map(updateTree) };
-        };
-        const updated = updateTree(tree);
-        if (updated !== tree) {
-          changed = true;
-          cwdTrees[cwd] = updated;
-        }
-      }
+      const { cwdTrees, changed } = mapCwdTrees(state.cwdTrees, (node) => {
+        if (node.type !== 'leaf') return node;
+        const tabs = node.tabs.map((tab) =>
+          tab.kind === 'session' && (tab as SessionTab).key === key ? { ...tab, name, title: name } : tab,
+        );
+        return tabs.every((t, i) => t === node.tabs[i]) ? node : { ...node, tabs };
+      });
       return changed ? { cwdTrees } : {};
     }),
 
   updateTabTitle: (id, title) =>
     set((state) => {
-      let changed = false;
-      let cwdTrees = { ...state.cwdTrees };
-      for (const [cwd, tree] of Object.entries(cwdTrees)) {
-        const updateTree = (t: SplitTree): SplitTree => {
-          if (t.type === 'leaf') {
-            let changedLeaf = false;
-            const tabs = t.tabs.map((tab) => {
-              if (tab.id !== id || tab.title === title) return tab;
-              changedLeaf = true;
-              return { ...tab, title };
-            });
-            return changedLeaf ? { ...t, tabs } : t;
-          }
-          return { ...t, children: t.children.map(updateTree) };
-        };
-        const updated = updateTree(tree);
-        if (updated !== tree) {
-          changed = true;
-          cwdTrees[cwd] = updated;
-        }
-      }
+      const { cwdTrees, changed } = mapCwdTrees(state.cwdTrees, (node) => {
+        if (node.type !== 'leaf') return node;
+        const tabs = node.tabs.map((tab) => (tab.id === id && tab.title !== title ? { ...tab, title } : tab));
+        return tabs.every((t, i) => t === node.tabs[i]) ? node : { ...node, tabs };
+      });
       return changed ? { cwdTrees } : {};
     }),
 
@@ -1632,8 +1044,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       };
 
       // 替换树中的 leaf
-      const newTree = replaceLeafWithNode(state.cwdTrees[cwd], leafId, splitNode);
-      if (!newTree) return {};
+      const newTree = updateLeaf(state.cwdTrees[cwd], leafId, splitNode);
 
       return {
         cwdTrees: { ...state.cwdTrees, [cwd]: newTree },
@@ -1695,8 +1106,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       };
 
       // 替换树中的 leaf
-      const newTree = replaceLeafWithNode(state.cwdTrees[cwd], leafId, splitNode);
-      if (!newTree) return {};
+      const newTree = updateLeaf(state.cwdTrees[cwd], leafId, splitNode);
 
       // 更新历史
       nextCwdTabHistory = pushTabHistory(nextCwdTabHistory, cwd, tabId);
@@ -1720,10 +1130,8 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
 
       const tree = state.cwdTrees[cwd];
 
-      // 如果树中只有一个 leaf，且是同一 leaf → 清空它
-      let leafCount = 0;
-      for (const _ of allLeaves(tree)) leafCount++;
-      if (leafCount <= 1) {
+      // 树中只剩这一个 leaf → 清空它
+      if (firstLeaf(tree)?.id === leaf.id) {
         const emptyLeaf = createLeaf();
         return {
           cwdTrees: { ...state.cwdTrees, [cwd]: emptyLeaf },
@@ -1736,11 +1144,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       if (!newTree) return {};
 
       // 找到活跃 leaf
-      let nextLeaf: SplitLeaf | null = null;
-      for (const lf of allLeaves(newTree)) {
-        nextLeaf = lf;
-        break;
-      }
+      const nextLeaf = firstLeaf(newTree);
 
       return {
         cwdTrees: { ...state.cwdTrees, [cwd]: newTree },
@@ -1750,20 +1154,11 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
     }),
 
   setRatios: (nodeId, ratios) =>
-    set((state) => {
-      let cwdTrees = { ...state.cwdTrees };
-      for (const [cwd, tree] of Object.entries(cwdTrees)) {
-        const updateTree = (t: SplitTree): SplitTree => {
-          if (t.type === 'leaf') return t;
-          if (t.id === nodeId) {
-            return { ...t, ratios };
-          }
-          return { ...t, children: t.children.map(updateTree) };
-        };
-        cwdTrees[cwd] = updateTree(tree);
-      }
-      return { cwdTrees };
-    }),
+    set((state) => ({
+      cwdTrees: mapCwdTrees(state.cwdTrees, (node) =>
+        node.type !== 'leaf' && node.id === nodeId ? { ...node, ratios } : node,
+      ).cwdTrees,
+    })),
 
   moveTabAcrossLeafs: (tabId, sourceLeafId, targetLeafId, targetIndex) =>
     set((state) => {
@@ -1807,27 +1202,15 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         let updatedSourceLeaf: SplitLeaf = { ...sourceLeaf, tabs: sourceRemaining };
 
         if (sourceLeaf.activeTabId === tabId) {
-          const tabCwd = getTabCwd(tab);
           const next = selectNextTabOnClose(
-            sourceRemaining, tabId, tabCwd,
+            sourceRemaining, tabId, getTabCwd(tab),
             sourceLeaf.activeTabId, state.activeCwd,
             state.cwdActiveTab, state.cwdTabHistory,
           );
-          if (next && next.activeTabId) {
-            updatedSourceLeaf = { ...updatedSourceLeaf, activeTabId: next.activeTabId };
-          } else {
-            updatedSourceLeaf = { ...updatedSourceLeaf, activeTabId: null };
-          }
+          updatedSourceLeaf = { ...updatedSourceLeaf, activeTabId: next?.activeTabId ?? null };
         }
 
-        // 替换树中的 source leaf
-        const replaceSource = (tree: SplitTree): SplitTree => {
-          if (tree.type === 'leaf') {
-            return tree.id === sourceLeafId ? updatedSourceLeaf : tree;
-          }
-          return { ...tree, children: tree.children.map(replaceSource) };
-        };
-        cwdTrees = { ...cwdTrees, [sourceCwd]: replaceSource(cwdTrees[sourceCwd]) };
+        cwdTrees = { ...cwdTrees, [sourceCwd]: updateLeaf(cwdTrees[sourceCwd], sourceLeafId, updatedSourceLeaf) };
       }
 
       // 将 tab 插入到 target leaf
@@ -1841,13 +1224,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         activeTabId: tabId,
       };
 
-      const replaceTarget = (tree: SplitTree): SplitTree => {
-        if (tree.type === 'leaf') {
-          return tree.id === targetLeafId ? updatedTargetLeaf : tree;
-        }
-        return { ...tree, children: tree.children.map(replaceTarget) };
-      };
-      cwdTrees = { ...cwdTrees, [targetCwd]: replaceTarget(cwdTrees[targetCwd]) };
+      cwdTrees = { ...cwdTrees, [targetCwd]: updateLeaf(cwdTrees[targetCwd], targetLeafId, updatedTargetLeaf) };
 
       // 更新历史记录与活跃状态
       const cwdTabHistory = pushTabHistory(state.cwdTabHistory, targetCwd, tabId);

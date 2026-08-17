@@ -25,7 +25,23 @@ export function usePanelLayout() {
     setRightPanelCollapsed(cfg.rightPanelCollapsed);
   }, []);
 
-  /** 侧边栏拖拽改宽 */
+  /**
+ * 切换某面板折叠状态并持久化，同时派发同步 fit 事件让终端在下一帧绘制前同步到新尺寸
+ * （消除侧边栏开关时的 ~16ms 尺寸跳变闪烁）。
+ */
+function togglePanel(
+  setter: React.Dispatch<React.SetStateAction<boolean>>,
+  configKey: 'sidebarCollapsed' | 'rightPanelCollapsed',
+) {
+  setter((prev) => {
+    const next = !prev;
+    pi.setConfig({ [configKey]: next }).catch(() => {});
+    window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT));
+    return next;
+  });
+}
+
+/** 侧边栏拖拽改宽 */
   const handleSidebarResize = useCallback((w: number) => {
     setSidebarWidth(w);
     pi.setConfig({ sidebarWidth: w }).catch(() => {});
@@ -39,25 +55,12 @@ export function usePanelLayout() {
 
   /** 切换侧边栏折叠 */
   const handleToggleSidebar = useCallback(() => {
-    setSidebarCollapsed((prev) => {
-      const next = !prev;
-      pi.setConfig({ sidebarCollapsed: next }).catch(() => {});
-      // 派发同步 fit 事件，使终端在下一帧绘制前同步到新尺寸
-      // 消除侧边栏开关时的 ~16ms 尺寸跳变闪烁
-      window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT));
-      return next;
-    });
+    togglePanel(setSidebarCollapsed, 'sidebarCollapsed');
   }, []);
 
   /** 切换右栏折叠 */
   const handleToggleRightPanel = useCallback(() => {
-    setRightPanelCollapsed((prev) => {
-      const next = !prev;
-      pi.setConfig({ rightPanelCollapsed: next }).catch(() => {});
-      // 派发同步 fit 事件，使终端在下一帧绘制前同步到新尺寸
-      window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT));
-      return next;
-    });
+    togglePanel(setRightPanelCollapsed, 'rightPanelCollapsed');
   }, []);
 
   return {

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { pi } from '../ipc';
 import { IconSettings, IconMinimize, IconMaximize, IconRestore, IconClose, IconSidebarToggle, IconRightPanelToggle } from './icons';
+import { pi } from '../ipc';
+import { useMaximized } from '../hooks/useMaximized';
 
 interface Props {
   onOpenSettings: () => void;
@@ -15,14 +15,7 @@ interface Props {
 // The bar itself is a drag region; only the buttons opt out via
 // `-webkit-app-region: no-drag` (see app.css).
 export function TitleBar({ onOpenSettings, sidebarCollapsed, onToggleSidebar, rightPanelCollapsed, onToggleRightPanel }: Props) {
-  const [maximized, setMaximized] = useState(false);
-
-  // Subscribe to maximize state so the restore/maximize icon stays in sync.
-  // Must NOT return ipcRenderer.on's result (it's an object, not a cleanup fn) —
-  // returning it makes React call it as the cleanup and crash ("destroy is not a function").
-  useEffect(() => {
-    pi.onMaximizeChange?.(setMaximized);
-  }, []);
+  const maximized = useMaximized();
 
   return (
     <div className="titlebar">

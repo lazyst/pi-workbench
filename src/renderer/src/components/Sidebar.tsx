@@ -218,9 +218,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   >
                     <IconTerminal />
                   </button>
-                  {g.isAppWorkDir ? (
-                    <></>
-                  ) : (
+                  {g.isAppWorkDir ? null : (
                     <button
                       className="icon-btn"
                       title={`从侧边栏移除目录 ${g.cwd}（不会删除会话文件）`}

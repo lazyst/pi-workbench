@@ -55,22 +55,9 @@ export default function App() {
   const activeCwd = useTabStore((s) => s.activeCwd);
   const activeLeafId = useTabStore((s) => s.activeLeafId);
   const cwdTrees = useTabStore((s) => s.cwdTrees);
-  // 从 active leaf 中获取 activeTabId
-  const activeTabId = (() => {
-    if (!activeLeafId || !activeCwd) return null;
-    const tree = cwdTrees[activeCwd];
-    if (!tree) return null;
-    const findLeaf = (node: any): any => {
-      if (node.type === 'leaf') return node.id === activeLeafId ? node : null;
-      for (const child of node.children) {
-        const found = findLeaf(child);
-        if (found) return found;
-      }
-      return null;
-    };
-    const leaf = findLeaf(tree);
-    return leaf?.activeTabId ?? null;
-  })();
+  // 从 active leaf 派生 activeTabId（store 的顶层 activeTabId 仅在部分 action 中维护，
+  // 故此处以 active leaf 为准）。
+  const activeTabId = activeLeafId ? findLeaf(cwdTrees, activeLeafId)?.leaf.activeTabId ?? null : null;
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
   // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次的 cwd，
   // 供右栏文件树/Git 自动模式稳定跟随。
@@ -143,13 +130,8 @@ export default function App() {
 
   // 侧边栏只渲染 disk 会话；live 会话默认只活在终端区，发消息写盘后才出现。
   // 但用户希望“未晋升”的 live 会话也立刻显示在左侧栏（按 cwd 混进对应分组，
-  // 标 unsaved）。因此此处把尚未晋升的 live 会话也并入侧边栏数据源，
-  // 并排除已晋升（已在 liveToDisk 映射中）的 live，避免重复出现两条。
-  const promoted = liveToDisk;
-  // 真正的“未晋升”会话 key 必为 live-<uuid> 前缀。磁盘 key 本身（如打开
-  // 已有会话时返回的 .jsonl 路径）虽会进入 open，但不是 live key，也永远
-  // 不会出现在 liveToDisk 映射里——若只用 !promoted[key] 判定，会把已存在
-  // 的磁盘会话误当成“未保存”的 live 会话重复显示并打上“未保存”徽标（见修复）。
+  // 标 unsaved）。该合并逻辑已收进 useSidebarState（见其 liveUnsaved 派生），
+  // App 仅把 liveToDisk 传过去以排除已晋升的 live，避免重复出现两条。
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => {
     setError(null);

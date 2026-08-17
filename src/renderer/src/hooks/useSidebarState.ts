@@ -72,11 +72,10 @@ export function useSidebarState(
   }, [addedDirs, appWorkDir]);
 
   const sessions = useMemo<DiskSession[]>(() => {
-    const addedSet = visibleDirs;
     return [
-      ...disk.filter((d) => addedSet.has(d.cwd)),
-      ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
-      ...virtualSessions.filter((s) => addedSet.has(s.cwd)),
+      ...disk.filter((d) => visibleDirs.has(d.cwd)),
+      ...liveUnsaved.filter((s) => visibleDirs.has(s.cwd)),
+      ...virtualSessions.filter((s) => visibleDirs.has(s.cwd)),
     ];
   }, [disk, liveUnsaved, virtualSessions, visibleDirs]);
 

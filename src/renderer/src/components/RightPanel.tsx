@@ -59,10 +59,6 @@ export function RightPanel({
   // 右栏自身的 Tab 切换（文件树 / Git）。
   const [tab, setTab] = useState<RightTab>('files');
 
-  // 右栏宽度由本地 state 控制（初始取 prop width），拖拽实时跟手、松手经 onResize
-  // 回写 config——完全对齐 Sidebar 的拖拽模式（修复原“每帧依赖父组件 prop 回流”
-  // 导致的不跟手 / 方向错乱）。
-
   // 候选根目录：addedDirs ∪ activeCwd（去重）。
   const candidates = useMemo(() => {
     const set = new Set<string>(addedDirs);
