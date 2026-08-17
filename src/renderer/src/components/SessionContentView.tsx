@@ -10,41 +10,73 @@ export interface SessionMessage {
   thinking?: string;
 }
 
-export const ROLE_LABEL: Record<string, string> = {
-  user: '用户',
-  assistant: 'Pi',
-  system: '系统',
-  tool: '工具调用',
-};
-
-export const ROLE_ICON: Record<string, string> = {
-  user: '👤',
-  assistant: '🤖',
-  system: '⚙',
-  tool: '🔧',
-};
-
 interface Props {
   sessionKey: string;
   sessionName: string;
 }
 
-/** 一个对话轮次：用户消息 + 其后所有 assistant 及 tool 消息。 */
+/** 一个对话轮次：用户消息 + 其后的 assistant/tool 步骤序列 + 最终回复。 */
 interface TurnGroup {
   userMsg: SessionMessage;
-  /** 该轮次中所有 assistant 消息的 thinking 列表。 */
-  thinkings: string[];
-  /** 该轮次中所有 tool 消息。 */
-  tools: Array<{ toolName?: string; content: string }>;
-  /** 最后一个 assistant 的最终回复（前面的 assistant 回复归入 process）。 */
+  /** 按原始顺序排列的 assistant 中间步骤（thinking / tool 调用）。 */
+  steps: Array<
+    | { kind: 'thinking'; text: string }
+    | { kind: 'tool'; toolName?: string; content: string }
+  >;
+  /** 最后一个 assistant 的最终回复文本。 */
   finalText: string;
 }
+
+/** 尝试解析 JSON 对象/数组；非候选或解析失败（可能被截断）时返回 null。 */
+function tryParseJson(raw: string): unknown | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/** 格式化 tool 内容：若是 JSON 则美化缩进，否则原样返回。 */
+function formatToolContent(raw: string): string {
+  const obj = tryParseJson(raw);
+  return obj !== null ? JSON.stringify(obj, null, 2) : raw;
+}
+
+/** 取内容的单行预览（首行非空内容，超长截断）。 */
+function preview(text: string, max = 120): string {
+  const firstLine = text.split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+  return firstLine.length > max ? firstLine.slice(0, max) + '…' : firstLine;
+}
+
+/** tool 预览：JSON 紧凑单行，否则首行。 */
+function toolPreview(raw: string): string {
+  const obj = tryParseJson(raw);
+  if (obj !== null) {
+    const compact = JSON.stringify(obj);
+    return compact.length > 120 ? compact.slice(0, 120) + '…' : compact;
+  }
+  return preview(raw);
+}
+
+/** 折叠/展开行的键盘事件：Enter / Space 触发回调，供 role=button 元素复用。 */
+const toggleOnKey =
+  (fn: () => void) => (e: { key: string; preventDefault: () => void }) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fn();
+    }
+  };
 
 export function SessionContentView({ sessionKey, sessionName }: Props) {
   const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  /** 每个 step 的展开状态，key = `${gi}:${si}`。 */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /** 每个轮次 Process 折叠块的展开状态，key = gi。默认收起。 */
+  const [processExpanded, setProcessExpanded] = useState<Record<number, boolean>>({});
   const viewRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -58,6 +90,7 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
     setError(null);
     setMessages([]);
     setExpanded({});
+    setProcessExpanded({});
     pi.readSessionContent(sessionKey)
       .then((msgs) => {
         if (!cancelled) setMessages(msgs);
@@ -68,20 +101,27 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [sessionKey]);
 
   useEffect(() => {
     if (!loading) scrollToBottom();
   }, [loading]);
 
-  const toggleExpand = (idx: number) => {
-    setExpanded((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  const toggle = (key: string) => {
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleProcess = (gi: number) => {
+    setProcessExpanded((prev) => ({ ...prev, [gi]: !prev[gi] }));
   };
 
   /**
    * 将扁平消息列表按「用户消息」分组。
    * 每组：用户消息 → 其后的所有 assistant / tool 消息，直到下一条用户消息或结尾。
+   * thinking 与 tool 按原始出现顺序保留为 steps，避免丢失交替顺序。
    */
   const turnGroups = useMemo(() => {
     const groups: TurnGroup[] = [];
@@ -89,16 +129,13 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
 
     for (const msg of messages) {
       if (msg.role === 'user') {
-        // 遇到用户消息 → 新轮次
-        current = { userMsg: msg, thinkings: [], tools: [], finalText: '' };
+        current = { userMsg: msg, steps: [], finalText: '' };
         groups.push(current);
       } else if (msg.role === 'assistant' && current) {
-        // assistant 消息：thinking 归入列表，text 暂存（可能被下一条覆盖）
-        if (msg.thinking) current.thinkings.push(msg.thinking);
+        if (msg.thinking) current.steps.push({ kind: 'thinking', text: msg.thinking });
         if (msg.content) current.finalText = msg.content;
       } else if (msg.role === 'tool' && current) {
-        // tool 消息归入当前轮次
-        current.tools.push({ toolName: msg.toolName, content: msg.content });
+        current.steps.push({ kind: 'tool', toolName: msg.toolName, content: msg.content });
       }
       // system 消息忽略
     }
@@ -112,93 +149,107 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
       {!loading && !error && messages.length === 0 && (
         <div className="empty-state">会话内容为空</div>
       )}
-      {turnGroups.map((group, gi) => {
-        const hasThinking = group.thinkings.length > 0;
-        const hasTools = group.tools.length > 0;
-        const showProcess = hasThinking || hasTools;
-        const isExpanded = !!expanded[gi];
+      {turnGroups.map((group, gi) => (
+        <div key={gi} className="turn-group">
+          {/* ── 用户消息气泡（无图标，保持原有气泡样式） ── */}
+          <div className="session-msg session-msg-user">
+            <div className="session-msg-content">{group.userMsg.content}</div>
+          </div>
 
-        return (
-          <div key={gi} className="turn-group">
-            {/* ── 用户消息 ── */}
-            <div className="session-msg session-msg-user">
-              <div className="session-msg-role">
-                {ROLE_ICON.user} {ROLE_LABEL.user}
-              </div>
-              <div className="session-msg-content">{group.userMsg.content}</div>
-            </div>
-
-            {/* ── Process 折叠块（所有 thinking + 所有 tool 调用） ── */}
-            {showProcess && (
-              <div className="session-msg session-msg-assistant">
-                <div className={`session-process${isExpanded ? ' expanded' : ''}`}>
-                  <div
-                    className="session-process-header"
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={isExpanded}
-                    onClick={() => toggleExpand(gi)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleExpand(gi);
-                      }
-                    }}
-                  >
-                    <span className="session-process-arrow">{isExpanded ? '▼' : '▶'}</span>
-                    <span className="session-process-label">Process</span>
-                    <span className="session-process-summary">
-                      {hasThinking && '思考'}
-                      {hasThinking && hasTools && ' · '}
-                      {hasTools && `${group.tools.length} 个工具调用`}
-                    </span>
-                  </div>
-                  {isExpanded && (
-                    <div className="session-process-body">
-                      {/* 所有思考过程 */}
-                      {group.thinkings.map((thinking, ti) => (
-                        <div key={ti} className="session-process-thinking">
-                          <div className="session-process-sub-label">思考过程</div>
-                          <div className="session-process-content">{thinking}</div>
-                        </div>
-                      ))}
-                      {/* 所有工具调用 */}
-                      {group.tools.map((tool, ti) => (
-                        <div key={ti} className="session-process-tool">
-                          <div className="session-process-sub-label">
-                            <span className="tool-label">tool</span>
-                            <span className="tool-name">[{tool.toolName ?? '?'}]</span>
-                          </div>
-                          <pre className="session-process-tool-content"><code className="hljs">{tool.content}</code></pre>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+          {/* ── Process 折叠块：包襄所有 thinking / tool_call，默认收起 ── */}
+          {group.steps.length > 0 && (() => {
+            const procOpen = !!processExpanded[gi];
+            const thinkCount = group.steps.filter((s) => s.kind === 'thinking').length;
+            const toolCount = group.steps.filter((s) => s.kind === 'tool').length;
+            const summary = [
+              thinkCount ? `${thinkCount} 条思考` : '',
+              toolCount ? `${toolCount} 次工具调用` : '',
+            ].filter(Boolean).join(' · ');
+            return (
+              <div className={`pi-process${procOpen ? ' expanded' : ''}`}>
+                <div
+                  className="pi-process-header"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={procOpen}
+                  onClick={() => toggleProcess(gi)}
+                  onKeyDown={toggleOnKey(() => toggleProcess(gi))}
+                >
+                  <span className="pi-row-arrow">▶</span>
+                  <span className="pi-process-label">Process</span>
+                  <span className="pi-row-sep">›</span>
+                  <span className="pi-process-summary">{summary}</span>
                 </div>
+                {procOpen && (
+                  <div className="pi-process-body">
+                    {group.steps.map((step, si) => {
+                      const key = `${gi}:${si}`;
+                      const isOpen = !!expanded[key];
 
-                {/* ── 最终回复（仅最后一个 assistant 的文本） ── */}
-                {group.finalText && (
-                  <div className="session-markdown-renderer-wrapper">
-                    <SessionMarkdownRenderer content={group.finalText} />
+                      if (step.kind === 'thinking') {
+                        return (
+                          <div key={key} className={`pi-row${isOpen ? ' expanded' : ''}`}>
+                            <div
+                              className="pi-row-header"
+                              role="button"
+                              tabIndex={0}
+                              aria-expanded={isOpen}
+                              onClick={() => toggle(key)}
+                              onKeyDown={toggleOnKey(() => toggle(key))}
+                            >
+                              <span className="pi-row-arrow">▶</span>
+                              <span className="pi-row-label pi-row-label-thinking">Thinking</span>
+                              <span className="pi-row-sep">›</span>
+                              <span className="pi-row-preview">{preview(step.text)}</span>
+                            </div>
+                            {isOpen && <div className="pi-row-body pi-row-body-text">{step.text}</div>}
+                          </div>
+                        );
+                      }
+
+                      // tool
+                      const formatted = formatToolContent(step.content);
+                      return (
+                        <div key={key} className={`pi-row${isOpen ? ' expanded' : ''}`}>
+                          <div
+                            className="pi-row-header"
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={isOpen}
+                            onClick={() => toggle(key)}
+                            onKeyDown={toggleOnKey(() => toggle(key))}
+                          >
+                            <span className="pi-row-arrow">▶</span>
+                            <span className="pi-row-label pi-row-label-tool">Tool_Call</span>
+                            <span className="pi-row-sep">›</span>
+                            <span className="pi-row-toolname">{step.toolName ?? '?'}</span>
+                            <span className="pi-row-sep">·</span>
+                            <span className="pi-row-preview">{toolPreview(step.content)}</span>
+                          </div>
+                          {isOpen && (
+                            <div className="pi-row-body">
+                              <pre>
+                                <code>{formatted}</code>
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            )}
+            );
+          })()}
 
-            {/* ── 无 process 但有最终回复（纯文本回复，无 thinking 无 tool） ── */}
-            {!showProcess && group.finalText && (
-              <div className="session-msg session-msg-assistant">
-                <div className="session-msg-role">
-                  {ROLE_ICON.assistant} {ROLE_LABEL.assistant}
-                </div>
-                <div className="session-markdown-renderer-wrapper">
-                  <SessionMarkdownRenderer content={group.finalText} />
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
+          {/* ── Pi 最终回复：无气泡，markdown 渲染 ── */}
+          {group.finalText && (
+            <div className="pi-reply">
+              <SessionMarkdownRenderer content={group.finalText} />
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

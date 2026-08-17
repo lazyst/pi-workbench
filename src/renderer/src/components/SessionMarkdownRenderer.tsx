@@ -3,7 +3,7 @@
 // + rehype-raw/sanitize/slug/highlight/katex），但去掉文件路径解析和 TOC 侧边栏。
 // 专用于 SessionContentView 中 assistant 消息的 finalText 渲染。
 
-import { useCallback, type ReactNode } from 'react';
+import { memo, useCallback, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -76,7 +76,7 @@ interface Props {
   content: string;
 }
 
-export function SessionMarkdownRenderer({ content }: Props) {
+export const SessionMarkdownRenderer = memo(function SessionMarkdownRenderer({ content }: Props) {
   const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
 
   const components: Components = {
@@ -153,4 +153,4 @@ export function SessionMarkdownRenderer({ content }: Props) {
       )}
     </div>
   );
-}
+});

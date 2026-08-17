@@ -1899,7 +1899,7 @@ html, body, #root {
 .session-content-modal .session-msg-user {
   align-self: flex-end;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
+  color: var(--text);
   border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .session-content-view .session-msg-assistant,
@@ -2101,8 +2101,30 @@ html, body, #root {
 }
 .session-markdown-renderer .md-codeblock {
   margin: 0.4em 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
+  padding: 12px 14px;
   overflow: hidden;
+}
+.session-markdown-renderer .md-codeblock pre {
+  margin: 0;
+  background: none;
+  overflow: auto;
+}
+/* 防御：强制代码块文本可选，不受任何祖先 user-select:none（如 SplitPane 拖拽残留）干扰 */
+.session-markdown-renderer .md-codeblock,
+.session-markdown-renderer .md-codeblock pre,
+.session-markdown-renderer .md-codeblock code {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* 复制按钮：非 hover 时不拦截鼠标事件，避免覆盖在 pre 上层干扰文本拖选 */
+.session-markdown-renderer .md-copy {
+  pointer-events: none;
+}
+.session-markdown-renderer .md-codeblock:hover .md-copy {
+  pointer-events: auto;
 }
 .session-markdown-renderer img {
   max-width: 100%;
@@ -2145,6 +2167,182 @@ html, body, #root {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-muted);
+}
+
+/* 轮次分组：flex column，使用户气泡的 align-self:flex-end 生效 */
+.session-content-view .turn-group,
+.session-content-modal .turn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Process 折叠块：包裹所有 thinking / tool_call，默认收起 ── */
+.session-content-view .pi-process,
+.session-content-modal .pi-process {
+  width: 100%;
+  align-self: stretch;
+}
+.session-content-view .pi-process-header,
+.session-content-modal .pi-process-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
+  transition: background var(--transition);
+}
+.session-content-view .pi-process-header:hover,
+.session-content-modal .pi-process-header:hover {
+  background: var(--bg-hover);
+}
+.session-content-view .pi-process.expanded .pi-row-arrow,
+.session-content-modal .pi-process.expanded .pi-row-arrow {
+  transform: rotate(90deg);
+}
+.session-content-view .pi-process-label,
+.session-content-modal .pi-process-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  flex: none;
+}
+.session-content-view .pi-process-summary,
+.session-content-modal .pi-process-summary {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.session-content-view .pi-process-body,
+.session-content-modal .pi-process-body {
+  margin-left: var(--sp-3);
+  border-left: 1px solid var(--border);
+  padding-left: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── pi 中间步骤行（Thinking / Tool_Call）：铺满一行、无方框、可展开 ── */
+.session-content-view .pi-row,
+.session-content-modal .pi-row {
+  width: 100%;
+  align-self: stretch;
+}
+.session-content-view .pi-row-header,
+.session-content-modal .pi-row-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
+  transition: background var(--transition);
+}
+.session-content-view .pi-row-header:hover,
+.session-content-modal .pi-row-header:hover {
+  background: var(--bg-hover);
+}
+.session-content-view .pi-row-arrow,
+.session-content-modal .pi-row-arrow {
+  font-size: 10px;
+  color: var(--text-faint);
+  flex: none;
+  transition: transform var(--transition);
+}
+.session-content-view .pi-row.expanded .pi-row-arrow,
+.session-content-modal .pi-row.expanded .pi-row-arrow {
+  transform: rotate(90deg);
+}
+.session-content-view .pi-row-label,
+.session-content-modal .pi-row-label {
+  font-weight: 600;
+  flex: none;
+}
+.session-content-view .pi-row-label-thinking,
+.session-content-modal .pi-row-label-thinking {
+  color: var(--accent);
+}
+.session-content-view .pi-row-label-tool,
+.session-content-modal .pi-row-label-tool {
+  color: #d19a66;
+}
+.session-content-view .pi-row-toolname,
+.session-content-modal .pi-row-toolname {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #d19a66;
+  flex: none;
+}
+.session-content-view .pi-row-sep,
+.session-content-modal .pi-row-sep {
+  color: var(--text-faint);
+  flex: none;
+}
+.session-content-view .pi-row-preview,
+.session-content-modal .pi-row-preview {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.session-content-view .pi-row-body,
+.session-content-modal .pi-row-body {
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  /* 展开内容用左竖线 + 底横线与后续内容分隔 */
+  border-left: 2px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-left: var(--sp-3);
+  margin-right: var(--sp-1);
+  border-bottom-left-radius: var(--r-sm);
+}
+.session-content-view .pi-row-body-text,
+.session-content-modal .pi-row-body-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.session-content-view .pi-row-body pre,
+.session-content-modal .pi-row-body pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* ── Pi 最终回复：无气泡，左侧竖线 + markdown 直接渲染 ── */
+.session-content-view .pi-reply,
+.session-content-modal .pi-reply {
+  margin: var(--sp-2) 0 var(--sp-3);
+  padding: var(--sp-1) var(--sp-3);
+  border-left: 2px solid var(--accent);
+  max-width: 100%;
+  align-self: stretch;
+}
+.session-content-view .pi-reply .session-markdown-renderer,
+.session-content-modal .pi-reply .session-markdown-renderer {
+  margin-top: 0;
 }
 
 /* ============================================================================
