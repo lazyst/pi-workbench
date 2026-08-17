@@ -282,6 +282,118 @@ describe('SessionFileManager', () => {
 });
 
 // ============================================================================
+//  readContent
+// ============================================================================
+describe('SessionFileManager.readContent', () => {
+  function writeSession(file: string, records: any[]) {
+    const content = records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    fs.writeFileSync(file, content);
+  }
+
+  it('returns empty array for non-.jsonl key', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfm-rc-'));
+    const manager = new SessionFileManager(root);
+    expect(manager.readContent(path.join(root, 'notes.txt'))).toEqual([]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('returns empty array when there are no message records', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfm-rc-'));
+    const file = path.join(root, 's.jsonl');
+    writeSession(file, [
+      { type: 'session', version: 3, id: 'root', cwd: '/tmp' },
+      { type: 'model_change', id: 'm1', parentId: null },
+    ]);
+    const manager = new SessionFileManager(root);
+    expect(manager.readContent(file)).toEqual([]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('linear session: returns all messages in order', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfm-rc-'));
+    const file = path.join(root, 's.jsonl');
+    writeSession(file, [
+      { type: 'model_change', id: 'm1', parentId: null },
+      { type: 'message', id: 'u1', parentId: 'm1', message: { role: 'user', content: [{ type: 'text', text: '你好' }] } },
+      { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', content: [{ type: 'text', text: '你好！' }] } },
+    ]);
+    const manager = new SessionFileManager(root);
+    const msgs = manager.readContent(file);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]).toMatchObject({ role: 'user', content: '你好' });
+    expect(msgs[1]).toMatchObject({ role: 'assistant', content: '你好！' });
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('forked session: only returns the current branch after /tree rewind', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfm-rc-'));
+    const file = path.join(root, 's.jsonl');
+    // 树结构：a1 处分叉
+    //   u1 -> a1 -> u2(旧) -> a2(旧)
+    //            -> u3(当前) -> a3(当前末端)
+    writeSession(file, [
+      { type: 'model_change', id: 'm1', parentId: null },
+      { type: 'message', id: 'u1', parentId: 'm1', message: { role: 'user', content: [{ type: 'text', text: '你好' }] } },
+      { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', content: [{ type: 'text', text: '你好！' }] } },
+      { type: 'message', id: 'u2', parentId: 'a1', message: { role: 'user', content: [{ type: 'text', text: '你有哪些工具？' }] } },
+      { type: 'message', id: 'a2', parentId: 'u2', message: { role: 'assistant', content: [{ type: 'text', text: '工具列表' }] } },
+      { type: 'message', id: 'u3', parentId: 'a1', message: { role: 'user', content: [{ type: 'text', text: '你能做什么？' }] } },
+      { type: 'message', id: 'a3', parentId: 'u3', message: { role: 'assistant', content: [{ type: 'text', text: '我能做很多事' }] } },
+    ]);
+    const manager = new SessionFileManager(root);
+    const msgs = manager.readContent(file);
+    // 只应返回当前分支：u1, a1, u3, a3（排除 u2, a2）
+    expect(msgs).toHaveLength(4);
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(msgs[0].content).toBe('你好');
+    expect(msgs[1].content).toBe('你好！');
+    expect(msgs[2].content).toBe('你能做什么？');
+    expect(msgs[3].content).toBe('我能做很多事');
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('legacy messages without id/parentId: returns all (backward compat)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfm-rc-'));
+    const file = path.join(root, 's.jsonl');
+    // 无 id/parentId 的旧格式消息
+    writeSession(file, [
+      { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } },
+    ]);
+    const manager = new SessionFileManager(root);
+    const msgs = manager.readContent(file);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].content).toBe('hi');
+    expect(msgs[1].content).toBe('hello');
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('assistant with thinking and tool calls are extracted', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sfm-rc-'));
+    const file = path.join(root, 's.jsonl');
+    writeSession(file, [
+      { type: 'model_change', id: 'm1', parentId: null },
+      { type: 'message', id: 'u1', parentId: 'm1', message: { role: 'user', content: [{ type: 'text', text: '读文件' }] } },
+      { type: 'message', id: 'a1', parentId: 'u1', message: { role: 'assistant', content: [
+        { type: 'thinking', thinking: '让我想想' },
+        { type: 'toolCall', name: 'read', arguments: { path: '/a.txt' } },
+        { type: 'text', text: '完成了' },
+      ] } },
+      { type: 'message', id: 't1', parentId: 'a1', message: { role: 'toolResult', content: [{ type: 'text', text: 'file content' }], toolName: 'read' } },
+    ]);
+    const manager = new SessionFileManager(root);
+    const msgs = manager.readContent(file);
+    // u1, a1(text), a1(toolCall read), t1(toolResult)
+    expect(msgs).toHaveLength(4);
+    expect(msgs[0]).toMatchObject({ role: 'user', content: '读文件' });
+    expect(msgs[1]).toMatchObject({ role: 'assistant', content: '完成了', thinking: '让我想想' });
+    expect(msgs[2]).toMatchObject({ role: 'tool', toolName: 'read' });
+    expect(msgs[3]).toMatchObject({ role: 'tool', toolName: 'read', content: 'file content' });
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ============================================================================
 //  工具函数
 // ============================================================================
 describe('decodeCwd', () => {

@@ -82,62 +82,91 @@ export class SessionFileManager {
     if (!target.startsWith(dir + path.sep) && target !== dir) return [];
     try {
       const text = fs.readFileSync(key, 'utf8');
-      const messages: SessionMessage[] = [];
+
+      // 先解析所有非空行（保留文件顺序）。
+      const records: any[] = [];
       for (const line of text.split('\n')) {
         const t = line.trim();
         if (!t) continue;
-        try {
-          const obj = JSON.parse(t);
-          // 只处理 message 类型行
-          if (obj?.type !== 'message') continue;
-          const msg = obj.message;
-          if (!msg?.role) continue;
+        try { records.push(JSON.parse(t)); } catch { /* skip non-JSON / malformed lines */ }
+      }
 
-          if (msg.role === 'user') {
-            // 用户消息：content 是 [{type: "text", text: "..."}]
-            const content = extractContentParts(msg.content);
-            if (content) messages.push({ role: 'user', content });
-          } else if (msg.role === 'assistant') {
-            // 助理消息：content 可能包含 text / thinking / toolCall
-            const parts = Array.isArray(msg.content) ? msg.content : [];
-            // 提取 thinking 部分（type === 'thinking'）
-            const thinking =
-              parts
-                .filter((p: any) => p?.type === 'thinking' && typeof p.thinking === 'string')
-                .map((p: any) => p.thinking)
-                .join('\n')
-                .trim() || undefined;
-            // 提取 text 部分（最终回复）
-            const finalText = extractContentParts(msg.content);
-            if (finalText || thinking) {
-              messages.push({ role: 'assistant', content: finalText || '', thinking });
-            }
-            // 检查是否有 toolCall 内嵌在 content 数组中
-            for (const part of parts) {
-              if (part?.type === 'toolCall' && part?.name) {
-                const args = typeof part.arguments === 'object'
-                  ? JSON.stringify(part.arguments, null, 2)
-                  : String(part.arguments ?? '');
-                messages.push({
-                  role: 'tool',
-                  content: args.slice(0, 2000),
-                  toolName: part.name,
-                });
-              }
-            }
-          } else if (msg.role === 'toolResult' || msg.role === 'tool') {
-            // 工具结果
-            const result = extractContentParts(msg.content);
-            messages.push({
-              role: 'tool',
-              content: result || '(空结果)',
-              toolName: msg.toolName ?? 'unknown',
-            });
-          } else if (msg.role === 'system') {
-            const content = extractContentParts(msg.content);
-            if (content) messages.push({ role: 'system', content });
+      // pi 的会话文件是一棵树：每条带 id 的记录通过 parentId 指向父节点。
+      // 用户用 /tree 回溯后再发消息会形成分叉。当前活动分支的末端 =
+      // 文件中最后一条「带 parentId 字段」的记录；从末端沿 parentId 回溯
+      // 得到当前分支的 id 集合，只显示该分支上的消息。
+      const byId = new Map<string, any>();
+      let tipId: string | undefined;
+      for (const obj of records) {
+        if (!obj || typeof obj !== 'object') continue;
+        if (typeof obj.id !== 'string' || !obj.id) continue;
+        byId.set(obj.id, obj);
+        // 末尾覆盖，最终得到最后一条带 parentId 的记录
+        if (Object.hasOwn(obj, 'parentId')) tipId = obj.id;
+      }
+
+      // 从末端沿 parentId 链回溯当前分支（含 cycle 防护）
+      const keepIds = new Set<string>();
+      let cur: string | null | undefined = tipId;
+      let guard = 0;
+      while (cur && byId.has(cur) && guard++ < 100000) {
+        keepIds.add(cur);
+        const parent = byId.get(cur)!.parentId;
+        cur = typeof parent === 'string' && parent ? parent : null;
+      }
+
+      const messages: SessionMessage[] = [];
+      for (const obj of records) {
+        if (obj?.type !== 'message') continue;
+        // 有 parentId 链时只保留当前分支上的消息；无 id 的旧格式消息回退为全量显示
+        if (tipId && typeof obj.id === 'string' && obj.id && !keepIds.has(obj.id)) continue;
+        const msg = obj.message;
+        if (!msg?.role) continue;
+
+        if (msg.role === 'user') {
+          // 用户消息：content 是 [{type: "text", text: "..."}]
+          const content = extractContentParts(msg.content);
+          if (content) messages.push({ role: 'user', content });
+        } else if (msg.role === 'assistant') {
+          // 助理消息：content 可能包含 text / thinking / toolCall
+          const parts = Array.isArray(msg.content) ? msg.content : [];
+          // 提取 thinking 部分（type === 'thinking'）
+          const thinking =
+            parts
+              .filter((p: any) => p?.type === 'thinking' && typeof p.thinking === 'string')
+              .map((p: any) => p.thinking)
+              .join('\n')
+              .trim() || undefined;
+          // 提取 text 部分（最终回复）
+          const finalText = extractContentParts(msg.content);
+          if (finalText || thinking) {
+            messages.push({ role: 'assistant', content: finalText || '', thinking });
           }
-        } catch { /* skip non-JSON / malformed lines */ }
+          // 检查是否有 toolCall 内嵌在 content 数组中
+          for (const part of parts) {
+            if (part?.type === 'toolCall' && part?.name) {
+              const args = typeof part.arguments === 'object'
+                ? JSON.stringify(part.arguments, null, 2)
+                : String(part.arguments ?? '');
+              messages.push({
+                role: 'tool',
+                content: args.slice(0, 2000),
+                toolName: part.name,
+              });
+            }
+          }
+        } else if (msg.role === 'toolResult' || msg.role === 'tool') {
+          // 工具结果
+          const result = extractContentParts(msg.content);
+          messages.push({
+            role: 'tool',
+            content: result || '(空结果)',
+            toolName: msg.toolName ?? 'unknown',
+          });
+        } else if (msg.role === 'system') {
+          const content = extractContentParts(msg.content);
+          if (content) messages.push({ role: 'system', content });
+        }
       }
       return messages;
     } catch {
