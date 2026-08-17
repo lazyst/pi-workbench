@@ -16,6 +16,7 @@ import { DiffPopup } from './DiffPopup';
 import { parseDiffLineChanges, extractHunkCompressed } from '../lib/diffLines';
 import { MarkdownPreview } from './MarkdownPreview';
 import { RichMarkdownEditor } from './RichMarkdownEditor';
+import { basenameOf, toAbsolutePath } from '../lib/mdPath';
 
 interface Props {
   root: string;
@@ -31,18 +32,6 @@ interface Props {
   onRegisterCloseGuard?: (id: string, guard: (() => void) | null) => void;
   /** 本 tab 的唯一 id（与 CenterPane tabs 中的 id 对齐，用于注册 guard）。 */
   tabId: string;
-}
-
-function basename(p: string): string {
-  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
-  return idx >= 0 ? p.slice(idx + 1) : p;
-}
-
-// 由 root + 相对路径算出绝对路径（渲染进程无 Node 集成，用纯字符串拼接；
-// file:// 对 / 与 \\ 均接受）。
-function toAbsolutePath(root: string, relPath: string): string {
-  if (!root) return relPath;
-  return `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[\\/]+/, '')}`;
 }
 
 function countLines(s: string): number {
@@ -211,7 +200,53 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
     return () => { onRegisterCloseGuard?.(tabId, null); };
   }, [tabId, requestClose, onRegisterCloseGuard]);
 
-  const fileName = basename(path) || path || '未命名文件';
+  // 点击行号变更标记 → 打开 diff 弹窗：重新拉取行标记与该文件 diff，
+  // 找到包含该行号的 hunk 后展示。
+  const openDiffPopup = useCallback(async (line: number, x: number, y: number) => {
+    try {
+      await fetchLineDecorations(root, path);
+      const diff = await pi.gitFileDiff(root, path);
+      if (!diff) return;
+      const hunks = extractHunkCompressed(diff);
+      // 找到包含该行号的 hunk
+      const hunk = hunks.find((h) => {
+        const last = h.lines.filter((l) => l.newLine != null).pop();
+        return h.newStart <= line && (last ? last.newLine! >= line : true);
+      });
+      if (hunk) setDiffPopup({ x, y, lines: hunk.lines });
+    } catch { /* 弹窗打开失败静默忽略 */ }
+  }, [fetchLineDecorations, root, path]);
+
+  const fileName = basenameOf(path) || path || '未命名文件';
+
+  // 选择 markdown 三模式视图 / 源码编辑器。
+  const renderCodeView = () => {
+    if (isMarkdown && viewMode === 'rendered') {
+      return (
+        <MarkdownPreview
+          content={currentContent}
+          filePath={path}
+          root={root}
+          onOpenFile={onOpenFile}
+        />
+      );
+    }
+    if (isMarkdown && viewMode === 'rich') {
+      return <RichMarkdownEditor content={currentContent} filePath={path} onChange={handleChange} onSave={dirty ? doSave : undefined} />;
+    }
+    return (
+      <MonacoCodeEditor
+        root={root}
+        path={path}
+        language={language}
+        content={currentContent}
+        onChange={handleChange}
+        onSave={dirty ? doSave : undefined}
+        lineDecorations={lineDecorations}
+        onDecorationClick={(line, x, y) => { void openDiffPopup(line, x, y); }}
+      />
+    );
+  };
 
   return (
     <div className="preview-tab">
@@ -263,46 +298,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       </div>
 
       <div className="preview-tab-body">
-        {kind === 'code' && (
-          isMarkdown && viewMode === 'rendered' ? (
-            <MarkdownPreview
-              content={currentContent}
-              filePath={path}
-              root={root}
-              onOpenFile={onOpenFile}
-            />
-          ) : isMarkdown && viewMode === 'rich' ? (
-            <RichMarkdownEditor content={currentContent} filePath={path} onChange={handleChange} onSave={dirty ? doSave : undefined} />
-          ) : (
-            <MonacoCodeEditor
-              root={root}
-              path={path}
-              language={language}
-              content={currentContent}
-              onChange={handleChange}
-              onSave={dirty ? doSave : undefined}
-              lineDecorations={lineDecorations}
-              onDecorationClick={(line, type, x, y) => {
-                // 点击变更标记 → 打开 diff 弹窗
-                fetchLineDecorations(root, path).then(() => {
-                  // 重新获取 diff 后解析弹窗内容
-                  pi.gitFileDiff(root, path).then((diff) => {
-                    if (!diff) return;
-                    const hunks = extractHunkCompressed(diff);
-                    // 找到包含该行号的 hunk
-                    const hunk = hunks.find((h) => {
-                      const last = h.lines.filter((l) => l.newLine != null).pop();
-                      return h.newStart <= line && (last ? last.newLine! >= line : true);
-                    });
-                    if (hunk) {
-                      setDiffPopup({ x, y, lines: hunk.lines });
-                    }
-                  }).catch(() => {});
-                }).catch(() => {});
-              }}
-            />
-          )
-        )}
+        {kind === 'code' && renderCodeView()}
         {kind === 'image' && <ImagePreview root={root} path={path} />}
         {kind === 'binary' && <div className="preview-empty">二进制文件，已用系统程序打开。</div>}
         {kind === 'loading' && <div className="preview-empty">加载中…</div>}

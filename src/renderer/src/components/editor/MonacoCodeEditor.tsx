@@ -42,7 +42,7 @@ interface Props {
   /** Git 变更行标记（行号左侧竖条）。 */
   lineDecorations?: LineDecoration[];
   /** 点击行号旁的变更标记 → 打开该行对应的 diff 弹窗。 */
-  onDecorationClick?: (line: number, type: 'added' | 'removed' | 'modified', clientX: number, clientY: number) => void;
+  onDecorationClick?: (line: number, clientX: number, clientY: number) => void;
 }
 
 // 把 root + path 合成一个稳定、合法的 monaco model uri。
@@ -63,6 +63,13 @@ function modelUri(root: string, path: string): string {
 
 // 装饰 ID 前缀（用于 deltaDecorations 分组标识）。
 const DECO_ID = 'git-change-mark';
+
+// 行号变更标记类型 → gutter CSS 类。
+const GUTTER_CLASS: Record<LineDecoration['type'], string> = {
+  added: 'git-gutter-added',
+  removed: 'git-gutter-removed',
+  modified: 'git-gutter',
+};
 
 export function MonacoCodeEditor({ root, path, language, content, onChange, onSave, lineDecorations, onDecorationClick }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
@@ -125,7 +132,7 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       // 检查该行是否有变更标记（有则触发弹窗）
       const cb = onDecorationClickRef.current;
       if (cb && lineDecorationsRef.current.some((d) => d.line === line)) {
-        cb(line, 'modified', event.event.browserEvent.clientX, event.event.browserEvent.clientY);
+        cb(line, event.event.browserEvent.clientX, event.event.browserEvent.clientY);
       }
     });
 
@@ -200,11 +207,7 @@ function applyDecorations(
   decoIdsRef: React.MutableRefObject<string[]>,
 ) {
   const newDecorations: editor.IModelDeltaDecoration[] = decorations.map((d) => {
-    const className = d.type === 'added'
-      ? 'git-gutter-added'
-      : d.type === 'removed'
-        ? 'git-gutter-removed'
-        : 'git-gutter';
+    const className = GUTTER_CLASS[d.type];
     return {
       range: {
         startLineNumber: d.line,

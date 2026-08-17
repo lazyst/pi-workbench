@@ -34,16 +34,33 @@ function basename(p: string): string {
   return idx >= 0 ? p.slice(idx + 1) : p;
 }
 
+// 从文件级状态映射计算目录冒泡：子项有改动时，父目录路径 → 冒泡类别。
+// 纯函数，提为模块级以避免组件内 useCallback 样板。
+function computeBubble(statusMap: Record<string, GitFileStatusEntry>): Record<string, string> {
+  const bubble: Record<string, string> = {};
+  for (const relPath of Object.keys(statusMap)) {
+    const entry = statusMap[relPath];
+    if (!entry || entry.category === 'submodule') continue;
+    let slashIdx = relPath.indexOf('/');
+    while (slashIdx !== -1) {
+      const parent = relPath.substring(0, slashIdx);
+      if (!statusMap[parent] && !bubble[parent]) {
+        bubble[parent] = entry.category;
+      }
+      slashIdx = relPath.indexOf('/', slashIdx + 1);
+    }
+  }
+  return bubble;
+}
+
 interface Props {
   root: string;
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
   /** 目录右键菜单「添加为工作目录」：将目录添加到左侧工作目录列表。 */
   onAddWorkDir?: (absDir: string) => void;
-  /** Bump to force a refresh of the root layer. (可选；当前调用方未传，向后兼容保留。) */
-  refreshKey?: number;
 }
 
-export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) {
+export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   // 单一模型实例（借鉴 VS Code ExplorerModel 单例持有 roots）。
   const modelRef = useRef<FileTreeModel>(new FileTreeModel());
   const model = modelRef.current;
@@ -97,24 +114,6 @@ export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) 
     }
   }, [root]);
 
-  // 从状态映射计算冒泡
-  const computeBubble = useCallback((statusMap: Record<string, GitFileStatusEntry>): Record<string, string> => {
-    const bubble: Record<string, string> = {};
-    for (const relPath of Object.keys(statusMap)) {
-      const entry = statusMap[relPath];
-      if (!entry || entry.category === 'submodule') continue;
-      let slashIdx = relPath.indexOf('/');
-      while (slashIdx !== -1) {
-        const parent = relPath.substring(0, slashIdx);
-        if (!statusMap[parent] && !bubble[parent]) {
-          bubble[parent] = entry.category;
-        }
-        slashIdx = relPath.indexOf('/', slashIdx + 1);
-      }
-    }
-    return bubble;
-  }, []);
-
   // 获取 git 状态映射并订阅实时变更
   const refreshGitStatus = useCallback(async () => {
     if (!root) { setGitStatusMap({}); setGitBubbleMap({}); return; }
@@ -126,7 +125,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) 
       setGitStatusMap({});
       setGitBubbleMap({});
     }
-  }, [root, computeBubble]);
+  }, [root]);
 
   useEffect(() => {
     if (!root) return;
@@ -163,7 +162,6 @@ export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) 
   // ── 统一刷新 ──
   const gitRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshDir = useCallback((relPath: string) => {
-    model.refresh(relPath);
     if (relPath === '') {
       // 根层：重新拉取 roots
       fetchEntries(root, '')
@@ -260,8 +258,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) 
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, refreshKey]);
+  }, [root]);
 
   // ── 展开目录的惰性加载 ──
   // 当 expandedPaths 变化时，对尚未加载的目录发起异步加载。
@@ -538,6 +535,15 @@ export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) 
     setSelection(new Set());
   }, [root, selection, refreshDir]);
 
+  // 当前右键所在目录（用于空白区新建/粘贴）：若目标是目录则为其本身，否则取其父目录。
+  // 定义在 menuItems useMemo 之前，使回调闭包按源码顺序可读。
+  const currentDirForMenu = (() => {
+    if (!menu) return '';
+    if (menu.target == null) return '';
+    const { relPath, isDir } = menu.target;
+    return isDir ? relPath : parentOf(relPath);
+  })();
+
   // ── 菜单项构造 ──
   const menuItems: ContextMenuItem[] = useMemo(() => {
     if (!menu) return [];
@@ -648,14 +654,6 @@ export function FileTree({ root, onOpenFile, onAddWorkDir, refreshKey }: Props) 
 
     return items;
   }, [menu, selection, root, startNew, startRename, doCut, doCopy, doPaste, requestDelete, onAddWorkDir]);
-
-  // 当前右键所在目录（用于空白区新建/粘贴）：若目标是目录则为其本身，否则取其父目录
-  const currentDirForMenu = (() => {
-    if (!menu) return '';
-    if (menu.target == null) return '';
-    const { relPath, isDir } = menu.target;
-    return isDir ? relPath : parentOf(relPath);
-  })();
 
   if (!root) {
     return <div className="file-empty">未选择工作目录</div>;

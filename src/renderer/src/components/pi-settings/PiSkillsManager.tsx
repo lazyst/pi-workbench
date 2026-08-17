@@ -58,7 +58,7 @@ export function PiSkillsManager() {
       const data = await pi.piSkillsList();
       setSkills(data.skills);
       setStatus(`${data.skills.length} 个`);
-    } catch (err) {
+    } catch {
       setStatus('加载失败');
     }
   }, []);
@@ -69,7 +69,7 @@ export function PiSkillsManager() {
       const data = await pi.piSkillsRefreshCache();
       setSkills(data.skills);
       setStatus(`${data.skills.length} 个`);
-    } catch (err) {
+    } catch {
       setStatus('刷新失败');
     }
   }, []);
@@ -127,7 +127,7 @@ export function PiSkillsManager() {
     });
   };
 
-  const filtered = skills.filter(s => tab === 'disabled' ? s.disabled : !s.disabled);
+  const filtered = skills.filter(s => s.disabled === (tab === 'disabled'));
   const groups = groupBySource(filtered);
 
   return (
@@ -179,9 +179,7 @@ export function PiSkillsManager() {
                   {tab === 'disabled' && disabledSkills.length > 0 && (
                     <button
                       className="btn btn-sm"
-                      onClick={() => {
-                        disabledSkills.forEach(s => enable(s.name));
-                      }}
+                      onClick={() => disabledSkills.forEach(s => enable(s.name))}
                     >
                       全部启用
                     </button>

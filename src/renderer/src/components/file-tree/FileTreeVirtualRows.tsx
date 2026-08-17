@@ -87,6 +87,48 @@ export function FileTreeVirtualRows({
     onRowDropOnDir(node, e);
   }, [onRowDropOnDir]);
 
+  // 共享行渲染：从 row 数据推导所有 FileTreeRow props，避免虚拟化/非虚拟化两分支重复
+  // （两者需逐字段保持一致，否则会出现“一种布局渲染正常、另一种不正常”的回归）。
+  const renderRow = (row: VisibleRow, key?: React.Key) => {
+    const node = row.node;
+    const isEditing = editing != null &&
+      ((editing.isNew && row.isDraft) || (!editing.isNew && editing.relPath === node.fullPath));
+    const gitEntry = gitStatusMap[node.fullPath];
+    const gitBubble = gitBubbleMap[node.fullPath];
+    const gitCategory = gitEntry?.category ?? gitBubble ?? '';
+    const showIgnored = !gitEntry && isIgnored(node.fullPath);
+    return (
+      <FileTreeRow
+        key={key}
+        node={node}
+        depth={row.depth}
+        isExpanded={row.isExpanded}
+        isLoading={dirLoading.has(node.fullPath)}
+        isSelected={selection.has(node.fullPath)}
+        isCut={cutRelPaths.has(node.fullPath)}
+        isDropTarget={dropTarget === node.fullPath}
+        isEditing={isEditing}
+        editingValue={row.isDraft ? editing?.draftName ?? '' : node.name}
+        draggable={draggable && !isEditing}
+        gitCategory={gitCategory}
+        gitBadge={gitEntry?.badge ?? ''}
+        isStaged={gitEntry?.staged ?? false}
+        isUnstaged={gitEntry?.unstaged ?? false}
+        isSymlink={gitEntry?.isSymlink ?? false}
+        isSubmodule={gitEntry?.isSubmodule ?? false}
+        showIgnored={showIgnored}
+        onClick={(e) => handleClick(node, e)}
+        onContextMenu={(e) => handleContextMenu(node, e)}
+        onDragStart={(e) => handleDragStart(node, e)}
+        onDragOverDir={(e) => handleDragOverDir(node, e)}
+        onDragLeaveDir={() => handleDragLeaveDir(node)}
+        onDropOnDir={(e) => handleDropOnDir(node, e)}
+        onCommitEdit={onCommitEdit}
+        onCancelEdit={onCancelEdit}
+      />
+    );
+  };
+
   if (rows.length === 0) {
     return null;
   }
@@ -102,46 +144,7 @@ export function FileTreeVirtualRows({
         className="file-tree-virtual-scroll"
         style={{ overflowY: 'auto', height: '100%', minHeight: 0 }}
       >
-        {rows.map((row, index) => {
-          const node = row.node;
-          const isEditing = editing != null &&
-            ((editing.isNew && row.isDraft) || (!editing.isNew && editing.relPath === node.fullPath));
-          const gitEntry = gitStatusMap[node.fullPath];
-          const gitBubble = gitBubbleMap[node.fullPath];
-          const gitCategory = gitEntry?.category ?? gitBubble ?? '';
-          const showIgnored = !gitEntry && isIgnored(node.fullPath);
-
-          return (
-            <FileTreeRow
-              key={node.fullPath}
-              node={node}
-              depth={row.depth}
-              isExpanded={row.isExpanded}
-              isLoading={dirLoading.has(node.fullPath)}
-              isSelected={selection.has(node.fullPath)}
-              isCut={cutRelPaths.has(node.fullPath)}
-              isDropTarget={dropTarget === node.fullPath}
-              isEditing={isEditing}
-              editingValue={row.isDraft ? editing?.draftName ?? '' : node.name}
-              draggable={draggable && !isEditing}
-              gitCategory={gitCategory}
-              gitBadge={gitEntry?.badge ?? ''}
-              isStaged={gitEntry?.staged ?? false}
-              isUnstaged={gitEntry?.unstaged ?? false}
-              isSymlink={gitEntry?.isSymlink ?? false}
-              isSubmodule={gitEntry?.isSubmodule ?? false}
-              showIgnored={showIgnored}
-              onClick={(e) => handleClick(node, e)}
-              onContextMenu={(e) => handleContextMenu(node, e)}
-              onDragStart={(e) => handleDragStart(node, e)}
-              onDragOverDir={(e) => handleDragOverDir(node, e)}
-              onDragLeaveDir={() => handleDragLeaveDir(node)}
-              onDropOnDir={(e) => handleDropOnDir(node, e)}
-              onCommitEdit={onCommitEdit}
-              onCancelEdit={onCancelEdit}
-            />
-          );
-        })}
+        {rows.map((row) => renderRow(row, row.node.fullPath))}
         {/* 底部留白：滚动到底时最后一项下方预留空位 */}
         <div style={{ height: BOTTOM_PAD }} />
       </div>
@@ -163,14 +166,6 @@ export function FileTreeVirtualRows({
       >
         {virtualItems.map((virtualItem) => {
           const row = rows[virtualItem.index];
-          const node = row.node;
-          const isEditing = editing != null &&
-            ((editing.isNew && row.isDraft) || (!editing.isNew && editing.relPath === node.fullPath));
-          const gitEntry = gitStatusMap[node.fullPath];
-          const gitBubble = gitBubbleMap[node.fullPath];
-          const gitCategory = gitEntry?.category ?? gitBubble ?? '';
-          const showIgnored = !gitEntry && isIgnored(node.fullPath);
-
           return (
             <div
               key={virtualItem.key}
@@ -183,33 +178,7 @@ export function FileTreeVirtualRows({
                 transform: `translateY(${virtualItem.start}px)`,
               }}
             >
-              <FileTreeRow
-                node={node}
-                depth={row.depth}
-                isExpanded={row.isExpanded}
-                isLoading={dirLoading.has(node.fullPath)}
-                isSelected={selection.has(node.fullPath)}
-                isCut={cutRelPaths.has(node.fullPath)}
-                isDropTarget={dropTarget === node.fullPath}
-                isEditing={isEditing}
-                editingValue={row.isDraft ? editing?.draftName ?? '' : node.name}
-                draggable={draggable && !isEditing}
-                gitCategory={gitCategory}
-                gitBadge={gitEntry?.badge ?? ''}
-                isStaged={gitEntry?.staged ?? false}
-                isUnstaged={gitEntry?.unstaged ?? false}
-                isSymlink={gitEntry?.isSymlink ?? false}
-                isSubmodule={gitEntry?.isSubmodule ?? false}
-                showIgnored={showIgnored}
-                onClick={(e) => handleClick(node, e)}
-                onContextMenu={(e) => handleContextMenu(node, e)}
-                onDragStart={(e) => handleDragStart(node, e)}
-                onDragOverDir={(e) => handleDragOverDir(node, e)}
-                onDragLeaveDir={() => handleDragLeaveDir(node)}
-                onDropOnDir={(e) => handleDropOnDir(node, e)}
-                onCommitEdit={onCommitEdit}
-                onCancelEdit={onCancelEdit}
-              />
+              {renderRow(row)}
             </div>
           );
         })}

@@ -25,65 +25,36 @@ export function PiExtensionsManager() {
       const data = await pi.piExtensionsList();
       setExtensions(data.extensions);
       setStatus(`${data.extensions.length} 个`);
-    } catch (err) {
+    } catch {
       setStatus('加载失败');
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const disable = async (ext: ExtensionInfo) => {
+  const runWithReload = async (action: () => Promise<{ success: boolean }>) => {
     try {
-      const res = await pi.piExtensionsDisable({
-        name: ext.name,
-        type: ext.type,
-        source: ext.source,
-        dir: ext.dir,
-      });
-      if (res.success) {
-        await load();
-      }
-    } catch (err) {
-      // ignore
-    }
+      const res = await action();
+      if (res.success) await load();
+    } catch { /* ignore */ }
+  };
+
+  const disable = async (ext: ExtensionInfo) => {
+    await runWithReload(() => pi.piExtensionsDisable({ name: ext.name, type: ext.type, source: ext.source, dir: ext.dir }));
   };
 
   const enable = async (ext: ExtensionInfo) => {
-    try {
-      const res = await pi.piExtensionsEnable({
-        name: ext.name,
-        type: ext.type,
-        source: ext.source,
-        dir: ext.dir,
-      });
-      if (res.success) {
-        await load();
-      }
-    } catch (err) {
-      // ignore
-    }
+    await runWithReload(() => pi.piExtensionsEnable({ name: ext.name, type: ext.type, source: ext.source, dir: ext.dir }));
   };
 
   const doDelete = async (name: string) => {
     setConfirmDelete(null);
     const ext = extensions.find(e => e.name === name);
     if (!ext) return;
-    try {
-      const res = await pi.piExtensionsDelete({
-        name: ext.name,
-        type: ext.type,
-        source: ext.source,
-        dir: ext.dir,
-      });
-      if (res.success) {
-        await load();
-      }
-    } catch (err) {
-      // ignore
-    }
+    await runWithReload(() => pi.piExtensionsDelete({ name: ext.name, type: ext.type, source: ext.source, dir: ext.dir }));
   };
 
-  const filtered = extensions.filter(e => tab === 'disabled' ? e.disabled : !e.disabled);
+  const filtered = extensions.filter(e => e.disabled === (tab === 'disabled'));
 
   const typeLabel = (type: string) => {
     switch (type) {

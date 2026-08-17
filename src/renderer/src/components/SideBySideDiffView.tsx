@@ -5,13 +5,21 @@
 // 仅变更行着色，上下文行淡显。相比单栏 unified，可同时看到删改前后。
 import { useCallback, useState } from 'react';
 import { parseUnifiedPatch } from '../lib/patch';
-import type { SplitDiffFile, SplitDiffRow, SplitDiffCell } from '../lib/patch';
+import type { SplitDiffFile, SplitDiffRow, SplitDiffCell, SplitDiffCellType } from '../lib/patch';
 
 interface Props {
   diff: string;
 }
 
 type ExpandState = Record<string, boolean>;
+
+// 单元格类型 → 背景色 CSS 类。
+const CELL_CLASS: Record<SplitDiffCellType, string> = {
+  context: 'sdv-cell-c',
+  removed: 'sdv-cell-r',
+  added: 'sdv-cell-a',
+  empty: 'sdv-cell-c',
+};
 
 function countChanges(rows: SplitDiffRow[]): { added: number; removed: number } {
   let added = 0;
@@ -30,25 +38,20 @@ function displayName(file: SplitDiffFile): string {
   return raw.replace(/^[ab]\//, '') || '（未命名文件）';
 }
 
-function dirName(file: SplitDiffFile): string {
-  const raw = displayName(file);
-  const idx = raw.lastIndexOf('/');
-  return idx > 0 ? raw.slice(0, idx + 1) : '';
+function dirNameOf(name: string): string {
+  const idx = name.lastIndexOf('/');
+  return idx > 0 ? name.slice(0, idx + 1) : '';
 }
 
-function baseName(file: SplitDiffFile): string {
-  const raw = displayName(file);
-  const idx = raw.lastIndexOf('/');
-  return idx > 0 ? raw.slice(idx + 1) : raw;
+function baseNameOf(name: string): string {
+  const idx = name.lastIndexOf('/');
+  return idx > 0 ? name.slice(idx + 1) : name;
 }
 
 /** 单格内容：空行时显示占位空格，保持列高一致。 */
 function Cell({ cell }: { cell: SplitDiffCell }) {
-  const type = cell.type;
   return (
-    <div
-      className={`sdv-cell ${type === 'removed' ? 'sdv-cell-r' : type === 'added' ? 'sdv-cell-a' : 'sdv-cell-c'}`}
-    >
+    <div className={`sdv-cell ${CELL_CLASS[cell.type]}`}>
       <span className="sdv-cell-no">{cell.lineNo ?? ''}</span>
       <span className="sdv-cell-text">{cell.text || '\u00a0'}</span>
     </div>
@@ -89,8 +92,8 @@ export function SideBySideDiffView({ diff }: Props) {
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(name); } }}
             >
               <span className="sdx-file-header-icon">{isExpanded ? '▼' : '▶'}</span>
-              <span className="sdx-file-header-dir">{dirName(file)}</span>
-              <span className="sdx-file-header-name">{baseName(file)}</span>
+              <span className="sdx-file-header-dir">{dirNameOf(name)}</span>
+              <span className="sdx-file-header-name">{baseNameOf(name)}</span>
               <span className="sdx-file-header-stats">
                 {added > 0 && <span className="sdx-stat-added">+{added}</span>}
                 {removed > 0 && <span className="sdx-stat-removed">-{removed}</span>}

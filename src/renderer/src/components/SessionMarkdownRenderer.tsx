@@ -67,6 +67,11 @@ function nodeText(node: ReactNode): string {
   return '';
 }
 
+function findCodeElement(children: ReactNode): ReactNode {
+  const arr = Array.isArray(children) ? children : [children];
+  return arr.find((c) => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'code') ?? null;
+}
+
 interface Props {
   content: string;
 }
@@ -77,11 +82,7 @@ export function SessionMarkdownRenderer({ content }: Props) {
   const components: Components = {
     // 代码块：mermaid 走专用渲染；其余加复制按钮。
     pre: ({ children }) => {
-      const codeEl = Array.isArray(children)
-        ? children.find((c) => typeof c === 'object' && c !== null && (c as { type?: unknown }).type === 'code')
-        : typeof children === 'object' && children !== null && (children as { type?: unknown }).type === 'code'
-          ? children
-          : null;
+      const codeEl = findCodeElement(children);
       const codeProps =
         codeEl && typeof codeEl === 'object' ? (codeEl as { props?: { className?: string; children?: ReactNode } }).props : null;
       const lang = codeProps?.className ? /language-(\w+)/.exec(codeProps.className)?.[1] : undefined;
@@ -102,19 +103,11 @@ export function SessionMarkdownRenderer({ content }: Props) {
         </div>
       );
     },
-    // 链接：外部 → openExternal；#anchor → 默认滚动行为；其余 fallback 到 openExternal。
+    // 链接：#anchor 由浏览器默认滚动处理；其余一律用系统默认程序打开。
     a: ({ href, children, node, ...rest }) => {
       const handle = (e: React.MouseEvent) => {
         if (!href) return;
-        // 外部协议（http/https/mailto 等）走系统默认程序
-        if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('file:')) {
-          e.preventDefault();
-          void pi.openExternal(href).catch(() => {});
-          return;
-        }
-        // #anchor 由浏览器默认滚动行为处理
         if (href.startsWith('#')) return;
-        // 其余链接（相对路径、file:// 等）尝试用系统默认程序打开
         e.preventDefault();
         void pi.openExternal(href).catch(() => {});
       };

@@ -16,6 +16,12 @@ interface Props {
   onClose: () => void;
 }
 
+const LINE_META: Record<DiffLine['type'], { cls: string; prefix: string }> = {
+  add: { cls: 'diff-popup-line-add', prefix: '+' },
+  del: { cls: 'diff-popup-line-del', prefix: '-' },
+  ctx: { cls: 'diff-popup-line-ctx', prefix: ' ' },
+};
+
 export function DiffPopup({ x, y, lines, onClose }: Props) {
   const popupRef = useRef<HTMLDivElement>(null);
 
@@ -59,19 +65,18 @@ export function DiffPopup({ x, y, lines, onClose }: Props) {
           </span>
         </div>
         <div className="diff-popup-body">
-          {lines.map((l, i) => (
-            <div
-              key={i}
-              className={`diff-popup-line ${
-                l.type === 'add' ? 'diff-popup-line-add' : l.type === 'del' ? 'diff-popup-line-del' : 'diff-popup-line-ctx'
-              }`}
-            >
-              <span className="diff-popup-prefix">
-                {l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' '}
-              </span>
-              <span className="diff-popup-text">{l.text || '\u00a0'}</span>
-            </div>
-          ))}
+          {lines.map((l, i) => {
+            const meta = LINE_META[l.type];
+            return (
+              <div
+                key={i}
+                className={`diff-popup-line ${meta.cls}`}
+              >
+                <span className="diff-popup-prefix">{meta.prefix}</span>
+                <span className="diff-popup-text">{l.text || '\u00a0'}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </>

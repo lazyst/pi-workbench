@@ -37,6 +37,11 @@ function detectLanguage(filePath: string): string {
   return map[ext] ?? 'plaintext';
 }
 
+// 统一错误信息提取。
+function toErrMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function DiffTab({ cwd, commitHash, filePath, singleColumn, active, onBack }: Props) {
   // 全量 unified diff（用于非文件级 diff 模式）
   const [diff, setDiff] = useState<string>('');
@@ -55,27 +60,29 @@ export function DiffTab({ cwd, commitHash, filePath, singleColumn, active, onBac
     if (isFileMode) return;
     if (!cwd) return;
     let cancelled = false;
+    const apply = (d: string) => { if (!cancelled) setDiff((prev) => (prev === d ? prev : d)); };
+    const fail = (e: unknown) => { if (!cancelled) setError(toErrMsg(e)); };
+
     setLoading(true);
     setError(null);
     setDiff('');
-    (async () => {
-      try {
-        const d = await pi.gitDiff(cwd, commitHash ?? undefined);
-        if (!cancelled) setDiff((prev) => (prev === d ? prev : d));
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    pi.gitDiff(cwd, commitHash ?? undefined)
+      .then(apply)
+      .catch(fail)
+      .finally(() => { if (!cancelled) setLoading(false); });
+
     let unsubscribe: (() => void) | undefined;
     if (commitHash === null) {
       let timer: ReturnType<typeof setTimeout> | null = null;
       unsubscribe = pi.gitWatch(cwd, () => {
         if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
+        timer = setTimeout(async () => {
           timer = null;
-          pi.gitDiff(cwd).then((d) => { if (!cancelled) setDiff((prev) => (prev === d ? prev : d)); }).catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
+          try {
+            apply(await pi.gitDiff(cwd));
+          } catch (e) {
+            fail(e);
+          }
         }, 250);
       });
     }
@@ -97,15 +104,13 @@ export function DiffTab({ cwd, commitHash, filePath, singleColumn, active, onBac
         const d = await pi.gitCommitFileDiff(cwd, commitHash, filePath);
         if (!cancelled) setFileDiff(d);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(toErrMsg(e));
       } finally {
         if (!cancelled) setFileLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [cwd, commitHash, filePath, isFileMode]);
-
-  void active;
 
   const handleBack = useCallback(() => {
     onBack?.();

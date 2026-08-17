@@ -125,7 +125,7 @@ export function IconGitDiff({ size = 16, className }: IconProps) {
   );
 }
 
-// 终端会话 Tab 图标（复用现有 IconTerminal 的视觉）。
+// 终端会话 Tab 图标。
 export function IconSession({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className} aria-hidden="true">
@@ -136,22 +136,25 @@ export function IconSession({ size = 16, className }: IconProps) {
   );
 }
 
-// 左侧栏折叠/展开按钮图标：展开时箭头向左（指示折叠），折叠时箭头向右（指示展开）。
-// collapsed 为 true 时箭头指向右，false 时箭头指向左。
-export function IconSidebarToggle({ size = 16, className, collapsed }: IconProps & { collapsed?: boolean }) {
+// 折叠/展开切换箭头：collapsed 为 true 时显示 collapsedPath，否则显示 expandedPath。
+function IconToggle({ size = 16, className, collapsed, collapsedPath, expandedPath }: IconProps & { collapsed?: boolean; collapsedPath: string; expandedPath: string }) {
   return (
     <svg {...base(size)} className={className} aria-hidden="true">
-      {collapsed ? (
-        <path d="M9 6l6 6-6 6" />
-      ) : (
-        <path d="M15 6l-6 6 6 6" />
-      )}
+      <path d={collapsed ? collapsedPath : expandedPath} />
     </svg>
   );
 }
 
-// 右栏折叠/展开按钮图标：展开时箭头向右（指示折叠），折叠时箭头向左（指示展开）。
-// collapsed 为 true 时箭头指向左，false 时箭头指向右。
+/** 左侧栏折叠/展开按钮。collapsed=true 时箭头指向右（折叠），false 时指向左（展开）。 */
+export function IconSidebarToggle(props: IconProps & { collapsed?: boolean }) {
+  return <IconToggle {...props} collapsedPath="M9 6l6 6-6 6" expandedPath="M15 6l-6 6 6 6" />;
+}
+
+/** 右栏折叠/展开按钮。collapsed=true 时箭头指向左（折叠），false 时指向右（展开）。 */
+export function IconRightPanelToggle(props: IconProps & { collapsed?: boolean }) {
+  return <IconToggle {...props} collapsedPath="M15 6l-6 6 6 6" expandedPath="M9 6l6 6-6 6" />;
+}
+
 // 水平分屏（左右）图标：矩形被竖线一分为二。
 export function IconSplitHorizontal({ size = 16, className }: IconProps) {
   return (
@@ -172,14 +175,4 @@ export function IconSplitVertical({ size = 16, className }: IconProps) {
   );
 }
 
-export function IconRightPanelToggle({ size = 16, className, collapsed }: IconProps & { collapsed?: boolean }) {
-  return (
-    <svg {...base(size)} className={className} aria-hidden="true">
-      {collapsed ? (
-        <path d="M15 6l-6 6 6 6" />
-      ) : (
-        <path d="M9 6l6 6-6 6" />
-      )}
-    </svg>
-  );
-}
+

@@ -378,7 +378,7 @@ export function PiModelConfig() {
     const headersCollapsed = collapsedSections[headersSectionKey] !== false;
 
     return (
-      <div key={pIdx} className={`pi-provider-card ${p._collapsed ? '' : ''}`}>
+      <div key={pIdx} className="pi-provider-card">
         <div className="pi-provider-header" onClick={() => toggleProvider(pIdx)}>
           <span className="pi-collapse-icon">{p._collapsed ? '▶' : '▼'}</span>
           <span className="pi-provider-key">{p.key || '新提供者'}</span>
@@ -471,7 +471,7 @@ export function PiModelConfig() {
     const tlMap = m.thinkingLevelMap || {};
 
     return (
-      <div key={mIdx} className={`pi-model-card ${m._collapsed ? '' : ''}`}>
+      <div key={mIdx} className="pi-model-card">
         <div className="pi-model-header" onClick={() => toggleModel(pIdx, mIdx)}>
           <span className="pi-collapse-icon">{m._collapsed ? '▶' : '▼'}</span>
           <span className="pi-model-id">{m.id || '新模型'}</span>

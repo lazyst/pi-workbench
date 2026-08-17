@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { pi } from '../ipc';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { useSplitStore } from '../store/splitStore';
+import { toAbsolutePath } from '../lib/mdPath';
 
 // ── Types ──
 
@@ -123,15 +124,13 @@ export function parseResources(porcelain: string): GitResource[] {
     }
 
     let stagedBadge = '';
-    const xMap: Record<string, string> = { ' ': '', M: 'M', A: 'A', D: 'D', R: 'R', C: 'C', '?': '' };
     if (x !== ' ' && x !== '?') {
-      stagedBadge = xMap[x] ?? 'M';
+      stagedBadge = STAGED_BADGE[x] ?? 'M';
     }
 
     let unstagedBadge = '';
-    const yMap: Record<string, string> = { ' ': '', M: 'M', D: 'D', A: 'A', '?': '' };
     if (y !== ' ' && y !== '?' && y !== '!') {
-      unstagedBadge = yMap[y] ?? 'M';
+      unstagedBadge = UNSTAGED_BADGE[y] ?? 'M';
     }
 
     if (stagedBadge) {
@@ -165,6 +164,11 @@ function deduceStatus(badge: string): FileTreeNode['status'] {
     default: return 'untracked';
   }
 }
+
+// git status --porcelain 的状态字母 → badge 映射表：第一列 → staged，第二列 → unstaged。
+// 在 parseResources 的循环内重复创建浪费内存，提为模块级常量。
+const STAGED_BADGE: Record<string, string> = { ' ': '', M: 'M', A: 'A', D: 'D', R: 'R', C: 'C', '?': '' };
+const UNSTAGED_BADGE: Record<string, string> = { ' ': '', M: 'M', D: 'D', A: 'A', '?': '' };
 
 /** 递归收集目录下所有文件路径。 */
 function getDescendantFiles(node: FileTreeNode): string[] {
@@ -254,11 +258,7 @@ function Spinner() {
 
 /** IDEA 状态圆点图标 */
 function IdeaIcon({ status }: { status: FileTreeNode['status'] }) {
-  const cls = status === 'modified' ? 'modified' :
-    status === 'new' ? 'new' :
-    status === 'deleted' ? 'deleted' :
-    status === 'conflict' ? 'conflict' : 'untracked';
-  return <span className={`git-idea-icon ${cls}`} />;
+  return <span className={`git-idea-icon ${status}`} />;
 }
 
 /** 文件树节点：目录或文件 */
@@ -611,7 +611,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
       {
         label: '复制路径',
         onClick: () => {
-          const abs = `${cwd.replace(/[\\/]+$/, '')}/${node.path.replace(/^[\\/]+/, '')}`;
+          const abs = toAbsolutePath(cwd, node.path);
           void navigator.clipboard.writeText(abs).catch(() => {});
         },
       },
@@ -623,7 +623,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
       {
         label: '在文件管理器中显示',
         onClick: () => {
-          const abs = `${cwd.replace(/[\\/]+$/, '')}/${node.path.replace(/^[\\/]+/, '')}`;
+          const abs = toAbsolutePath(cwd, node.path);
           void pi.fsShowInFolder(abs).catch(() => {});
         },
       },
@@ -632,7 +632,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit, onOpenFile, onOpenC
       items.push({
         label: '用系统默认程序打开',
         onClick: () => {
-          const abs = `${cwd.replace(/[\\/]+$/, '')}/${node.path.replace(/^[\\/]+/, '')}`;
+          const abs = toAbsolutePath(cwd, node.path);
           void pi.fsOpenWithSystem(abs).catch(() => {});
         },
       });

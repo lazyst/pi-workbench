@@ -105,6 +105,13 @@ function getTransportDefaults(transport: TransportType): Partial<McpServer> {
   }
 }
 
+// 把 directTools 字段值映射为下拉选项值（true/false/list）。
+function directToolsValue(dt: unknown): string {
+  if (dt === true) return 'true';
+  if (Array.isArray(dt)) return 'list';
+  return 'false';
+}
+
 // ─── 主组件 ────────────────────────────────────────────────────────────
 
 export function PiMcpManager() {
@@ -173,8 +180,7 @@ export function PiMcpManager() {
   }, [files, status]);
 
   const toggleFile = (fIdx: number) => {
-    const key = `file-${fIdx}`;
-    setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+    toggleSection(`file-${fIdx}`);
   };
 
   const toggleSection = (section: string) => {
@@ -187,13 +193,6 @@ export function PiMcpManager() {
       next[fIdx] = updater(next[fIdx]);
       return next;
     });
-  };
-
-  const saveFile = async (fIdx: number) => {
-    const file = files[fIdx];
-    try {
-      await pi.piMcpConfigsSave({ id: file.id, config: file.config || {} });
-    } catch { /* 静默失败 */ }
   };
 
   const addServer = (fIdx: number) => {
@@ -632,7 +631,7 @@ export function PiMcpManager() {
           {/* ── 直接工具 ── */}
           <div className="pi-field-row">
             <label>直接工具</label>
-            <select className="pi-select" value={server.directTools === true ? 'true' : server.directTools === false ? 'false' : Array.isArray(server.directTools) ? 'list' : 'false'}
+            <select className="pi-select" value={directToolsValue(server.directTools)}
               onChange={e => {
                 const v = e.target.value;
                 if (v === 'true') updateServer(fIdx, sKey, 'directTools', true);
@@ -971,7 +970,7 @@ export function PiMcpManager() {
               导入其他主机的 MCP 配置格式。共享 MCP 文件已自动加载，此处仅需添加非标准格式。
             </p>
             <div className="pi-tag-list">
-              {(imports || []).map((im, i) => (
+              {imports.map((im, i) => (
                 <span className="pi-tag-item" key={i}>
                   <span className="pi-tag-value">{im}</span>
                   <button className="pi-btn-danger-sm" onClick={() => removeImport(fIdx, im)}>×</button>
@@ -1032,7 +1031,7 @@ export function PiMcpManager() {
           return (
             <div className="pi-mcp-file-card" key={file.id}>
               <div className="pi-mcp-file-header" onClick={() => toggleFile(fIdx)}>
-                <span className="pi-collapse-icon">{expanded[key] === true ? '▼' : '▶'}</span>
+                <span className="pi-collapse-icon">{isExpanded ? '▼' : '▶'}</span>
                 <span className="pi-mcp-file-label">{file.label}</span>
                 <span className="pi-mcp-file-badge">{file.exists ? `${serverKeys.length} 个服务器` : '空文件'}</span>
               </div>

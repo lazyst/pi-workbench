@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 
 interface Props {
@@ -10,11 +9,10 @@ interface Props {
   onCancel: () => void;
 }
 
+// 弹窗生命周期由父组件挂载/卸载控制，故 open 恒为 true，无需内部状态。
 export function ConfirmDialog({ title, message, confirmLabel = '删除', cancelLabel = '取消', onConfirm, onCancel }: Props) {
-  const [open, setOpen] = useState(true);
-
   return (
-    <AlertDialog.Root open={open}>
+    <AlertDialog.Root open>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="confirm-overlay" />
         <AlertDialog.Content

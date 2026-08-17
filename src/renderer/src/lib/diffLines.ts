@@ -123,21 +123,32 @@ export function parseDiffLineChanges(diff: string): DiffHunk[] {
   return result;
 }
 
+interface HunkLine {
+  type: 'add' | 'del' | 'ctx';
+  text: string;
+  newLine: number | null;
+}
+
+interface CompressedHunk {
+  newStart: number;
+  lines: HunkLine[];
+}
+
 /** 提取每个 hunk 的原始文本（用于 popup 展示），按新旧版本拆行。 */
-export function extractHunkCompressed(diff: string): Array<{ newStart: number; lines: Array<{ type: 'add' | 'del' | 'ctx'; text: string; newLine: number | null }> }> {
-  const result: Array<{ newStart: number; lines: Array<{ type: 'add' | 'del' | 'ctx'; text: string; newLine: number | null }> }> = [];
+export function extractHunkCompressed(diff: string): CompressedHunk[] {
+  const result: CompressedHunk[] = [];
   const lines = diff.split(/\r?\n/);
   let inHunk = false;
   let newLine = 0;
-  let current: { newStart: number; lines: [] } | null = null;
+  let current: CompressedHunk | null = null;
 
   for (const line of lines) {
     if (line.startsWith('@@ -')) {
       const m = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
       inHunk = true;
       newLine = m ? Number(m[1]) : 0;
-      current = { newStart: newLine, lines: [] as any };
-      result.push(current as any);
+      current = { newStart: newLine, lines: [] };
+      result.push(current);
       continue;
     }
     if (!inHunk) continue;
@@ -145,18 +156,17 @@ export function extractHunkCompressed(diff: string): Array<{ newStart: number; l
       inHunk = false;
       continue;
     }
-    if (line.startsWith('@@ -')) continue;
     const c = line.charAt(0);
     if (c === ' ') {
-      (current! as any).lines.push({ type: 'ctx', text: line.slice(1), newLine });
+      current!.lines.push({ type: 'ctx', text: line.slice(1), newLine });
       newLine++;
     } else if (c === '+') {
-      (current! as any).lines.push({ type: 'add', text: line.slice(1), newLine });
+      current!.lines.push({ type: 'add', text: line.slice(1), newLine });
       newLine++;
     } else if (c === '-') {
-      (current! as any).lines.push({ type: 'del', text: line.slice(1), newLine: null });
+      current!.lines.push({ type: 'del', text: line.slice(1), newLine: null });
     } else if (c === '\\') {
-      (current! as any).lines.push({ type: 'ctx', text: line, newLine: null });
+      current!.lines.push({ type: 'ctx', text: line, newLine: null });
     }
   }
   return result;

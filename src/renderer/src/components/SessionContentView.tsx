@@ -130,7 +130,7 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
 
             {/* ── Process 折叠块（所有 thinking + 所有 tool 调用） ── */}
             {showProcess && (
-              <div className={`session-msg session-msg-assistant`}>
+              <div className="session-msg session-msg-assistant">
                 <div className={`session-process${isExpanded ? ' expanded' : ''}`}>
                   <div
                     className="session-process-header"
@@ -156,20 +156,20 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
                   {isExpanded && (
                     <div className="session-process-body">
                       {/* 所有思考过程 */}
-                      {group.thinkings.map((t, ti) => (
+                      {group.thinkings.map((thinking, ti) => (
                         <div key={ti} className="session-process-thinking">
                           <div className="session-process-sub-label">思考过程</div>
-                          <div className="session-process-content">{t}</div>
+                          <div className="session-process-content">{thinking}</div>
                         </div>
                       ))}
                       {/* 所有工具调用 */}
-                      {group.tools.map((t, ti) => (
+                      {group.tools.map((tool, ti) => (
                         <div key={ti} className="session-process-tool">
                           <div className="session-process-sub-label">
                             <span className="tool-label">tool</span>
-                            <span className="tool-name">[{t.toolName ?? '?'}]</span>
+                            <span className="tool-name">[{tool.toolName ?? '?'}]</span>
                           </div>
-                          <pre className="session-process-tool-content"><code className="hljs">{t.content}</code></pre>
+                          <pre className="session-process-tool-content"><code className="hljs">{tool.content}</code></pre>
                         </div>
                       ))}
                     </div>

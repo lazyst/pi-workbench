@@ -2,14 +2,19 @@
 // 复用 linkUtils 的 isExternalHref / resolveRelativeLink 做安全判定与相对链接解析。
 import { isExternalHref, resolveRelativeLink } from '../linkUtils';
 
+// 取路径中最后一个路径分隔符（/ 或 \\）的位置，无则返回 -1。
+function lastSepIndex(p: string): number {
+  return Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+}
+
 export function basenameOf(p: string): string {
-  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  const idx = lastSepIndex(p);
   return idx >= 0 ? p.slice(idx + 1) : p;
 }
 
 /** 取文件相对 root 的目录段（如 'docs/api'）。根层文件返回 ''。 */
 export function dirOf(p: string): string {
-  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  const idx = lastSepIndex(p);
   return idx >= 0 ? p.slice(0, idx) : '';
 }
 

@@ -3,7 +3,7 @@
 // 使用 lucide-react 图标，集成 git 状态、inline 编辑、拖拽等交互。
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback } from 'react';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { FolderIcon, getFileIcon } from '../FileIcons';
 import type { FileNode, GitFileStatusEntry } from './file-tree-types';
@@ -63,9 +63,9 @@ export function FileTreeRow({
   onCommitEdit,
   onCancelEdit,
 }: FileTreeRowProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
   // ── CSS 类名 ──
+  // git-${gitCategory} 已在上方为所有类别添加一次，下方仅需为 modified 的
+  // staged/unstaged 组合补充额外标记。
   const className = [
     'file-row',
     isSelected ? 'selected' : '',
@@ -77,7 +77,6 @@ export function FileTreeRow({
     gitCategory === 'modified' && isStaged && !isUnstaged ? 'git-staged' : '',
     gitCategory === 'modified' && isUnstaged && !isStaged ? 'git-unstaged' : '',
     gitCategory === 'modified' && isStaged && isUnstaged ? 'git-staged-unstaged' : '',
-    gitCategory && !gitCategory.startsWith('modified') ? `git-${gitCategory}` : '',
   ].filter(Boolean).join(' ');
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -152,7 +151,6 @@ export function FileTreeRow({
       {/* 文件名或编辑输入框 */}
       {isEditing ? (
         <input
-          ref={inputRef}
           className="file-rename-input"
           autoFocus
           defaultValue={editingValue}

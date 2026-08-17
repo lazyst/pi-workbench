@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useDebouncedSave } from '../hooks/useDebouncedSave';
 import { getTheme, getThemeFamily, setTheme, setThemeFamily } from '../theme';
 import { pi } from '../ipc';
@@ -20,6 +20,18 @@ interface Props {
 
 type NavKey = 'general' | 'sessions' | 'terminal' | 'pi-config' | 'pi-models' | 'pi-mcp' | 'pi-skills' | 'pi-extensions';
 
+// 左侧导航项配置：key + 标签；sectionBreak 为 true 的项前插入分隔线 + 分组标题。
+const NAV_ITEMS: { key: NavKey; label: string; sectionBreak?: boolean }[] = [
+  { key: 'general', label: '常规' },
+  { key: 'sessions', label: '会话管理' },
+  { key: 'terminal', label: '终端' },
+  { key: 'pi-config', label: '配置文件', sectionBreak: true },
+  { key: 'pi-models', label: '模型配置' },
+  { key: 'pi-mcp', label: 'MCP 管理' },
+  { key: 'pi-skills', label: 'Skills 管理' },
+  { key: 'pi-extensions', label: '扩展管理' },
+];
+
 // Modal settings panel with a left-hand navigation:
 //  - 常规：主题、关闭按钮行为（原有设置项迁移至此）。
 //  - 会话管理：展示全部磁盘会话（按目录分组），支持单条删除、清空目录、批量删除。
@@ -29,11 +41,40 @@ const NAV_STORAGE_KEY = 'pi-desktop:settings-nav';
 function loadSavedNav(): NavKey {
   try {
     const saved = localStorage.getItem(NAV_STORAGE_KEY);
-    if (saved && ['general', 'sessions', 'terminal', 'pi-config', 'pi-models', 'pi-mcp', 'pi-skills', 'pi-extensions'].includes(saved)) {
+    if (saved && NAV_ITEMS.some(i => i.key === saved)) {
       return saved as NavKey;
     }
   } catch { /* ignore */ }
   return 'general';
+}
+
+/** 导航项按钮。 */
+function NavItem({ nav, current, onSelect, label }: { nav: NavKey; current: NavKey; onSelect: (n: NavKey) => void; label: string }) {
+  const active = nav === current;
+  return (
+    <button
+      type="button"
+      className={`nav-item${active ? ' active' : ''}`}
+      aria-current={active}
+      onClick={() => onSelect(nav)}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** 按 nav 渲染对应面板（避免嵌套三元）。各面板为 function 声明，在文件下方续肩提升后引用。 */
+function renderNavContent(nav: NavKey) {
+  switch (nav) {
+    case 'general': return <GeneralSettings />;
+    case 'sessions': return <SessionManagement />;
+    case 'terminal': return <TerminalSettings />;
+    case 'pi-config': return <PiConfigEditor />;
+    case 'pi-models': return <PiModelConfig />;
+    case 'pi-mcp': return <PiMcpManager />;
+    case 'pi-skills': return <PiSkillsManager />;
+    case 'pi-extensions': return <PiExtensionsManager />;
+  }
 }
 
 function saveNav(nav: NavKey) {
@@ -61,82 +102,20 @@ export function SettingsPanel({ onClose }: Props) {
         </div>
         <div className="settings-body">
           <nav className="settings-nav" aria-label="设置导航">
-            <button
-              type="button"
-              className={`nav-item${nav === 'general' ? ' active' : ''}`}
-              aria-current={nav === 'general'}
-              onClick={() => handleNav('general')}
-            >
-              常规
-            </button>
-            <button
-              type="button"
-              className={`nav-item${nav === 'sessions' ? ' active' : ''}`}
-              aria-current={nav === 'sessions'}
-              onClick={() => handleNav('sessions')}
-            >
-              会话管理
-            </button>
-            <button
-              type="button"
-              className={`nav-item${nav === 'terminal' ? ' active' : ''}`}
-              aria-current={nav === 'terminal'}
-              onClick={() => handleNav('terminal')}
-            >
-              终端
-            </button>
-            <div className="nav-separator" />
-            <span className="nav-section-label">Pi 配置</span>
-            <button
-              type="button"
-              className={`nav-item${nav === 'pi-config' ? ' active' : ''}`}
-              aria-current={nav === 'pi-config'}
-              onClick={() => handleNav('pi-config')}
-            >
-              配置文件
-            </button>
-            <button
-              type="button"
-              className={`nav-item${nav === 'pi-models' ? ' active' : ''}`}
-              aria-current={nav === 'pi-models'}
-              onClick={() => handleNav('pi-models')}
-            >
-              模型配置
-            </button>
-            <button
-              type="button"
-              className={`nav-item${nav === 'pi-mcp' ? ' active' : ''}`}
-              aria-current={nav === 'pi-mcp'}
-              onClick={() => handleNav('pi-mcp')}
-            >
-              MCP 管理
-            </button>
-            <button
-              type="button"
-              className={`nav-item${nav === 'pi-skills' ? ' active' : ''}`}
-              aria-current={nav === 'pi-skills'}
-              onClick={() => handleNav('pi-skills')}
-            >
-              Skills 管理
-            </button>
-            <button
-              type="button"
-              className={`nav-item${nav === 'pi-extensions' ? ' active' : ''}`}
-              aria-current={nav === 'pi-extensions'}
-              onClick={() => handleNav('pi-extensions')}
-            >
-              扩展管理
-            </button>
+            {NAV_ITEMS.map(({ key, label, sectionBreak }) => (
+              <Fragment key={key}>
+                {sectionBreak && (
+                  <>
+                    <div className="nav-separator" />
+                    <span className="nav-section-label">Pi 配置</span>
+                  </>
+                )}
+                <NavItem nav={key} current={nav} onSelect={handleNav} label={label} />
+              </Fragment>
+            ))}
           </nav>
           <div className="settings-content">
-            {nav === 'general' ? <GeneralSettings /> :
-             nav === 'sessions' ? <SessionManagement /> :
-             nav === 'terminal' ? <TerminalSettings /> :
-             nav === 'pi-config' ? <PiConfigEditor /> :
-             nav === 'pi-models' ? <PiModelConfig /> :
-             nav === 'pi-mcp' ? <PiMcpManager /> :
-             nav === 'pi-skills' ? <PiSkillsManager /> :
-             <PiExtensionsManager />}
+            {renderNavContent(nav)}
           </div>
         </div>
       </div>

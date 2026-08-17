@@ -9,10 +9,7 @@ import type { ThemeFamily } from './types';
 
 /** 当前是否为暗色主题（读根节点 data-theme，缺省按暗色）。 */
 export function themeIsDark(): boolean {
-  const attr = document.documentElement.getAttribute('data-theme');
-  if (attr === 'light') return false;
-  if (attr === 'dark') return true;
-  return true; // no attribute → default dark palette
+  return document.documentElement.getAttribute('data-theme') !== 'light';
 }
 
 /** 当前主题家族（读根节点 data-theme-family，缺省 'github'）。 */
