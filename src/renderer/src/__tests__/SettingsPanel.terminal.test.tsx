@@ -25,7 +25,6 @@ function setup(overrides: Partial<AppConfig> = {}, listProfiles = PROFILES) {
     pickDirectory: vi.fn().mockResolvedValue(null),
     getCurrentVersion: vi.fn().mockResolvedValue('1.0.0'),
     getUpdateStatus: vi.fn().mockResolvedValue(null),
-    onDownloadProgress: vi.fn(() => () => {}),
   };
   (window as any).pi = api;
   render(<SettingsPanel onClose={() => {}} />);

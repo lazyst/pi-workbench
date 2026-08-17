@@ -190,12 +190,7 @@ export interface PiMcpConfig {
   config: unknown;
 }
 
-// ── 版本更新（与主进程 updateChecker.UpdateInfo / ReleaseAsset 对应）──
-export interface ReleaseAsset {
-  name: string;
-  url: string;
-  size: number;
-}
+// ── 版本更新（与主进程 updateChecker.UpdateInfo 对应）──
 export interface UpdateInfo {
   currentVersion: string;
   latestVersion: string | null;
@@ -205,15 +200,6 @@ export interface UpdateInfo {
   releaseBody: string | null;
   checkedAt: string | null;
   error: string | null;
-  assets: ReleaseAsset[];
-}
-export interface UpdateProgress {
-  status: 'downloading' | 'completed' | 'error' | 'cancelled';
-  percent: number;
-  downloadedBytes: number;
-  totalBytes: number;
-  filePath?: string;
-  error?: string;
 }
 
 // ── Git 文件树状态（与主进程 gitBridge.GitFileStatusEntry 对应）──

@@ -7,15 +7,13 @@ import { defaultConfig } from '../../../main/config';
 const CONFIG = defaultConfig();
 
 // 构建组件挂载所需的 window.pi mock。SettingsPanel 的「常规」页会渲染 UpdateCheck，
-// 其在挂载时调用 getCurrentVersion / getUpdateStatus / onDownloadProgress，
-// 缺了会抛 “pi.xxx is not a function”。
+// 其在挂载时调用 getCurrentVersion / getUpdateStatus，缺了会抛 “pi.xxx is not a function”。
 function makeApi(overrides: Record<string, any> = {}) {
   return {
     getConfig: vi.fn().mockResolvedValue(CONFIG),
     setConfig: vi.fn().mockResolvedValue(undefined),
     getCurrentVersion: vi.fn().mockResolvedValue('1.0.0'),
     getUpdateStatus: vi.fn().mockResolvedValue(null),
-    onDownloadProgress: vi.fn().mockReturnValue(() => {}),
     listSessions: vi.fn().mockResolvedValue([]),
     readSessionContent: vi.fn().mockResolvedValue([]),
     ...overrides,

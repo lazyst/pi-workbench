@@ -96,7 +96,7 @@ A desktop IDE for AI coding workflows, wrapping the `pi` CLI's real terminal UI 
 ### Version Update
 
 - Check for updates via GitHub releases (no API key needed).
-- Download with progress bar, cancel, and install.
+- On a new version, links to the release page; user downloads the installer via browser.
 
 ### Safety & Security
 

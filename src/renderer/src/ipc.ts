@@ -1,4 +1,4 @@
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo, UpdateProgress } from './types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo } from './types';
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
@@ -160,14 +160,10 @@ export interface PiApi {
   piExtensionsDisable(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
   piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
   piExtensionsDelete(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
-  // 版本更新检查
+  // 版本更新检查（仅检查 + 提供 release 页面链接，下载由用户在浏览器中完成）
   checkUpdate(): Promise<UpdateInfo>;
   getUpdateStatus(): Promise<UpdateInfo | null>;
   getCurrentVersion(): Promise<string>;
-  downloadUpdate(): Promise<{ success: boolean; filePath: string }>;
-  cancelDownload(): void;
-  installUpdate(filePath: string): Promise<{ success: boolean }>;
-  onDownloadProgress(cb: (progress: UpdateProgress) => void): () => void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at

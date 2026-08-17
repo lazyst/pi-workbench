@@ -2,6 +2,13 @@
 
 ## v1.2.1 (2026-08-13)
 
+### 变更
+
+- **移除应用内自动下载更新功能** — 设置面板的「版本更新」不再提供下载进度条、取消、安装按钮；发现新版本时只显示「前往 GitHub 下载」按钮，点击后在系统浏览器打开 release 页面，由用户自行下载安装包运行升级。
+  - 动因：应用内构造的下载 URL 与 GitHub 实际存储的 asset 名不匹配（空格 vs 点），导致下载 404；与其维护脆弱的 asset 命名约定，不如直接跳转 release 页面，更稳定也更简单。
+  - 移除范围：主进程 `downloadUpdate` / `cancelDownload` / `installUpdate` / 资产筛选与 URL 构造逻辑、`update:download` / `update:cancel-download` / `update:install` / `update:download-progress` IPC 通道、preload bridge 对应 API、渲染进程下载进度 UI 与订阅、`UpdateProgress` / `ReleaseAsset` 类型、下载进度条 CSS。
+  - 保留：版本检查（`checkForUpdate` / `getUpdateStatus` / `getCurrentVersion`）与跳转 release 页面能力。
+
 ### 修复
 
 - **侧边栏混合斜杠路径下会话不显示** — 历史配置可能写入混合分隔符路径（如 `D:\tmp/pi-test`），而会话文件 cwd 由 pi 写为标准反斜杠形式，两者字符串不等导致会话被 `visibleDirs` 过滤掉。修复：`addedDirs` 写入与加载时统一 `path.normalize` + 去空 + 去重，并自愈写回历史配置。

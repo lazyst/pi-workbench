@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo, UpdateProgress } from '../renderer/src/types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo } from '../renderer/src/types';
 
 // 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
 // 即确定，无需等待异步 IPC），供渲染进程首屏零闪烁地拿到主题等初始值。
@@ -285,18 +285,8 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('pi:extensions:enable', payload),
   piExtensionsDelete: (payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:extensions:delete', payload),
-  // 版本更新检查
+  // 版本更新检查（仅检查 + 提供 release 页面链接，下载由用户在浏览器中完成）
   checkUpdate: (): Promise<UpdateInfo> => ipcRenderer.invoke('update:check'),
   getUpdateStatus: (): Promise<UpdateInfo | null> => ipcRenderer.invoke('update:get-status'),
   getCurrentVersion: (): Promise<string> => ipcRenderer.invoke('update:get-current-version'),
-  // 下载更新
-  downloadUpdate: (): Promise<{ success: boolean; filePath: string }> =>
-    ipcRenderer.invoke('update:download'),
-  // 取消下载
-  cancelDownload: () => ipcRenderer.send('update:cancel-download'),
-  // 安装更新
-  installUpdate: (filePath: string): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('update:install', filePath),
-  // 监听下载进度
-  onDownloadProgress: subscribe<UpdateProgress>('update:download-progress'),
 });

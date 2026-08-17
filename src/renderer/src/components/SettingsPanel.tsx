@@ -277,29 +277,13 @@ function UpdateCheck() {
     releaseBody: string | null;
     checkedAt: string | null;
     error: string | null;
-    assets: Array<{ name: string; url: string; size: number }>;
   } | null>(null);
-  // 下载状态
-  const [downloadProgress, setDownloadProgress] = useState<{
-    status: 'downloading' | 'completed' | 'error' | 'cancelled';
-    percent: number;
-    downloadedBytes: number;
-    totalBytes: number;
-    filePath?: string;
-    error?: string;
-  } | null>(null);
-  const [downloading, setDownloading] = useState(false);
 
   // 启动时获取当前版本和缓存检查结果
   const [currentVersion, setCurrentVersion] = useState<string>('');
   useEffect(() => {
     pi.getCurrentVersion().then(setCurrentVersion).catch(() => {});
     pi.getUpdateStatus().then(setResult).catch(() => {});
-  }, []);
-
-  // 订阅下载进度
-  useEffect(() => {
-    return pi.onDownloadProgress(setDownloadProgress);
   }, []);
 
   const handleCheck = async () => {
@@ -318,58 +302,14 @@ function UpdateCheck() {
         releaseBody: null,
         checkedAt: null,
         error: err instanceof Error ? err.message : '检查更新失败',
-        assets: [],
       });
     } finally {
       setChecking(false);
     }
   };
 
-  const handleDownload = async () => {
-    setDownloading(true);
-    setDownloadProgress(null);
-    try {
-      await pi.downloadUpdate();
-    } catch (err) {
-      setDownloadProgress({
-        status: 'error',
-        percent: 0,
-        downloadedBytes: 0,
-        totalBytes: 0,
-        error: err instanceof Error ? err.message : '下载失败',
-      });
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  const handleCancelDownload = () => {
-    pi.cancelDownload();
-  };
-
-  const handleInstall = (filePath: string) => {
-    pi.installUpdate(filePath).catch((err) => {
-      setDownloadProgress({
-        status: 'error',
-        percent: 0,
-        downloadedBytes: 0,
-        totalBytes: 0,
-        error: err instanceof Error ? err.message : '安装失败',
-      });
-    });
-  };
-
   const openRelease = (url: string) => {
     pi.openExternal(url).catch(() => {});
-  };
-
-  // 格式化字节数
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const k = 1024;
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + units[i];
   };
 
   return (
@@ -383,75 +323,14 @@ function UpdateCheck() {
         <button
           type="button"
           className="btn"
-          disabled={checking || downloading}
+          disabled={checking}
           onClick={handleCheck}
         >
           {checking ? '检查中…' : '检查更新'}
         </button>
-        {result?.hasUpdate && !downloadProgress && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={downloading}
-            onClick={handleDownload}
-          >
-            下载并更新
-          </button>
-        )}
       </div>
 
-      {/* 下载进度 */}
-      {downloadProgress && (
-        <div className="update-download-progress">
-          {downloadProgress.status === 'downloading' && (
-            <div className="download-active">
-              <div className="download-info">
-                <span>正在下载…</span>
-                <span>{downloadProgress.percent}%</span>
-              </div>
-              <div className="download-bar-track">
-                <div
-                  className="download-bar-fill"
-                  style={{ width: `${downloadProgress.percent}%` }}
-                />
-              </div>
-              <div className="download-detail">
-                <span>{formatBytes(downloadProgress.downloadedBytes)} / {formatBytes(downloadProgress.totalBytes)}</span>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={handleCancelDownload}
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
-          {downloadProgress.status === 'completed' && (
-            <div className="download-completed">
-              <p className="update-latest">✅ 下载完成</p>
-              {downloadProgress.filePath && (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => handleInstall(downloadProgress.filePath!)}
-                >
-                  立即安装
-                </button>
-              )}
-              <p className="settings-hint">安装程序将自动退出当前应用并启动安装。</p>
-            </div>
-          )}
-          {downloadProgress.status === 'error' && (
-            <p className="update-error">⚠ {downloadProgress.error ?? '下载失败'}</p>
-          )}
-          {downloadProgress.status === 'cancelled' && (
-            <p className="update-latest">下载已取消</p>
-          )}
-        </div>
-      )}
-
-      {result && !downloadProgress && (
+      {result && (
         <div className="update-result">
           {result.error ? (
             <p className="update-error">⚠ {result.error}</p>
@@ -469,12 +348,13 @@ function UpdateCheck() {
               {result.releaseUrl && (
                 <button
                   type="button"
-                  className="btn"
+                  className="btn btn-primary"
                   onClick={() => openRelease(result.releaseUrl!)}
                 >
-                  前往 GitHub 查看
+                  前往 GitHub 下载
                 </button>
               )}
+              <p className="settings-hint">点击按钮在浏览器打开 release 页面，下载安装包后运行即可升级。</p>
             </div>
           ) : (
             <p className="update-latest">✅ 已是最新版本</p>
