@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { SessionFileManager, decodeCwd, formatTimestamp, readSessionCwd, readSessionName, readGroupCwd } from '../sessionFileManager';
+import type { TerminalDebugSnapshot } from '../unifiedTerminalPool';
 
 // ============================================================================
 //  SessionFileManager —— 集成测试（真实临时目录）
@@ -258,22 +259,22 @@ describe('SessionFileManager', () => {
   describe('debugInfo', () => {
     it('returns count and pids of running entries', () => {
       const manager = new SessionFileManager('/tmp');
-      const liveMap = new Map<string, any>([
-        ['a', { info: { status: 'running' }, pty: { pid: 100 } }],
-        ['b', { info: { status: 'running' }, pty: { pid: 200 } }],
-        ['c', { info: { status: 'dead' }, pty: { pid: 300 } }],
-      ]);
-      const info = manager.debugInfo(liveMap);
+      const snapshot: TerminalDebugSnapshot[] = [
+        { id: 'a', type: 'pi', status: 'running', pid: 100 },
+        { id: 'b', type: 'shell', status: 'running', pid: 200 },
+        { id: 'c', type: 'pi', status: 'dead', pid: 300 },
+      ];
+      const info = manager.debugInfo(snapshot);
       expect(info.count).toBe(2);
       expect(info.pids).toEqual([100, 200]);
     });
 
     it('filters out pids <= 0', () => {
       const manager = new SessionFileManager('/tmp');
-      const liveMap = new Map<string, any>([
-        ['a', { info: { status: 'running' }, pty: { pid: -1 } }],
-      ]);
-      const info = manager.debugInfo(liveMap);
+      const snapshot: TerminalDebugSnapshot[] = [
+        { id: 'a', type: 'pi', status: 'running', pid: -1 },
+      ];
+      const info = manager.debugInfo(snapshot);
       expect(info.count).toBe(1);
       expect(info.pids).toEqual([]);
     });

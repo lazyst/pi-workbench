@@ -472,7 +472,7 @@ function createWindow() {
   // 添加 session:query-owner IPC handler 供 renderer 查询 PTY 所有权
   ipcMain.handle('session:query-owner', (_e, key: string) => {
     const owner = ptyRegistry.getOwner(key);
-    const ptyId = ptyRegistry.findPtyByVirtualOwner(key);
+    const ptyId = ptyRegistry.findPtyByOwnerKey(key);
     const virtual = ptyRegistry.getVirtual(key);
     return { owner, ptyId, virtual };
   });

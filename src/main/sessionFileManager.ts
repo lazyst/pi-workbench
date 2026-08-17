@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { TerminalDebugSnapshot } from './unifiedTerminalPool';
 import { decodeCwd, formatTimestamp, readSessionCwd, readSessionName, readGroupCwd } from './sessionUtils';
 
 export interface SessionGroup {
@@ -146,9 +147,11 @@ export class SessionFileManager {
     }
   }
 
-  debugInfo(liveEntries: Map<string, any>): { count: number; pids: number[] } {
-    const running = [...liveEntries.values()].filter((e: any) => e.info?.status === 'running');
-    return { count: running.length, pids: running.map((e: any) => e.pty?.pid ?? -1).filter((p: number) => p > 0) };
+  /** 汇总调试快照：统计运行中终端的数量与 pid 列表。
+   * 接收 UnifiedTerminalPool.debugSnapshot() 的只读快照，不直接依赖池内部结构。 */
+  debugInfo(snapshot: TerminalDebugSnapshot[]): { count: number; pids: number[] } {
+    const running = snapshot.filter((e) => e.status === 'running');
+    return { count: running.length, pids: running.map((e) => e.pid).filter((p: number) => p > 0) };
   }
 }
 

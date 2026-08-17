@@ -102,6 +102,14 @@ export interface TerminalInfo {
   status: 'running' | 'dead';
 }
 
+/** 调试用只读终端快照（供 session:debug 等调试场景，不暴露内部 Entry/PTY 对象）。 */
+export interface TerminalDebugSnapshot {
+  id: string;
+  type: 'pi' | 'shell';
+  status: 'running' | 'dead';
+  pid: number;
+}
+
 /** UnifiedTerminalPool 的可选配置。 */
 export interface UnifiedTerminalPoolOptions {
   cols: number;
@@ -133,8 +141,11 @@ interface Entry {
   linked?: boolean;
   /** 关联的磁盘 .jsonl key（已晋升的 pi 会话）。 */
   diskKey?: string;
-  /** 创建时该 cwd 下已有的磁盘 .jsonl key 集合，用于避免关联到旧文件。 */
+  /** 创建时该 cwd 下已有的磁盘 .jsonl key 集合，用于避免关联到旧文件。
+   * 由后台异步收集后回填；reconcile 通过 existingKeysReady 等待其完成。 */
   existingDiskKeys?: Set<string>;
+  /** existingDiskKeys 后台收集完成的信号（resolve 后 entry.existingDiskKeys 已可用）。 */
+  existingKeysReady?: Promise<void>;
   /** 用户主动终止（terminate）标记：置位后 pty 'exit' 跳过退出确认窗口直接关闭。 */
   terminating?: boolean;
   /** 最近检测到 \x1b[?1049l（退出 alt screen）的时间戳，用于识别 pi-tui 模式切换误报。 */
@@ -223,17 +234,29 @@ export class UnifiedTerminalPool {
   /**
    * 关联已晋升的 disk session 到 live 进程。由外部（pushIndex）在文件变化时调用。
    * 从传入的 SessionGroup 中找到新创建的文件，匹配到对应 cwd 的 live 进程。
+   *
+   * 异步实现：先 await 所有 entry 的 existingKeysReady（保证后台收集的旧文件集
+   * 已回填，避免旧文件被误关联），再用 fs.promises.stat 并行读取磁盘文件 mtime，
+   * 不阻塞主进程事件循环。
    */
-  reconcile(groups: Array<{ cwd: string; sessions: Array<{ key: string; name: string; time: string }> }>): void {
-    const disk: Array<{ key: string; cwd: string; mtime: number }> = [];
-    for (const g of groups) {
-      for (const s of g.sessions) {
-        if (this.entries.has(s.key) || this.alias.has(s.key)) continue;
-        let mtime = 0;
-        try { mtime = fs.statSync(s.key).mtimeMs; } catch { /* ignore unreadable */ }
-        disk.push({ key: s.key, cwd: g.cwd, mtime });
-      }
-    }
+  async reconcile(groups: Array<{ cwd: string; sessions: Array<{ key: string; name: string; time: string }> }>): Promise<void> {
+    // 等待后台 existingDiskKeys 收集完成，避免把创建时已存在的旧文件关联到新进程。
+    const pending = [...this.entries.values()]
+      .map((e) => e.existingKeysReady)
+      .filter((p): p is Promise<void> => !!p);
+    if (pending.length > 0) await Promise.all(pending);
+
+    const disk = await Promise.all(
+      groups.flatMap((g) =>
+        g.sessions
+          .filter((s) => !this.entries.has(s.key) && !this.alias.has(s.key))
+          .map(async (s) => {
+            let mtime = 0;
+            try { mtime = (await fs.promises.stat(s.key)).mtimeMs; } catch { /* ignore unreadable */ }
+            return { key: s.key, cwd: g.cwd, mtime };
+          }),
+      ),
+    );
     disk.sort((a, b) => b.mtime - a.mtime);
     for (const [liveKey, e] of this.entries) {
       if (e.linked || e.type !== 'pi') continue;
@@ -249,17 +272,35 @@ export class UnifiedTerminalPool {
     }
   }
 
-  /** 返回某 cwd 在 sessionsDir 下已有的 .jsonl 路径集合（创建时用于排除旧文件）。 */
-  existingDiskKeysForCwd(sessionsDir: string, cwd: string): Set<string> {
-    const root = sessionsDir;
-    if (!fs.existsSync(root)) return new Set();
-    for (const enc of fs.readdirSync(root)) {
-      const dir = path.join(root, enc);
-      if (!fs.statSync(dir).isDirectory()) continue;
-      const groupCwd = readGroupCwd(dir) ?? decodeCwd(enc);
+  /** 返回某 cwd 在 sessionsDir 下已有的 .jsonl 路径集合（创建时用于排除旧文件）。
+   * 异步实现（fs.promises + withFileTypes），不阻塞主进程；
+   * 由 spawnPi 后台调用并在 existingKeysReady 后回填 entry.existingDiskKeys。
+   *
+   * @param spawnAt spawn 时刻时间戳（ms）：仅收集 mtime 早于该时刻的文件，
+   *   避免异步收集晚于 spawn 完成时，把 spawn 之后刚写入的新会话文件误判为旧文件。 */
+  private async existingDiskKeysForCwd(sessionsDir: string, cwd: string, spawnAt: number): Promise<Set<string>> {
+    if (!sessionsDir) return new Set();
+    try {
+      await fs.promises.access(sessionsDir);
+    } catch {
+      return new Set();
+    }
+    const entries = await fs.promises.readdir(sessionsDir, { withFileTypes: true });
+    for (const encEntry of entries) {
+      if (!encEntry.isDirectory()) continue;
+      const dir = path.join(sessionsDir, encEntry.name);
+      const groupCwd = readGroupCwd(dir) ?? decodeCwd(encEntry.name);
       if (groupCwd !== cwd) continue;
+      const files = await fs.promises.readdir(dir);
       const keys = new Set<string>();
-      for (const f of fs.readdirSync(dir)) if (f.endsWith('.jsonl')) keys.add(path.join(dir, f));
+      for (const f of files) {
+        if (!f.endsWith('.jsonl')) continue;
+        const file = path.join(dir, f);
+        try {
+          const st = await fs.promises.stat(file);
+          if (st.mtimeMs < spawnAt) keys.add(file);
+        } catch { /* 不可读（如正在写入）→ 视为新文件，不排除 */ }
+      }
       return keys;
     }
     return new Set();
@@ -343,7 +384,20 @@ export class UnifiedTerminalPool {
     };
 
     // 收集该 cwd 下已有的 .jsonl keys，用于 reconcile 时排除（避免关联到旧文件）。
-    const existingKeys = this.existingDiskKeysForCwd(this.opts.sessionsDir ?? '', resolvedCwd);
+    // 异步后台收集，不阻塞 spawn 主路径：existingKeysReady 供 reconcile 等待，
+    // 确保其解析前不会把创建时已存在的旧文件误关联到新进程。
+    let resolveExistingKeys: (() => void) | undefined;
+    const existingKeysReady = new Promise<void>((resolve) => { resolveExistingKeys = resolve; });
+    // spawn 时刻基准：异步收集仅保留 mtime 早于该时刻的文件，避免把
+    // spawn 之后刚写入的新会话文件误判为「创建时已存在」的旧文件。
+    const spawnedAt = Date.now();
+    void this.existingDiskKeysForCwd(this.opts.sessionsDir ?? '', resolvedCwd, spawnedAt)
+      .then((keys) => {
+        const e = this.entries.get(id);
+        if (e && keys.size > 0) e.existingDiskKeys = keys;
+      })
+      .catch(() => { /* 收集失败按无既有文件处理 */ })
+      .finally(() => resolveExistingKeys?.());
 
     // ── shell-ready 状态 ──
     let commandInjected = false;
@@ -386,7 +440,7 @@ export class UnifiedTerminalPool {
       bp: new BackpressureController(() => pty.pause(), () => pty.resume()),
       linked: !!opts.sessionFile,
       diskKey: opts.sessionFile,
-      existingDiskKeys: existingKeys.size > 0 ? existingKeys : undefined,
+      existingKeysReady,
     };
 
     pty.on('data', (d: string) => {
@@ -661,6 +715,17 @@ export class UnifiedTerminalPool {
   /** 返回所有存活终端信息。 */
   list(): TerminalInfo[] {
     return [...this.entries.values()].map((e) => e.info);
+  }
+
+  /** 调试用只读快照：返回所有终端的 id/type/status/pid。
+   * 供 session:debug 等调试场景读取池状态，无需直接访问私有 entries 字段。 */
+  debugSnapshot(): TerminalDebugSnapshot[] {
+    return [...this.entries.values()].map((e) => ({
+      id: e.info.id,
+      type: e.type,
+      status: e.info.status,
+      pid: e.pty.pid ?? -1,
+    }));
   }
 
   /** 更新终端 cwd。仅 shell 类型有效（pi 会话的 cwd 由 pi 进程自身管理）。 */

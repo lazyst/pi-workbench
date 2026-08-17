@@ -637,7 +637,7 @@ describe('UnifiedTerminalPool', () => {
       expect(pool.liveKeyFor(info.id)).toBe(info.id);
     });
 
-    it('resolves alias when disk key is linked via reconcile', () => {
+    it('resolves alias when disk key is linked via reconcile', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-lkf-'));
       const { pool } = makePool(tmpDir);
 
@@ -648,7 +648,7 @@ describe('UnifiedTerminalPool', () => {
       const sessionFile = path.join(groupDir, 's.jsonl');
       fs.writeFileSync(sessionFile, JSON.stringify({ cwd: existingCwd }) + '\n');
 
-      pool.reconcile([{
+      await pool.reconcile([{
         cwd: existingCwd,
         sessions: [{ key: sessionFile, name: 'T', time: 't' }],
       }]);
@@ -667,7 +667,7 @@ describe('UnifiedTerminalPool', () => {
   //  reconcile（晋升 / 别名映射）
   // ==========================================================================
   describe('reconcile', () => {
-    it('links a pi session to a new .jsonl file in the same cwd', () => {
+    it('links a pi session to a new .jsonl file in the same cwd', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-rec-'));
       const { pool, onStatus, onRelink } = makePool(tmpDir);
 
@@ -679,7 +679,7 @@ describe('UnifiedTerminalPool', () => {
       const sessionFile = path.join(groupDir, '2026-07-03T19-07-11-857Z_abc.jsonl');
       fs.writeFileSync(sessionFile, JSON.stringify({ cwd: existingCwd }) + '\n');
 
-      pool.reconcile([{
+      await pool.reconcile([{
         cwd: existingCwd,
         sessions: [{ key: sessionFile, name: 'Test', time: '2026-07-03 19:07' }],
       }]);
@@ -693,7 +693,7 @@ describe('UnifiedTerminalPool', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('does not link when the cwd differs', () => {
+    it('does not link when the cwd differs', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-rec2-'));
       const { pool } = makePool(tmpDir);
 
@@ -706,7 +706,7 @@ describe('UnifiedTerminalPool', () => {
       const sessionFile = path.join(groupDir, 'other.jsonl');
       fs.writeFileSync(sessionFile, JSON.stringify({ cwd: otherCwd }) + '\n');
 
-      pool.reconcile([{
+      await pool.reconcile([{
         cwd: otherCwd,
         sessions: [{ key: sessionFile, name: 'Other', time: 't' }],
       }]);
@@ -715,7 +715,7 @@ describe('UnifiedTerminalPool', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('skips files that were already present at spawn time', () => {
+    it('skips files that were already present at spawn time', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-rec3-'));
       const encCwd = existingCwd.replace(/\\/g, '--').replace(/^([A-Za-z]):/, '$1');
       const groupDir = path.join(tmpDir, `--${encCwd}--`);
@@ -726,7 +726,7 @@ describe('UnifiedTerminalPool', () => {
       const { pool } = makePool(tmpDir);
       const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
-      pool.reconcile([{
+      await pool.reconcile([{
         cwd: existingCwd,
         sessions: [{ key: oldFile, name: 'Old', time: 't' }],
       }]);
@@ -823,7 +823,7 @@ describe('UnifiedTerminalPool', () => {
       expect(pool.has(info.id)).toBe(true);
     });
 
-    it('kills the linked live process when called with a disk key', () => {
+    it('kills the linked live process when called with a disk key', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-termdisk-'));
       const { pool, onExit } = makePool(tmpDir);
 
@@ -834,7 +834,7 @@ describe('UnifiedTerminalPool', () => {
       const sessionFile = path.join(groupDir, 'session.jsonl');
       fs.writeFileSync(sessionFile, JSON.stringify({ cwd: existingCwd }) + '\n');
 
-      pool.reconcile([{
+      await pool.reconcile([{
         cwd: existingCwd,
         sessions: [{ key: sessionFile, name: 'T', time: 't' }],
       }]);

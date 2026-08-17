@@ -22,12 +22,18 @@ export function registerSessionHandlers(
   let indexTimer: ReturnType<typeof setTimeout> | undefined;
   const pushIndex = () => {
     if (indexTimer) clearTimeout(indexTimer);
-    indexTimer = setTimeout(() => {
+    indexTimer = setTimeout(async () => {
       if (win.isDestroyed()) return;
       const groups = sessionFileManager.listFiles();
       // Link freshly-written disk sessions to the live processes that created them
       // so clicking a promoted sidebar entry reuses the same process.
-      unifiedPool.reconcile(groups);
+      // reconcile 异步执行（fs.promises），等待完成后再推送最新索引。
+      try {
+        await unifiedPool.reconcile(groups);
+      } catch (err) {
+        console.error('[session:reconcile] failed:', err);
+      }
+      if (win.isDestroyed()) return;
       win.webContents.send('session:index', groups);
     }, 300);
   };
@@ -57,7 +63,7 @@ export function registerSessionHandlers(
     sessionFileManager.clearDirectory(cwd);
     pushIndex();
   });
-  ipcMain.handle('session:debug', () => sessionFileManager.debugInfo(unifiedPool['entries'] as any));
+  ipcMain.handle('session:debug', () => sessionFileManager.debugInfo(unifiedPool.debugSnapshot()));
   ipcMain.handle('session:pickDirectory', async () => {
     const result = await dialog.showOpenDialog(win, {
       title: '选择目录',

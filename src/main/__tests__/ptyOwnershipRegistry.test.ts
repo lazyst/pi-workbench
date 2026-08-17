@@ -81,16 +81,16 @@ describe('PtyOwnershipRegistry', () => {
     });
   });
 
-  describe('findPtyByVirtualOwner', () => {
+  describe('findPtyByOwnerKey', () => {
     it('should find PTY by owner key', () => {
       const reg = new PtyOwnershipRegistry();
       reg.setOwner('live-111', 'some-owner-key');
-      expect(reg.findPtyByVirtualOwner('some-owner-key')).toBe('live-111');
+      expect(reg.findPtyByOwnerKey('some-owner-key')).toBe('live-111');
     });
 
     it('should return undefined for unknown owner key', () => {
       const reg = new PtyOwnershipRegistry();
-      expect(reg.findPtyByVirtualOwner('unknown')).toBeUndefined();
+      expect(reg.findPtyByOwnerKey('unknown')).toBeUndefined();
     });
   });
 

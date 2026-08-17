@@ -71,8 +71,8 @@ export class PtyOwnershipRegistry {
     this.virtualToPty.delete(virtualKey);
   }
 
-  /** 查找拥有某个虚拟 key 的 PTY ID（反向搜索）。 */
-  findPtyByVirtualOwner(ownerKey: string): string | undefined {
+  /** 根据 owner key 反向查找 PTY ID（遍历 owners map，非 virtual key 映射）。 */
+  findPtyByOwnerKey(ownerKey: string): string | undefined {
     for (const [ptyId, key] of this.owners) {
       if (key === ownerKey) return ptyId;
     }
