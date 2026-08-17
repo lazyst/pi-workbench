@@ -20,8 +20,7 @@ import type { TerminalProfile } from '../../renderer/src/types';
 // =========================================================================
 
 /** Shell-ready 标记：OSC 777 序列 */
-export const SHELL_READY_MARKER_PREFIX = '\x1b]777;pi-desktop-shell-ready';
-export const SHELL_READY_MARKER = `${SHELL_READY_MARKER_PREFIX}\x07`;
+const SHELL_READY_MARKER_PREFIX = '\x1b]777;pi-desktop-shell-ready';
 
 /** 超时兜底：最长等待 shell 就绪的时间（ms） */
 export const SHELL_READY_TIMEOUT_MS = 1500;
@@ -112,16 +111,11 @@ export function scanForShellReady(
 // 命令注入器
 // =========================================================================
 
-export interface CommandInjectorOptions {
-  /** 是否支持 bracketed paste（多层命令用） */
-  bracketedPasteSafe?: boolean;
-}
-
 /**
  * 构建注入命令的提交字符串。
  * 对齐 VS Code 的 shell integration 行为：提交符用 \r（Windows）或 \n（POSIX）。
  */
-export function buildStartupCommandSubmission(
+function buildStartupCommandSubmission(
   command: string,
   submit: string,
   bracketedPasteSafe: boolean,
@@ -452,9 +446,9 @@ function ensureGitBashWrappers(): void {
 // Shell 类型检测
 // =========================================================================
 
-export type ShellKind = 'zsh' | 'bash' | 'pwsh' | 'powershell' | 'fish' | 'cmd' | 'git-bash' | 'unknown';
+type ShellKind = 'zsh' | 'bash' | 'pwsh' | 'powershell' | 'fish' | 'cmd' | 'git-bash' | 'unknown';
 
-export function detectShellKind(shellPath: string): ShellKind {
+function detectShellKind(shellPath: string): ShellKind {
   const name = path.basename(shellPath).toLowerCase().replace(/\.exe$/, '');
   switch (name) {
     case 'zsh': return 'zsh';
@@ -467,7 +461,7 @@ export function detectShellKind(shellPath: string): ShellKind {
   }
 }
 
-export function isGitBash(shellPath: string): boolean {
+function isGitBash(shellPath: string): boolean {
   const lower = shellPath.toLowerCase();
   return lower.includes('git') && lower.includes('bash');
 }

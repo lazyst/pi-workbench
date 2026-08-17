@@ -151,11 +151,6 @@ export function restorePaneScrollState(key: string): void {
   panes.get(key)?.restoreScrollState({ viewportY: state.viewportY, baseY: state.baseY, wasAtBottom: state.wasAtBottom, bufferType: state.bufferType, firstVisibleLineMarker: state.firstVisibleLineMarker as any });
 }
 
-/** 清空全部滚动位置快照（测试 / 应用重置时调用）。 */
-export function clearPaneScrollStates(): void {
-  scrollStates.clear();
-}
-
 /** 清空全部实例（测试 / 应用卸载时调用）。 */
 export function resetPanes(): void {
   for (const term of panes.values()) term.unmount();

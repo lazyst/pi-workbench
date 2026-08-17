@@ -1879,9 +1879,3 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
 export function getAllTabs(state: SplitStore): Tab[] {
   return collectAllTabs(state.cwdTrees);
 }
-
-/** 获取单个 leaf 中的全部 tab（含 hidden）。 */
-export function getLeafTabs(state: SplitStore, leafId: string): Tab[] {
-  const found = findLeaf(state.cwdTrees, leafId);
-  return found?.leaf.tabs ?? [];
-}

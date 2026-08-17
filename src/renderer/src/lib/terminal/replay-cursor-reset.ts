@@ -53,23 +53,3 @@ export const CURSOR_RESET_STANDARD =
  */
 export const CURSOR_RESET_KEEP_FOCUS =
   `${RESET_TERMINAL_CURSOR_STYLE}${RESET_KITTY_KEYBOARD_PROTOCOL}\x1b[?25h`
-
-/**
- * 检测 replay payload 结尾是否处于光标隐藏状态。
- * 用于决定是否需要保留隐藏状态（如某些 agent 主动隐藏光标画自己的 caret）。
- */
-export function replayPayloadEndsWithCursorHidden(payload: string): boolean {
-  const hideIndex = payload.lastIndexOf('\x1b[?25l')
-  return hideIndex !== -1 && hideIndex > payload.lastIndexOf('\x1b[?25h')
-}
-
-/**
- * 构建带 payload 感知的 agent 重新挂载重置序列。
- * 如果 payload 结尾是光标隐藏，则只重置光标样式（不强制显示），
- * 否则执行 CURSOR_RESET_KEEP_FOCUS 完整重置。
- */
-export function buildCursorResetForAgentReattach(payload: string): string {
-  return replayPayloadEndsWithCursorHidden(payload)
-    ? RESET_TERMINAL_CURSOR_STYLE
-    : CURSOR_RESET_KEEP_FOCUS
-}

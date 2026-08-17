@@ -89,27 +89,6 @@ export function isTerminalScrollIntentRebuildInFlight(terminal: object): boolean
 }
 
 /**
- * 在重建期间延期一个几何操作（如 fit）。
- * 返回 true 表示操作被延期，false 表示立即执行。
- *
- * @param terminal - xterm Terminal 实例
- * @param label - 操作标识（仅用于日志，当前未使用）
- * @param fn - 要延期或立即执行的函数
- * @returns true 表示操作被延期（将在重建完成后执行）
- */
-export function deferTerminalGeometryMutationDuringRebuild(
-  terminal: object,
-  _label: string,
-  fn: () => void,
-): boolean {
-  const state = rebuildStates.get(terminal)
-  if (!state?.inFlight) return false
-
-  state.pendingFitOperations.push(fn)
-  return true
-}
-
-/**
  * 注册 buffer 重建完成回调。
  * 如果不在重建中，立即执行回调。
  * 返回取消函数（在回调执行前调用可取消注册）。

@@ -138,8 +138,3 @@ export function getOperationManager(cwd: string): OperationManager {
   }
   return m;
 }
-
-/** Remove an OperationManager for a cwd (e.g. when a repo is closed). */
-export function removeOperationManager(cwd: string): void {
-  managers.delete(cwd);
-}

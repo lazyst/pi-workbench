@@ -12,17 +12,6 @@ export interface FileNode {
   loaded?: boolean;
 }
 
-/** 新建伪节点（尚未落盘的临时子项）。 */
-export interface DraftNode extends FileNode {
-  isDraft: true;
-}
-
-/** 目录缓存：某目录已加载的子项列表。 */
-export interface DirCache {
-  children: FileNode[];
-  loading: boolean;
-}
-
 /** 内联编辑态（新建伪节点或重命名）。 */
 export interface EditingState {
   relPath: string;     // 对新建：父目录相对路径(''为根)；对重命名：节点自身相对路径

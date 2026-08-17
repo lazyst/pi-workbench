@@ -67,35 +67,6 @@ export function rememberVisibleScrollSnapshot(
 }
 
 /**
- * 获取所有 pane 的当前滚动位置快照。
- *
- * @param panes - 要捕获的 pane 列表（key + terminal）
- * @param useRememberedSnapshots - true 时优先使用已保存的快照（隐藏前捕获的）
- * @returns Map<key, ScrollState>
- */
-export function captureViewportPositions(
-  panes: { key: string; terminal: Terminal }[],
-  useRememberedSnapshots: boolean,
-): Map<string, ScrollState> {
-  return new Map(
-    panes.map(({ key, terminal }) => {
-      const remembered = visibleScrollSnapshots.get(key)
-      if (useRememberedSnapshots && remembered) {
-        return [key, remembered.scrollState] as const
-      }
-      const state = captureScrollState(terminal)
-      if (!useRememberedSnapshots || !remembered) {
-        visibleScrollSnapshots.set(key, {
-          scrollState: state,
-          outputEpoch: getTerminalOutputEpoch(terminal),
-        })
-      }
-      return [key, state] as const
-    }),
-  )
-}
-
-/**
  * 调度一个 pane 在可见性恢复后执行 followOutput。
  * 如果意图是 followOutput，在下一个动画帧中 scrollToBottom。
  *
@@ -157,76 +128,5 @@ function applyPendingFollowOutputRequests(): void {
       })
     }
     pendingFollowOutputPaneIds.delete(key)
-  }
-}
-
-/**
- * 执行所有挂起的 followOutput 请求（带参数版本，可由外部调用）。
- *
- * @param panes - 所有当前存活的 pane 列表
- * @param isVisible - 判断当前是否可见的函数
- * @returns true 表示至少执行了一次 scrollToBottom
- */
-export function applyPendingFollowOutputRequestsForPanes(
-  panes: { key: string; terminal: Terminal }[],
-  isVisible: () => boolean,
-): boolean {
-  if (pendingFollowOutputPaneIds.size === 0) return false
-  if (!isVisible()) return false
-
-  let didScroll = false
-  for (const { key, terminal } of panes) {
-    if (!pendingFollowOutputPaneIds.has(key)) continue
-    const previous = visibleScrollSnapshots.get(key)
-    const currentEpoch = getTerminalOutputEpoch(terminal)
-    const hasNewOutput = previous ? currentEpoch > previous.outputEpoch : currentEpoch > 0
-
-    if (hasNewOutput) {
-      if (getTerminalScrollIntentKind(terminal) === 'followOutput') {
-        cancelDeferredScrollRestore(terminal)
-        markTerminalFollowOutput(terminal)
-        try {
-          terminal.scrollToBottom()
-          didScroll = true
-        } catch {
-          // 静默处理渲染器未就绪的异常
-        }
-      }
-      visibleScrollSnapshots.set(key, {
-        scrollState: captureScrollState(terminal),
-        outputEpoch: currentEpoch,
-      })
-    }
-    pendingFollowOutputPaneIds.delete(key)
-  }
-  return didScroll
-}
-
-/**
- * 取消挂起的 followOutput 帧。
- */
-export function cancelPendingFollowOutputRequests(): void {
-  for (const frameId of followOutputFrameIds) {
-    cancelAnimationFrame(frameId)
-  }
-  followOutputFrameIds = []
-  pendingFollowOutputPaneIds.clear()
-}
-
-/**
- * 清理不再存在的 pane 的记忆。
- *
- * @param activeKeys - 当前存活的 pane key 集合
- */
-export function pruneScrollSnapshots(activeKeys: Set<string>): void {
-  for (const key of visibleScrollSnapshots.keys()) {
-    if (!activeKeys.has(key)) {
-      visibleScrollSnapshots.delete(key)
-    }
-  }
-  for (const key of pendingFollowOutputPaneIds) {
-    if (!activeKeys.has(key)) {
-      pendingFollowOutputPaneIds.delete(key)
-    }
   }
 }

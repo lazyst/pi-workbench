@@ -16,3 +16,6 @@ package-lock.json
 
 # pi agent workspace config
 .pi/
+
+# accidental windows null redirect target
+null

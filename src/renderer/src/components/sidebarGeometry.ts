@@ -6,15 +6,6 @@ export const SIDEBAR_MIN_WIDTH = 200;
 // 上限系数：侧边栏宽度不能超过窗口宽度的 60%（见 docs/adr/0001 决策④）。
 export const SIDEBAR_MAX_RATIO = 0.6;
 
-// 文件管理器面板的拖拽宽度约束（与侧边栏同思路，但面板通常更窄）。
-export const FILE_PANEL_MIN_WIDTH = 180;
-export const FILE_PANEL_MAX_RATIO = 0.45;
-
-export function clampFilePanelWidth(width: number, windowWidth: number): number {
-  const max = Math.max(FILE_PANEL_MIN_WIDTH, Math.floor(windowWidth * FILE_PANEL_MAX_RATIO));
-  return Math.max(FILE_PANEL_MIN_WIDTH, Math.min(Math.round(width), max));
-}
-
 // 把期望宽度夹进 [200px, 60% 窗口宽] 区间。
 // 60% 上限以「向下取整」计算；若窗口极窄导致 60% < 200，则绝对地板 200 胜出
 // （窗口最小尺寸为 480px，故实践中 60% ≥ 288 ≥ 200，不会真出现地板 > 上限）。
