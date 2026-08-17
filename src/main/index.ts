@@ -75,18 +75,11 @@ function loadConfig(): AppConfig {
   }
 }
 
-// 确保 config.appWorkDir 字段存在（旧配置/损坏时补全默认 ~/pi-desktop/defaultWorkSpace），
-// 并创建该目录（递归），使「应用工作目录」分组下的集成终端 cwd 真实可用，
-// 避免 integratedTerminalPool 的 safeCwd 因目录缺失而静默回退到 process.cwd()、导致分组语义失效。
-/** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
- * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。 */
-/** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
- * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。
- * 扩展源码内联于此，不依赖文件拷贝（避免 electron-vite 构建输出问题）。 */
 const PI_DESKTOP_MANAGED_MARKER = '@pi-desktop-managed';
 
 /** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
  * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。
+ * 扩展源码内联于此，不依赖文件拷贝（避免 electron-vite 构建输出问题）。
  * 带 marker 保护：如果文件存在且不包含 @pi-desktop-managed 标记，
  * 视为用户自维护的扩展，不覆盖。 */
 function ensurePiDesktopExtension(): void {
@@ -285,6 +278,40 @@ function resolveSessionsDir(): string {
   return process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
 }
 
+/** 在默认浏览器中打开 URL。
+ * 使用 child_process.exec 调用 OS 原生命令，绕过 Electron 30+ 的
+ * shell.openExternal 安全确认对话框（该对话框无法通过用户手势规避）。
+ * macOS: open <url>，Windows: start "" <url>，Linux: xdg-open <url> */
+function openUrlInExternal(url: string): void {
+  const escaped = url.replace(/"/g, '\\"');
+  const cmd = process.platform === 'darwin'
+    ? `open "${escaped}"`
+    : process.platform === 'win32'
+      ? `start "" "${escaped}"`
+      : `xdg-open "${escaped}"`;
+  exec(cmd, (err) => {
+    if (err) console.error('[openUrlInExternal] failed:', err.message);
+  });
+}
+
+/** 反转义 OSC 字段中的转义字符。 */
+function unescapeField(s: string): string {
+  let r = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) {
+      const c = s[i + 1];
+      if (c === ';') r += ';';
+      else if (c === 'a') r += '\x07';
+      else if (c === '\\') r += '\\';
+      else { r += s[i]; r += c; }
+      i++;
+    } else {
+      r += s[i];
+    }
+  }
+  return r;
+}
+
 function createWindow() {
   // 确保 pi-desktop 同步扩展已安装
   ensurePiDesktopExtension();
@@ -328,41 +355,6 @@ function createWindow() {
     }
   });
 
-
-/** 在默认浏览器中打开 URL。
- * 使用 child_process.exec 调用 OS 原生命令，绕过 Electron 30+ 的
- * shell.openExternal 安全确认对话框（该对话框无法通过用户手势规避）。
- * macOS: open <url>，Windows: start "" <url>，Linux: xdg-open <url> */
-function openUrlInExternal(url: string): void {
-  const escaped = url.replace(/"/g, '\\"');
-  const cmd = process.platform === 'darwin'
-    ? `open "${escaped}"`
-    : process.platform === 'win32'
-      ? `start "" "${escaped}"`
-      : `xdg-open "${escaped}"`;
-  exec(cmd, (err) => {
-    if (err) console.error('[openUrlInExternal] failed:', err.message);
-  });
-}
-
-/** 反转义 OSC 字段中的转义字符。 */
-function unescapeField(s: string): string {
-  let r = '';
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\' && i + 1 < s.length) {
-      const c = s[i + 1];
-      if (c === ';') r += ';';
-      else if (c === 'a') r += '\x07';
-      else if (c === '\\') r += '\\';
-      else { r += s[i]; r += c; }
-      i++;
-    } else {
-      r += s[i];
-    }
-  }
-  return r;
-}
-
   // ── 链接跳转纵深防御（对齐 VS Code setWindowOpenHandler + will-frame-navigate）──
   // 终端链接通过 window.open(url, '_blank', 'noopener') 保留用户手势上下文，
   // setWindowOpenHandler 拦截后调用 shell.openExternal（有用户手势 → 不弹安全对话框）。
@@ -385,6 +377,17 @@ function unescapeField(s: string): string {
   });
 
   // ===== 统一终端池 + 会话文件管理器 =====
+  // 统一终端数据发送：发送到主 session 及其所有子路由，消除重复的路由模式
+  const sendDataToTerminal = (id: string, data: string) => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('terminal:data', { id, data });
+    const routes = ptyRegistry.getRoutes(id);
+    if (routes) {
+      for (const routeId of routes) {
+        win.webContents.send('terminal:data', { id: routeId, data });
+      }
+    }
+  };
   const sessionsDir = resolveSessionsDir();
   const sessionFileManager = new SessionFileManager(sessionsDir);
   const piBin = resolvePi();
@@ -417,14 +420,7 @@ function unescapeField(s: string): string {
         // 从数据中剥离 OSC 序列，避免显示在终端中
         const cleanData = data.replace(/\x1b\]633;PiNew;[^\x07]*\x07/, '');
         if (cleanData) {
-          win.webContents.send('terminal:data', { id, data: cleanData });
-          // 同时把数据路由到子 session
-          const routes = ptyRegistry.getRoutes(id);
-          if (routes) {
-            for (const routeId of routes) {
-              win.webContents.send('terminal:data', { id: routeId, data: cleanData });
-            }
-          }
+          sendDataToTerminal(id, cleanData);
         }
         return;
       }
@@ -439,27 +435,12 @@ function unescapeField(s: string): string {
         // 从数据中剥离 OSC 序列
         const cleanData = data.replace(/\x1b\]633;PiName;[^\x07]*\x07/, '');
         if (cleanData) {
-          win.webContents.send('terminal:data', { id, data: cleanData });
-          const routes = ptyRegistry.getRoutes(id);
-          if (routes) {
-            for (const routeId of routes) {
-              win.webContents.send('terminal:data', { id: routeId, data: cleanData });
-            }
-          }
+          sendDataToTerminal(id, cleanData);
         }
         return;
       }
 
-      {
-        win.webContents.send('terminal:data', { id, data });
-        // 把数据路由到子 session
-        const routes = ptyRegistry.getRoutes(id);
-        if (routes) {
-          for (const routeId of routes) {
-            win.webContents.send('terminal:data', { id: routeId, data });
-          }
-        }
-      }
+      sendDataToTerminal(id, data);
     },
     // pi 会话状态变更（running / dead），供侧边栏绿点更新
     onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },

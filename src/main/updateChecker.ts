@@ -125,26 +125,33 @@ function compareVersions(a: string, b: string): number {
 }
 
 /**
+ * 将未知错误转为可展示的中文消息：AbortError 映射为特定提示，
+ * 其余 Error 展示其 message，非 Error 用兜底文案。
+ */
+function formatError(err: unknown, abortMessage: string, fallback: string): string {
+  if (err instanceof Error) {
+    if (err.name === 'AbortError') return abortMessage;
+    return err.message;
+  }
+  return fallback;
+}
+
+/**
  * 筛选当前平台匹配的安装包资产。
  * Windows: 匹配 .exe（不含 .exe.blockmap）
  * macOS: 匹配 .dmg
  * Linux: 匹配 .AppImage
  */
 function filterAssets(assets: ReleaseAsset[]): ReleaseAsset[] {
-  const isWindows = process.platform === 'win32';
-  const isMac = process.platform === 'darwin';
-  const isLinux = process.platform === 'linux';
-
-  if (isWindows) {
-    // Windows: 匹配 .exe 文件，排除 .blockmap
+  if (process.platform === 'win32') {
     return assets.filter(
       (a) => a.name.endsWith('.exe') && !a.name.endsWith('.blockmap'),
     );
   }
-  if (isMac) {
+  if (process.platform === 'darwin') {
     return assets.filter((a) => a.name.endsWith('.dmg'));
   }
-  if (isLinux) {
+  if (process.platform === 'linux') {
     return assets.filter((a) => a.name.endsWith('.AppImage'));
   }
   return [];
@@ -239,12 +246,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     cachedAt = now;
     return cachedResult;
   } catch (err) {
-    const error =
-      err instanceof Error
-        ? err.name === 'AbortError'
-          ? '请求超时，请检查网络连接'
-          : err.message
-        : '未知错误';
+    const error = formatError(err, '请求超时，请检查网络连接', '未知错误');
     cachedResult = failed(error);
     cachedAt = now;
     return cachedResult;
@@ -378,12 +380,7 @@ export async function downloadUpdate(
       if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
     } catch { /* 忽略清理错误 */ }
 
-    const error =
-      err instanceof Error
-        ? err.name === 'AbortError'
-          ? '下载已取消'
-          : err.message
-        : '下载失败';
+    const error = formatError(err, '下载已取消', '下载失败');
 
     onProgress({
       status: 'error',

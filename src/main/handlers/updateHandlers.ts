@@ -37,9 +37,7 @@ export function registerUpdateHandlers(
     }
   });
   // 取消下载
-  ipcMain.on('update:cancel-download', () => {
-    cancelDownload();
-  });
+  ipcMain.on('update:cancel-download', () => cancelDownload());
   // 安装更新：运行已下载的安装包
   ipcMain.handle('update:install', async (_e, filePath: string) => {
     try {
