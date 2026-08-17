@@ -93,6 +93,14 @@ export function PiExtensionsManager() {
     }
   };
 
+  // 不可管理的扩展给出原因提示：
+  //   local 且 !managed → pi-desktop 同步扩展等系统内置项
+  //   path              → settings.json 中的直接路径扩展，需编辑配置文件
+  const unmanagedHint = (e: ExtensionInfo) => {
+    if (e.type === 'path') return '直接路径扩展，请编辑 settings.json 管理';
+    return '系统内置扩展，不可禁用/删除';
+  };
+
   return (
     <div className="pi-extensions-manager">
       <div className="pi-extensions-toolbar">
@@ -125,7 +133,7 @@ export function PiExtensionsManager() {
             </div>
             <div className="pi-extension-actions">
               {!e.managed ? (
-                <span className="pi-muted">无法通过界面管理</span>
+                <span className="pi-muted">{unmanagedHint(e)}</span>
               ) : e.disabled ? (
                 <>
                   <button className="btn btn-sm" onClick={() => enable(e)}>启用</button>

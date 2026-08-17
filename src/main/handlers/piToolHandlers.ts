@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execSync } from 'node:child_process';
+import { PI_DESKTOP_SYNC_FILE } from '../pi-desktop-sync-source';
 
 /**
  * Pi 工具配置相关 IPC handler 注册。
@@ -415,8 +416,33 @@ export function registerPiToolHandlers(
   });
 
   // ── Extensions ──
+  // pi 扩展自动发现位置（见 pi extensions 文档）：
+  //   全局：~/.pi/agent/extensions/*.ts | */index.ts
+  //   项目：.pi/extensions/*.ts | */index.ts
+  // 禁用态：移入同根目录下的 .disabled/ 子目录。启用优先于禁用（同名去重）。
   const extDir = path.join(piAgentDir, 'extensions');
   const disabledExtDir = path.join(piAgentDir, 'extensions', '.disabled');
+  const projectExtDir = path.join(process.cwd(), '.pi', 'extensions');
+  const projectDisabledExtDir = path.join(process.cwd(), '.pi', 'extensions', '.disabled');
+
+  /** 所有合法的「本地扩展」目录（已 resolve，便于直接做前缀比较）。用于路径边界校验。 */
+  const EXT_LOCAL_DIRS = [extDir, disabledExtDir, projectExtDir, projectDisabledExtDir].map((p) => path.resolve(p));
+
+  type ExtItem = { name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string };
+
+  /** 判断 dir 是否落在合法的本地扩展目录内，防止 payload.dir 穿越到任意路径。 */
+  function isInsideLocalExtDir(dir: string): boolean {
+    const norm = path.resolve(dir);
+    return EXT_LOCAL_DIRS.some((base) => norm === base || norm.startsWith(base + path.sep));
+  }
+
+  /** 校验 name 是单层目录/文件名（不含分隔符、.、..），避免 path.join 后穿越。 */
+  function isSafeLocalName(name: string): boolean {
+    if (!name || name.startsWith('.')) return false;
+    if (name.includes('/') || name.includes('\\')) return false;
+    if (name.includes('..')) return false;
+    return true;
+  }
 
   function getPackageSourceString(pkg: unknown): string {
     if (typeof pkg === 'string') return pkg;
@@ -449,24 +475,39 @@ export function registerPiToolHandlers(
     }
   }
 
+  /** 扫描一个本地扩展目录（启用或禁用），合并入 result 并登记 seen。 */
+  function scanLocalDir(dir: string, disabled: boolean, seenNames: Set<string>, result: ExtItem[]): void {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;            // 跳过 .disabled 等隐藏项
+      if (!(entry.isDirectory() || entry.isFile())) continue;
+      if (seenNames.has(entry.name)) continue;             // 同名去重（启用目录先扫，优先）
+      const full = path.join(dir, entry.name);
+      const isPiDesktop = entry.name === PI_DESKTOP_SYNC_FILE;
+      result.push({
+        name: entry.name,
+        type: 'local',
+        source: full,
+        disabled,
+        // pi-desktop-sync 为系统内置同步扩展，界面不可禁用/删除（禁用会在下次启动被重写）。
+        managed: !isPiDesktop,
+        dir: full,
+      });
+      seenNames.add(entry.name);
+    }
+  }
+
   ipcMain.handle('pi:extensions:list', () => {
-    const result: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> = [];
+    const result: ExtItem[] = [];
+    const seenNames = new Set<string>();
 
-    if (fs.existsSync(extDir)) {
-      for (const entry of fs.readdirSync(extDir, { withFileTypes: true })) {
-        if (!entry.name.startsWith('.') && (entry.isDirectory() || entry.isFile())) {
-          result.push({ name: entry.name, type: 'local', source: path.join(extDir, entry.name), disabled: false, managed: true, dir: path.join(extDir, entry.name) });
-        }
-      }
-    }
-    if (fs.existsSync(disabledExtDir)) {
-      for (const entry of fs.readdirSync(disabledExtDir, { withFileTypes: true })) {
-        if (!entry.name.startsWith('.') && (entry.isDirectory() || entry.isFile())) {
-          result.push({ name: entry.name, type: 'local', source: path.join(disabledExtDir, entry.name), disabled: true, managed: true, dir: path.join(disabledExtDir, entry.name) });
-        }
-      }
-    }
+    // 本地扩展：先扫启用目录、再扫禁用目录（同名以启用为准）。
+    scanLocalDir(extDir, false, seenNames, result);
+    scanLocalDir(projectExtDir, false, seenNames, result);
+    scanLocalDir(disabledExtDir, true, seenNames, result);
+    scanLocalDir(projectDisabledExtDir, true, seenNames, result);
 
+    // settings.json 的 packages 与 extensions 字段。
     const globalSettingsPath = path.join(piAgentDir, 'settings.json');
     const projectSettingsPath = path.join(process.cwd(), '.pi', 'settings.json');
     const globalPkgs = readSettingsPackages(globalSettingsPath);
@@ -474,6 +515,7 @@ export function registerPiToolHandlers(
     const state = readPiToolState();
     const disabledPackages: string[] = (state.disabledExtensions as string[]) || [];
 
+    // packages：npm:/git:/本地路径形式的包安装。
     const seenPkgSources = new Set<string>();
     for (const pkg of [...globalPkgs.packages, ...projectPkgs.packages]) {
       const source = getPackageSourceString(pkg);
@@ -481,10 +523,25 @@ export function registerPiToolHandlers(
       seenPkgSources.add(source);
       result.push({ name: getPackageDisplayName(source), type: 'package', source, disabled: disabledPackages.includes(source), managed: true });
     }
+    // 仅记录在 disabledExtensions 中的孤儿包（已禁用、已从 settings 移除）。
     for (const source of disabledPackages) {
       if (seenPkgSources.has(source)) continue;
       seenPkgSources.add(source);
       result.push({ name: getPackageDisplayName(source), type: 'package', source, disabled: true, managed: true });
+    }
+
+    // extensions：settings.json 中的直接路径扩展（只读展示，不在界面增删）。
+    const seenExtPaths = new Set<string>();
+    for (const extPath of [...globalPkgs.extensions, ...projectPkgs.extensions]) {
+      if (typeof extPath !== 'string' || !extPath || seenExtPaths.has(extPath)) continue;
+      seenExtPaths.add(extPath);
+      result.push({
+        name: path.basename(extPath.replace(/\\/g, '/')),
+        type: 'path',
+        source: extPath,
+        disabled: false,
+        managed: false,
+      });
     }
 
     return { extensions: result };
@@ -493,11 +550,22 @@ export function registerPiToolHandlers(
   ipcMain.handle('pi:extensions:disable', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
     if (payload.type === 'local' && payload.dir) {
       const src = payload.dir;
-      const dst = path.join(disabledExtDir, payload.name);
+      if (!isSafeLocalName(payload.name)) return { success: false, error: 'Invalid extension name' };
+      if (!isInsideLocalExtDir(src)) return { success: false, error: 'Invalid extension path' };
+      if (payload.name === PI_DESKTOP_SYNC_FILE) return { success: false, error: 'Cannot disable built-in extension' };
       if (!fs.existsSync(src)) return { success: false, error: 'Extension not found' };
-      if (!fs.existsSync(disabledExtDir)) fs.mkdirSync(disabledExtDir, { recursive: true });
-      fs.renameSync(src, dst);
-      return { success: true };
+      const disabledDir = path.join(path.dirname(src), '.disabled');
+      const dst = path.join(disabledDir, payload.name);
+      try {
+        // mkdirSync(recursive) 对已存在的目录是 no-op，无需先 existsSync 判空。
+        fs.mkdirSync(disabledDir, { recursive: true });
+        // 目标已存在（重复禁用残留）：先清理旧副本再移动，避免 rename 抛 EEXIST 崩溃。
+        if (fs.existsSync(dst)) fs.rmSync(dst, { recursive: true, force: true });
+        fs.renameSync(src, dst);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
     }
     if (payload.type === 'package') {
       const settingsPaths = [path.join(piAgentDir, 'settings.json'), path.join(process.cwd(), '.pi', 'settings.json')];
@@ -526,7 +594,7 @@ export function registerPiToolHandlers(
           writePiToolState(st);
         }
       }
-      return { success: changed };
+      return { success: changed, error: changed ? undefined : 'Package not found in settings' };
     }
     return { success: false, error: 'Unsupported extension type' };
   });
@@ -534,11 +602,23 @@ export function registerPiToolHandlers(
   ipcMain.handle('pi:extensions:enable', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
     if (payload.type === 'local' && payload.dir) {
       const src = payload.dir;
-      const dst = path.join(extDir, payload.name);
+      if (!isSafeLocalName(payload.name)) return { success: false, error: 'Invalid extension name' };
+      if (!isInsideLocalExtDir(src)) return { success: false, error: 'Invalid extension path' };
       if (!fs.existsSync(src)) return { success: false, error: 'Extension not found' };
-      if (!fs.existsSync(extDir)) fs.mkdirSync(extDir, { recursive: true });
-      fs.renameSync(src, dst);
-      return { success: true };
+      // src 在 <root>/.disabled/<name>，启用目标是 <root>/<name>。
+      const enabledRoot = path.join(path.dirname(src), '..');
+      const dst = path.join(enabledRoot, payload.name);
+      try {
+        if (fs.existsSync(dst)) {
+          // 启用目录已有同名（如 pi-desktop-sync 被启动覆盖写回）。此时禁用副本是残留，删除即可。
+          fs.rmSync(src, { recursive: true, force: true });
+          return { success: true };
+        }
+        fs.renameSync(src, dst);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
     }
     if (payload.type === 'package') {
       const st = readPiToolState();
@@ -554,7 +634,10 @@ export function registerPiToolHandlers(
           ? JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8'))
           : {};
         if (!Array.isArray(settings.packages)) settings.packages = [];
-        if (!settings.packages.includes(payload.source)) {
+        // 用 getPackageSourceString 统一判断，兼容 packages 为对象形式（{ source: '...' }）的情况，
+        // 避免 includes(payload.source) 只匹配纯字符串而导致重复添加字符串条目。
+        const exists = settings.packages.some((p: unknown) => getPackageSourceString(p) === payload.source);
+        if (!exists) {
           settings.packages.push(payload.source);
           const dir = path.dirname(globalSettingsPath);
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -570,9 +653,16 @@ export function registerPiToolHandlers(
 
   ipcMain.handle('pi:extensions:delete', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
     if (payload.type === 'local' && payload.dir) {
+      if (!isSafeLocalName(payload.name)) return { success: false, error: 'Invalid extension name' };
+      if (!isInsideLocalExtDir(payload.dir)) return { success: false, error: 'Invalid extension path' };
+      if (payload.name === PI_DESKTOP_SYNC_FILE) return { success: false, error: 'Cannot delete built-in extension' };
       if (!fs.existsSync(payload.dir)) return { success: false, error: 'Extension not found' };
-      fs.rmSync(payload.dir, { recursive: true, force: true });
-      return { success: true };
+      try {
+        fs.rmSync(payload.dir, { recursive: true, force: true });
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: String(err) };
+      }
     }
     if (payload.type === 'package') {
       const settingsPaths = [path.join(piAgentDir, 'settings.json'), path.join(process.cwd(), '.pi', 'settings.json')];
@@ -592,7 +682,10 @@ export function registerPiToolHandlers(
           } catch { /* empty */ }
         }
       }
-      if (changed) {
+      // 无论是否从 settings 移除，都清理 disabledExtensions 中的残留记录，
+      // 否则「仅禁用未启用」的包会永远删不掉、记录残留。
+      let stateChanged = false;
+      try {
         const st = readPiToolState();
         const list: string[] = (st.disabledExtensions as string[]) || [];
         const idx = list.indexOf(payload.source);
@@ -600,9 +693,11 @@ export function registerPiToolHandlers(
           list.splice(idx, 1);
           st.disabledExtensions = list;
           writePiToolState(st);
+          stateChanged = true;
         }
-      }
-      return { success: changed };
+      } catch { /* ignore */ }
+      const ok = changed || stateChanged;
+      return { success: ok, error: ok ? undefined : 'Package not found' };
     }
     return { success: false, error: 'Unsupported extension type' };
   });
