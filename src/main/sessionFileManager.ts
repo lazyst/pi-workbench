@@ -99,32 +99,30 @@ export class SessionFileManager {
             if (content) messages.push({ role: 'user', content });
           } else if (msg.role === 'assistant') {
             // 助理消息：content 可能包含 text / thinking / toolCall
+            const parts = Array.isArray(msg.content) ? msg.content : [];
             // 提取 thinking 部分（type === 'thinking'）
-            let thinking: string | undefined;
-            if (Array.isArray(msg.content)) {
-              const thinkingParts = msg.content
+            const thinking =
+              parts
                 .filter((p: any) => p?.type === 'thinking' && typeof p.thinking === 'string')
-                .map((p: any) => p.thinking);
-              if (thinkingParts.length > 0) thinking = thinkingParts.join('\n').trim();
-            }
+                .map((p: any) => p.thinking)
+                .join('\n')
+                .trim() || undefined;
             // 提取 text 部分（最终回复）
             const finalText = extractContentParts(msg.content);
             if (finalText || thinking) {
               messages.push({ role: 'assistant', content: finalText || '', thinking });
             }
             // 检查是否有 toolCall 内嵌在 content 数组中
-            if (Array.isArray(msg.content)) {
-              for (const part of msg.content) {
-                if (part?.type === 'toolCall' && part?.name) {
-                  const args = typeof part.arguments === 'object'
-                    ? JSON.stringify(part.arguments, null, 2)
-                    : String(part.arguments ?? '');
-                  messages.push({
-                    role: 'tool',
-                    content: args.slice(0, 2000),
-                    toolName: part.name,
-                  });
-                }
+            for (const part of parts) {
+              if (part?.type === 'toolCall' && part?.name) {
+                const args = typeof part.arguments === 'object'
+                  ? JSON.stringify(part.arguments, null, 2)
+                  : String(part.arguments ?? '');
+                messages.push({
+                  role: 'tool',
+                  content: args.slice(0, 2000),
+                  toolName: part.name,
+                });
               }
             }
           } else if (msg.role === 'toolResult' || msg.role === 'tool') {

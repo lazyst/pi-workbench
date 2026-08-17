@@ -122,14 +122,6 @@ export async function listDir(root: string, dir: string): Promise<DirEntry[]> {
 // Read / write / stat
 // ============================================================================
 
-const TEXT_EXTS = new Set([
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'jsonl', 'md', 'mdx',
-  'yaml', 'yml', 'toml', 'py', 'sh', 'bash', 'zsh', 'fish', 'rs', 'go', 'sql',
-  'graphql', 'gql', 'html', 'htm', 'css', 'less', 'scss', 'txt', 'log',
-  'env', 'gitignore', 'gitattributes', 'gitmodules', 'lock', 'tf', 'hcl',
-  'xml', 'csv', 'ini', 'cfg', 'conf', 'dockerfile', 'lock',
-]);
-
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svg']);
 
 /** Max size we will load into memory as text (1 MB). */
@@ -213,31 +205,15 @@ export async function readFile(
     };
   }
 
-  // 已知文本扩展名：直接读。未知扩展名（含无后缀文件）先读内容，再用 NUL 字节
-  // 检测是否真二进制——避免把无后缀的纯文本文件误判为二进制无法预览。
+  // 文件过大 → 不读取内容，直接按二进制处理（预览会提示无法预览）。
   if (stat.size > maxBytes) {
-    // 文件过大 → 不读取内容，直接按二进制处理（预览会提示无法预览）。
     return { content: '', language: languageOf(name) || 'text', size: stat.size, isBinary: true, isImage: false };
   }
 
   const buf = await fsp.readFile(abs);
-  if (TEXT_EXTS.has(ext)) {
-    const isBinary = looksBinary(buf);
-    if (isBinary) {
-      return { content: '', language: 'text', size: stat.size, isBinary: true, isImage: false };
-    }
-    return {
-      content: buf.toString('utf-8'),
-      language: languageOf(name),
-      size: stat.size,
-      isBinary: false,
-      isImage: false,
-    };
-  }
-
-  // 未知扩展名 / 无后缀：用内容探测是否为二进制；纯文本则可正常预览。
-  const isBinary = looksBinary(buf);
-  if (isBinary) {
+  // 用 NUL 字节探测是否为二进制；未知扩展名（含无后缀）与已知文本扩展名走同一路径，
+  // 避免无后缀纯文本被误判为二进制无法预览。
+  if (looksBinary(buf)) {
     return { content: '', language: 'text', size: stat.size, isBinary: true, isImage: false };
   }
   return {

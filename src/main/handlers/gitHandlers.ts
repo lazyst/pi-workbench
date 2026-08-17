@@ -24,12 +24,9 @@ export function registerGitHandlers(
   const gitCooldownUntil = new Map<string, number>();
 
   ipcMain.handle('git:status', async (_e, req: { cwd: string }) => {
+    // 设置 2s 冷却：命令返回后仍有效，避免 Windows fs.watch 延迟事件触发循环刷新。
     gitCooldownUntil.set(req.cwd, Date.now() + 2000);
-    try {
-      return await gitStatus(req.cwd);
-    } finally {
-      // 命令完成后保持冷却，避免 Windows fs.watch 延迟事件触发循环
-    }
+    return gitStatus(req.cwd);
   });
   ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
   ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
@@ -37,26 +34,19 @@ export function registerGitHandlers(
   ipcMain.handle('git:commitFiles', (_e, req: { cwd: string; hash: string }) => gitCommitFiles(req.cwd, req.hash));
   ipcMain.handle('git:commitFileDiff', (_e, req: { cwd: string; hash: string; path: string }) => gitCommitFileDiff(req.cwd, req.hash, req.path));
   ipcMain.handle('git:fileStatusMap', async (_e, req: { cwd: string }) => {
+    // 同 git:status：2s 冷却防止刚扫描完成时的工作区事件触发循环刷新。
     gitCooldownUntil.set(req.cwd, Date.now() + 2000);
-    try {
-      return await gitFileStatusMap(req.cwd);
-    } finally {
-      // 命令完成后保持冷却
-    }
+    return gitFileStatusMap(req.cwd);
   });
-  ipcMain.handle('git:ignoredPaths', async (_e, req: { cwd: string }) => {
-    return await gitIgnoredPaths(req.cwd);
-  });
-  ipcMain.handle('git:logAdvanced', async (_e, req: { cwd: string; query?: any }) => {
-    return await gitLogAdvanced(req.cwd, req.query ?? {});
-  });
+  ipcMain.handle('git:ignoredPaths', (_e, req: { cwd: string }) => gitIgnoredPaths(req.cwd));
+  ipcMain.handle('git:logAdvanced', (_e, req: { cwd: string; query?: any }) => gitLogAdvanced(req.cwd, req.query ?? {}));
 
   // ── Git 写操作 ──
   // 每个写操作经过 OperationManager 管理，防止并发冲突并通知渲染进程操作状态。
   // 操作执行前发送 git:operation 事件（{ cwd, kind, running: true }），完成后发送 running: false。
 
   /** 包装写操作：通过 OperationManager 管理并发，发送操作状态事件。 */
-  async function runWriteOp<T>(
+  async function runWriteOp(
     cwd: string,
     kind: OperationKind,
     fn: () => Promise<{ success: boolean; error?: string }>,
@@ -98,18 +88,10 @@ export function registerGitHandlers(
   });
 
   // ── 分支 ──
-  ipcMain.handle('git:currentBranch', async (_e, req: { cwd: string }) => {
-    return await gitCurrentBranch(req.cwd);
-  });
-  ipcMain.handle('git:configUser', async (_e, req: { cwd: string }) => {
-    return await gitConfigUser(req.cwd);
-  });
-  ipcMain.handle('git:addToGitignore', async (_e, req: { cwd: string; path: string; isDir?: boolean }) => {
-    return await gitAddToGitignore(req.cwd, req.path, req.isDir);
-  });
-  ipcMain.handle('git:branches', async (_e, req: { cwd: string }) => {
-    return await gitBranches(req.cwd);
-  });
+  ipcMain.handle('git:currentBranch', (_e, req: { cwd: string }) => gitCurrentBranch(req.cwd));
+  ipcMain.handle('git:configUser', (_e, req: { cwd: string }) => gitConfigUser(req.cwd));
+  ipcMain.handle('git:addToGitignore', (_e, req: { cwd: string; path: string; isDir?: boolean }) => gitAddToGitignore(req.cwd, req.path, req.isDir));
+  ipcMain.handle('git:branches', (_e, req: { cwd: string }) => gitBranches(req.cwd));
   ipcMain.handle('git:createBranch', async (_e, req: { cwd: string; name: string; from?: string }) => {
     return runWriteOp(req.cwd, OperationKind.Branch, () => gitCreateBranch(req.cwd, req.name, req.from));
   });
@@ -124,9 +106,7 @@ export function registerGitHandlers(
   });
 
   // ── 远程同步 ──
-  ipcMain.handle('git:remotes', async (_e, req: { cwd: string }) => {
-    return await gitRemotes(req.cwd);
-  });
+  ipcMain.handle('git:remotes', (_e, req: { cwd: string }) => gitRemotes(req.cwd));
   ipcMain.handle('git:addRemote', async (_e, req: { cwd: string; name: string; url: string }) => {
     return runWriteOp(req.cwd, OperationKind.Remote, () => gitAddRemote(req.cwd, req.name, req.url));
   });

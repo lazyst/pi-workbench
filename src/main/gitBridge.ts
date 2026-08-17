@@ -166,9 +166,6 @@ export async function gitStatus(cwd: string): Promise<GitStatus> {
       ahead = a ? Number(a[1]) : 0;
       behind = b ? Number(b[1]) : 0;
     }
-    // Skip the first line (the `## branch` header); only real file-change
-    // lines (tracked modifications, untracked files, etc.) indicate dirtiness.
-    const dirty = lines.slice(1).some((l) => l.trim().length > 0);
     // Count added / deleted lines via `git diff --numstat` (unstaged + staged).
     // numstat prints `<additions>\t<deletions>\t<path>` per file; binary or
     // renamed files may show `-` for a count, which we treat as 0.
@@ -409,9 +406,7 @@ export async function gitCommitFileDiff(cwd: string, hash: string, path: string)
     let original = '';
     try {
       original = await git(cwd, ['show', hash + '^:' + path]);
-    } catch {
-      original = '';
-    }
+    } catch { /* 无父提交：original 保持空串 */ }
     const modified = await gitShowFile(cwd, path, hash);
     return { original, modified };
   } catch {
@@ -740,7 +735,7 @@ export async function gitLogAdvanced(cwd: string, q: GitLogQuery = {}): Promise<
     args.push(`-n${q.limit ?? 100}`);
     if (q.skip && q.skip > 0) args.push(`--skip=${q.skip}`);
     if (q.author) { args.push(`--author=${q.author}`); }
-    if (q.query) { args.push(`--grep=${q.query}`); args.push('-i'); args.push('--regexp-ignore-case'); }
+    if (q.query) { args.push(`--grep=${q.query}`); args.push('--regexp-ignore-case'); }
     if (q.ref) args.push(q.ref.toString());
     if (q.allBranches) args.push('--all');
     args.push('--pretty=format:%H%x1f%an%x1f%ad%x1f%s', '--date=iso');
