@@ -3,6 +3,7 @@ import type { SessionStatus } from '../types';
 import { IconNewSession, IconPin, IconTrash, IconRemoveDir, IconTerminal } from './icons';
 import { ContextMenu } from './ContextMenu';
 import { clampSidebarWidth } from './sidebarGeometry';
+import { formatRelativeTime } from '../lib/relativeTime';
 import { defaultConfig } from '../../../main/config';
 
 interface Session { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
@@ -243,6 +244,8 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
               {!isCollapsed && (<>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
+                // 相对时间（如 "5分钟" / "3小时" / "3天"），解析失败时回退原文。
+                const relTime = formatRelativeTime(s.time);
                 // 仅当会话明确处于 'running' 时才显示「终止进程」。磁盘历史/未启动会话
                 // 在渲染层初始化（listSessions / onIndex）时已被补为 'dead'，故不会误显
                 // 按钮；极早期首屏（statusMap 尚未就绪、该 key 为 undefined）也按不可终止
@@ -280,7 +283,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                       />
                       <span className="session-name">
                         <div className="name">{s.name}{isUnsaved && <span className="unsaved-badge">未保存</span>}</div>
-                        {s.time && <div className="time">{s.time}</div>}
+                        {relTime && <div className="time">{relTime}</div>}
                       </span>
                     </div>
                   );
@@ -312,7 +315,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     <span className={`dot ${running ? 'running' : ''}`} />
                     <span className="session-name">
                       <div className="name">{s.name}{isUnsaved && <span className="unsaved-badge">未保存</span>}</div>
-                      {s.time && <div className="time">{s.time}</div>}
+                      {relTime && <div className="time">{relTime}</div>}
                     </span>
                     {canTerminate && (
                       <button className="terminate" title="终止进程" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}>终止进程</button>
