@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 允许 workflow 创建 GitHub Release 并上传 asset
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows installer
+        run: pnpm dist:win
+        env:
+          # CI 无代码签名证书，显式跳过 Windows authenticode 签名
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Extract release notes from CHANGELOG
+        run: node scripts/extract-release-notes.mjs "${{ github.ref_name }}"
+      - name: Show release notes
+        run: cat release_notes.md
+
+      - name: Upload installer to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
