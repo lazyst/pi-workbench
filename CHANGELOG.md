@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.1 (2026-08-19)
+
+### 工程
+
+- **上线 GitHub Actions 自动构建发布流程** — push `v*` tag 时在 `windows-latest` runner 自动构建 Windows 安装包并发布到对应 tag 的 GitHub Release，无需本地构建。新增 `.github/workflows/release.yml` 与 `scripts/extract-release-notes.mjs`（从 CHANGELOG 提取版本说明作为 release 正文）。CI 构建显式跳过 authenticode 签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`）。
+
+- **同步 pnpm-lock.yaml** — package.json 此前移除的 `@radix-ui/react-context-menu` / `@tiptap/extension-underline` / `png-to-ico` 三个依赖未同步到 lockfile，导致 CI `--frozen-lockfile` 安装失败。已重新生成 lockfile。
+
 ## v1.3.0 (2026-08-19)
 
 ### 新功能
