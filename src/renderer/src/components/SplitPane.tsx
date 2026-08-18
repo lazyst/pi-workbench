@@ -45,6 +45,7 @@ import { PreviewTab } from './PreviewTab';
 import { DiffTab } from './DiffTab';
 import { SessionContentView } from './SessionContentView';
 import { restorePaneScrollState, schedulePaneResize, setPaneActive, focusPane } from './paneManager';
+import { focusEditableIn } from '../lib/focusEditable';
 
 interface SplitTabContextMenuState {
   x: number;
@@ -586,11 +587,7 @@ function SplitPaneLeaf({
       const host = Array.from(document.querySelectorAll<HTMLElement>('[data-tab-content-id]')).find(
         (el) => el.getAttribute('data-tab-content-id') === id,
       );
-      if (!host) return;
-      const editable = host.querySelector<HTMLElement>(
-        '.monaco-editor textarea, .ProseMirror, [contenteditable="true"]',
-      );
-      editable?.focus();
+      if (host) focusEditableIn(host);
     });
   }, [selectTab, leaf.tabs]);
 

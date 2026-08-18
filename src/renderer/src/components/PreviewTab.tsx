@@ -17,6 +17,7 @@ import { parseDiffLineChanges, extractHunkCompressed } from '../lib/diffLines';
 import { MarkdownPreview } from './MarkdownPreview';
 import { RichMarkdownEditor } from './RichMarkdownEditor';
 import { basenameOf, toAbsolutePath } from '../lib/mdPath';
+import { focusEditableIn } from '../lib/focusEditable';
 
 interface Props {
   root: string;
@@ -44,6 +45,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
   const dirtyRef = useRef(false);
   // 同步 dirty state 到 ref，供外界 fsWatchFile 回调读取最新值（避免闭包过期）。
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
+  const hostRef = useRef<HTMLDivElement>(null);
   const [initialContent, setInitialContent] = useState('');
   const [currentContent, setCurrentContent] = useState('');
   const [kind, setKind] = useState<'code' | 'image' | 'binary' | 'loading'>('loading');
@@ -200,6 +202,25 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
     return () => { onRegisterCloseGuard?.(tabId, null); };
   }, [tabId, requestClose, onRegisterCloseGuard]);
 
+  // 激活（点击 tab / 从文件树打开文件）时把焦点交给内容区（对齐 VS Code：打开即可输入）。
+  // Monaco/TipTap 的 DOM 异步生成且内容异步读盘，就绪时机不定：先试一次，
+  // 未就绪则短轮询（≤1s）等待可编辑元素出现后聚焦（幂等，重复聚焦无害）。
+  useEffect(() => {
+    if (!active || kind !== 'code') return;
+    // 渲染预览（MarkdownPreview）无可编辑元素，纯阅读无需聚焦。
+    if (isMarkdown && viewMode === 'rendered') return;
+    let cancelled = false;
+    let attempts = 0;
+    const tryFocus = () => {
+      if (cancelled) return;
+      if (hostRef.current && focusEditableIn(hostRef.current)) return;
+      // 编辑器 DOM 尚未生成（Monaco 异步加载 / 内容刚读完），短轮询重试后放弃。
+      if (attempts++ < 20) setTimeout(tryFocus, 50);
+    };
+    tryFocus();
+    return () => { cancelled = true; };
+  }, [active, kind, isMarkdown, viewMode]);
+
   // 点击行号变更标记 → 打开 diff 弹窗：重新拉取行标记与该文件 diff，
   // 找到包含该行号的 hunk 后展示。
   const openDiffPopup = useCallback(async (line: number, x: number, y: number) => {
@@ -249,7 +270,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
   };
 
   return (
-    <div className="preview-tab">
+    <div className="preview-tab" ref={hostRef}>
       <div className="preview-tab-header">
         <span className="preview-tab-title" title={path}>{fileName}</span>
         {isMarkdown && (
