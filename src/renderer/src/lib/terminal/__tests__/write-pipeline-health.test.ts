@@ -128,7 +128,7 @@ describe('isTerminalWritePipelineCertifiedDead', () => {
 
 describe('armTerminalWriteStallWatch', () => {
   it('已认证死亡的终端不会再次武装', () => {
-    const terminal = {}
+    const terminal = { write: vi.fn() }
     notifyUndeliverableWrite(terminal, 'write-stalled')
     // 不应抛出，应静默跳过
     armTerminalWriteStallWatch(terminal)

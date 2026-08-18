@@ -25,7 +25,7 @@ function isValidVariant(v: string | null): v is ThemeVariant {
 
 // 同步读取主进程在窗口创建时经 additionalArguments 注入的初始 config（见 preload 的
 // getInitialConfig），使首屏主题（含随后打开的终端）无需等待异步 IPC，杜绝暗→亮闪烁。
-function readInitialConfig<T>(key: string, validate: (v: string | null) => v is T, fallback: T): T {
+function readInitialConfig<T extends string>(key: string, validate: (v: string | null) => v is T, fallback: T): T {
   try {
     const cfg = (window as any).pi?.getInitialConfig?.();
     if (cfg && validate(cfg[key])) return cfg[key];

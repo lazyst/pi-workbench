@@ -5,7 +5,7 @@ vi.mock('../../components/paneManager', () => ({
   capturePaneScrollState: vi.fn(),
 }));
 
-import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs, findLeaf, canMoveTabToLeaf } from '../splitStore';
+import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs, findLeaf, canMoveTabToLeaf, getTabCwd } from '../splitStore';
 import type { Tab, TabKind, TabLocation, SessionTab, TabLoc } from '../splitStore';
 
 /** 重置 store 到初始空状态。 */
@@ -641,7 +641,7 @@ describe('splitStore — 数据模型与基础操作', () => {
       const s2 = getState();
       const allTabs = getAllTabs(s2);
       const ordered = allTabs
-        .filter((t) => t.cwd === '/a')
+        .filter((t) => getTabCwd(t) === '/a')
         .sort((a, b) => a.order - b.order);
       expect(ordered.map((t) => t.id)).toEqual(['/a/s3', '/a/s1', '/a/s2']);
     });

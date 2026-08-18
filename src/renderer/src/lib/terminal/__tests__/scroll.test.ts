@@ -329,7 +329,7 @@ describe('terminal-scroll', () => {
           throw new TypeError("Cannot read properties of undefined (reading 'dimensions')")
         })
         .mockImplementationOnce((line: number) => {
-          terminal.buffer.active.viewportY = line
+          (terminal.buffer.active as { viewportY: number }).viewportY = line
         })
 
       const state: ScrollState = {
@@ -609,7 +609,7 @@ describe('terminal-scroll', () => {
       // 恢复 scrollToLine 使其成功
       scrollToLineMock.mockReset()
       scrollToLineMock.mockImplementation((line: number) => {
-        terminal.buffer.active.viewportY = line
+        (terminal.buffer.active as { viewportY: number }).viewportY = line
       })
 
       // 恢复挂起的恢复

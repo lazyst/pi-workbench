@@ -681,7 +681,7 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     // 用不同尺寸使 doResize 跳过相等检测，触发 PTY 通知
     hoist.fitProposeDefault = { cols: 120, rows: 40 };
     hoist.fitProposeCalls = 0;
-    api.resize.mockClear();
+    (api.resize as unknown as ReturnType<typeof vi.fn>).mockClear();
     t.scheduleResize();
     expect(hoist.fitProposeCalls).toBeGreaterThan(0);
     expect(api.resize).toHaveBeenCalled();

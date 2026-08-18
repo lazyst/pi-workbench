@@ -32,6 +32,7 @@ function makeFakeTerminal(): LiveTerminal & { theme: string | null; themeFamily:
     updateConfig(c) {
       this.config = c;
     },
+    forceRedraw() {},
   };
 }
 

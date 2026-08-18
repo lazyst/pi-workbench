@@ -32,6 +32,21 @@ import {
   POST_READY_FALLBACK_MS,
 } from './shell-ready/pi-shell-ready';
 
+// node-pty v1.x 的公开类型只声明 onData/onExit 事件属性，但运行时 Terminal 仍继承
+// EventEmitter（内部经 _internalee 转发 'data'/'exit' 事件）。以下类型补齐代码实际
+// 使用的 EventEmitter 表面和 spawn 选项中的 shell 字段，避免降级为 any。
+type PtyWithEvents = nodePty.IPty & {
+  on(event: 'data', listener: (data: string) => void): void;
+  on(event: 'exit', listener: (exitCode: number, signal?: number) => void): void;
+  removeListener(event: 'data', listener: (...args: unknown[]) => void): void;
+};
+type PtySpawnOptions = Parameters<typeof nodePty.spawn>[2] & { shell?: boolean };
+
+/** 统一 spawn 入口：补齐 node-pty v1.x 类型声明缺失的 EventEmitter/shell 表面。 */
+function spawnPty(file: string, args: string[] | string, options: PtySpawnOptions): PtyWithEvents {
+  return nodePty.spawn(file, args, options) as PtyWithEvents;
+}
+
 // 主进程端数据缓冲（5ms 时间窗聚合，等效 VS Code pty host 端 TerminalDataBufferer，
 // 减少 IPC 消息量）。
 const DATA_BUFFER_MS = 5;
@@ -347,7 +362,7 @@ export class UnifiedTerminalPool {
     Object.assign(env, readyConfig.envMixin);
 
     // ── spawn shell（不是 pi） ──
-    const pty = nodePty.spawn(profile.path, spawnArgs, {
+    const pty = spawnPty(profile.path, spawnArgs, {
       cwd: resolvedCwd,
       cols: this.opts.cols,
       rows: this.opts.rows,
@@ -572,7 +587,7 @@ export class UnifiedTerminalPool {
       Object.assign(env, injection.envMixin); // 含 TERM_PROGRAM='vscode' / VSCODE_INJECTION / VSCODE_NONCE
     }
 
-    const pty = nodePty.spawn(profile.path, spawnArgs, {
+    const pty = spawnPty(profile.path, spawnArgs, {
       cwd: safeCwd,
       cols: this.opts.cols,
       rows: this.opts.rows,

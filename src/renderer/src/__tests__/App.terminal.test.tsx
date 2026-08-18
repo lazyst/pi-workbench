@@ -4,17 +4,21 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import App from '../App';
 import { defaultConfig } from '../../../main/config';
 import { useTabStore } from '../store/tabStore';
+import { getAllTabs } from '../store/splitStore';
 
 const CONFIG = defaultConfig();
 
 // store 是模块级单例，每个用例 render(<App/>) 前重置，保证从干净状态开始
 beforeEach(() => {
   useTabStore.setState({
-    tabs: [],
-    activeTabId: null,
+    cwdTrees: {},
     activeCwd: null,
+    activeLeafId: null,
+    activeTabId: null,
     cwdOrder: [],
+    cwdActiveLeafId: {},
     cwdActiveTab: {},
+    cwdTabHistory: {},
     terminals: [],
   });
 });
@@ -91,6 +95,6 @@ describe('App 统一 TabBar 终端（Phase 2）', () => {
     // store.terminals 已清空（mock destroyTerminal 回调 _termListCb([])）
     expect(useTabStore.getState().terminals).toEqual([]);
     // tab 被真移除（不再是 hidden）
-    expect(useTabStore.getState().tabs.length).toBe(0);
+    expect(getAllTabs(useTabStore.getState()).length).toBe(0);
   });
 });

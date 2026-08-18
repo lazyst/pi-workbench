@@ -40,7 +40,7 @@ export interface PiApi {
   setConfig(partial: Partial<AppConfig>): Promise<void>;
   // ── 文件管理器 / 预览（A + B）──
   fsListDir(root: string, dir: string): Promise<Array<{ name: string; isDir: boolean; size: number; mtime: number }>>;
-  fsReadFile(root: string, path: string, maxBytes?: number): Promise<{ content: string; language: string; size: number; isBinary: boolean; isImage: boolean; dataUrl?: string }>;
+  fsReadFile(root: string, path: string, maxBytes?: number): Promise<{ content: string; language: string; size: number; isBinary: boolean; isImage: boolean; dataUrl?: string; isDirectory?: boolean }>;
   fsWriteFile(root: string, path: string, content: string): Promise<void>;
   fsStat(root: string, path: string): Promise<{ size: number; mtime: number; isDir: boolean }>;
   // ── 文件管理写操作（新建 / 重命名 / 删除 / 复制 / 移动）──

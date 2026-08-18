@@ -15,7 +15,7 @@ interface MockPty {
   pause: ReturnType<typeof vi.fn>;
   resume: ReturnType<typeof vi.fn>;
   pid: number;
-  _cbs: Record<string, (d?: any) => void>;
+  _cbs: Record<string, Array<(d?: any) => void>>;
   emit: (e: string, d?: any) => void;
 }
 
@@ -96,7 +96,7 @@ beforeEach(() => {
 
 /** 设置 process.kill 模拟：进程存活（kill 成功）或已死（抛出 ESRCH）。 */
 function setProcessAlive(alive: boolean) {
-  const mock = process.kill as ReturnType<typeof vi.spyOn>;
+  const mock = vi.mocked(process.kill);
   if (alive) {
     mock.mockImplementation(() => true);
   } else {
@@ -451,7 +451,6 @@ describe('UnifiedTerminalPool', () => {
 
     it('throws when profile is missing for shell type', () => {
       const { pool } = makePool();
-      // @ts-expect-error — intentionally missing profile
       expect(() => pool.create({ cwd: existingCwd })).toThrow('profile is required');
     });
   });

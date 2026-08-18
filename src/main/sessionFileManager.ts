@@ -111,7 +111,7 @@ export class SessionFileManager {
       let guard = 0;
       while (cur && byId.has(cur) && guard++ < 100000) {
         keepIds.add(cur);
-        const parent = byId.get(cur)!.parentId;
+        const parent: unknown = byId.get(cur)!.parentId;
         cur = typeof parent === 'string' && parent ? parent : null;
       }
 
