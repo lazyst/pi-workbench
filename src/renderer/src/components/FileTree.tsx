@@ -488,18 +488,24 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     setConfirmDelete(targets);
   }, [root, refreshDir]);
 
-  const confirmDeleteNow = useCallback(async () => {
+  const confirmDeleteNow = useCallback(() => {
     if (!confirmDelete || !root) { setConfirmDelete(null); return; }
-    try {
-      for (const item of confirmDelete) {
-        await pi.fsRemove(root, item.relPath);
-        refreshDir(parentOf(item.relPath));
+    // 删除在后台异步执行：先立即关弹窗并清选区，避免 UI 阻塞到删除完成。
+    const targets = confirmDelete;
+    const parents = new Set(targets.map((t) => parentOf(t.relPath)));
+    setConfirmDelete(null);
+    setSelection(new Set());
+    void (async () => {
+      for (const item of targets) {
+        try {
+          await pi.fsRemove(root, item.relPath);
+        } catch (e) {
+          console.error('[file-tree] delete failed', e);
+        }
       }
-    } catch (e) { console.error('[file-tree] delete failed', e); }
-    finally {
-      setConfirmDelete(null);
-      setSelection(new Set());
-    }
+      // 统一刷新涉及的父目录（去重，避免多次全量重拉/git 刷新）
+      parents.forEach((p) => refreshDir(p));
+    })();
   }, [confirmDelete, root, refreshDir]);
 
   // ── 拖拽 ──
