@@ -46,12 +46,15 @@ export function resolveLinkTarget(root: string, filePath: string, href: string):
   return resolveRelativeLink(baseDir, href);
 }
 
-/** 把 markdown 图片相对 src 解析为可加载的 file:// URL；绝对/网络/data URL 原样返回。 */
+/** 把 markdown 图片相对 src 解析为可加载的 URL；绝对/网络/data URL 原样返回。
+ * 相对路径 → pi-local://file/?path=<绝对路径>：由主进程注册的自定义协议读本地文件，
+ * dev（http://localhost 页面）与 prod（file:// 页面）均可加载（file:// 在 dev 下会被
+ * Chromium 安全策略阻止，见 src/main/index.ts 的 pi-local 注册注释）。 */
 export function resolveImageSrc(root: string, filePath: string, src: string): string {
   if (!src) return src;
   if (/^(https?:|data:|file:)/i.test(src)) return src;
   const baseDir = dirOf(filePath);
   const rel = baseDir ? `${baseDir}/${src}` : src;
-  const abs = toAbsolutePath(root, rel).replace(/\\/g, '/').replace(/^\/+/, '');
-  return `file:///${abs}`;
+  const abs = toAbsolutePath(root, rel).replace(/\\/g, '/');
+  return `pi-local://file/?path=${encodeURIComponent(abs)}`;
 }

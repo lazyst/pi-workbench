@@ -41,6 +41,10 @@ vi.mock('electron', () => ({
     handle: (channel: string, cb: (...a: any[]) => any) => { ipcHandlers[channel] = cb; },
     on: (channel: string, cb: (...a: any[]) => any) => { ipcHandlers[channel] = cb; },
   },
+  protocol: {
+    registerSchemesAsPrivileged: vi.fn(),
+    handle: vi.fn(),
+  },
 }));
 
 // node-pty mock：logic.test 风格的 pty 对象（带 on/write/resize/kill + 实例级 emit），

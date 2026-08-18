@@ -37,6 +37,10 @@ vi.mock('electron', () => ({
     handle: (channel: string, cb: (...a: any[]) => any) => { ipcHandlers[channel] = cb; },
     on: vi.fn(),
   },
+  protocol: {
+    registerSchemesAsPrivileged: vi.fn(),
+    handle: vi.fn(),
+  },
 }));
 
 vi.mock('node:child_process', async (importOriginal) => {

@@ -145,3 +145,37 @@ describe('FileTree 虚拟滚动：目录展开', () => {
     });
   });
 });
+
+describe('FileTree 展开状态记忆（切换 root 再切回）', () => {
+  let api: ReturnType<typeof makePi>;
+  beforeEach(() => {
+    api = makePi();
+    (window as any).pi = api;
+  });
+
+  it('切到其他 root 再切回 → 恢复之前的目录展开状态', async () => {
+    const onOpenFile = vi.fn();
+    const { rerender } = render(<FileTree root={'C:\\work'} onOpenFile={onOpenFile} />);
+
+    // 展开 src
+    const srcEl = await screen.findByText('src');
+    const srcRow = srcEl.closest('.file-row') as HTMLElement;
+    fireEvent.click(srcRow);
+    await waitFor(() => {
+      expect(screen.getByText('index.ts')).toBeInTheDocument();
+    });
+
+    // 切到另一个 root：src 应折叠（新 root 无展开记忆）
+    rerender(<FileTree root={'C:\\other'} onOpenFile={onOpenFile} />);
+    await waitFor(() => {
+      expect(screen.getByText('src')).toBeInTheDocument();
+      expect(screen.queryByText('index.ts')).not.toBeInTheDocument();
+    });
+
+    // 切回原 root：展开状态应恢复
+    rerender(<FileTree root={'C:\\work'} onOpenFile={onOpenFile} />);
+    await waitFor(() => {
+      expect(screen.getByText('index.ts')).toBeInTheDocument();
+    });
+  });
+});

@@ -70,6 +70,11 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const prevRootRef = useRef<string | null>(null);
+  // 展开状态记忆：root → 该目录最后展开的目录集合。切换工作目录再切回时恢复（Issue：右侧栏文件树记住切换前的展开状态）。
+  const expandedByRootRef = useRef<Map<string, Set<string>>>(new Map());
+  // 最新 expandedPaths 的 ref 快照：root 切换 effect 读取它保存旧 root 的展开状态，避免闭包过期。
+  const expandedPathsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { expandedPathsRef.current = expandedPaths; }, [expandedPaths]);
 
   // 模型版本号：每次模型数据变化后自增，驱动行投影重算和虚拟列表重渲染。
   const [modelRefreshKey, setModelRefreshKey] = useState(0);
@@ -230,13 +235,20 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
 
   // ── 根目录加载 ──
   useEffect(() => {
-    const rootChanged = prevRootRef.current !== root;
+    const prevRoot = prevRootRef.current;
+    const rootChanged = prevRoot !== root;
     prevRootRef.current = root;
 
     if (rootChanged) {
+      // 记住旧 root 的展开状态（含空集），切换回来时恢复（不丢失用户展开/折叠的目录）。
+      if (prevRoot) {
+        expandedByRootRef.current.set(prevRoot, new Set(expandedPathsRef.current));
+      }
       model.setRoot(root);
       model.reset();
-      setExpandedPaths(new Set());
+      // 恢复新 root 上次的展开状态；无记忆（saved 为 undefined）则全新空集合。
+      const saved = root ? expandedByRootRef.current.get(root) : undefined;
+      setExpandedPaths(new Set(saved));
       setError(null);
       setRoots([]);
       setSelection(new Set());

@@ -111,6 +111,11 @@ export function mountPane(key: string, host: HTMLElement): void {
   panes.get(key)?.mount(host);
 }
 
+/** 把键盘焦点转移到终端实例（点击 tab / 切回时调用）。 */
+export function focusPane(key: string): void {
+  panes.get(key)?.focus();
+}
+
 /**
  * 真正销毁实例：从注册表移除并 unmount（释放所有监听与定时器、显式 loseContext 释放 WebGL）。
  * 会话终端：仅卸载渲染实例（会话 pty 由主进程会话生命周期管理，此处不杀）。

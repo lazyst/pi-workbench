@@ -44,7 +44,7 @@ import { IntegratedPane } from './IntegratedPane';
 import { PreviewTab } from './PreviewTab';
 import { DiffTab } from './DiffTab';
 import { SessionContentView } from './SessionContentView';
-import { restorePaneScrollState, schedulePaneResize, setPaneActive } from './paneManager';
+import { restorePaneScrollState, schedulePaneResize, setPaneActive, focusPane } from './paneManager';
 
 interface SplitTabContextMenuState {
   x: number;
@@ -570,7 +570,29 @@ function SplitPaneLeaf({
 
   const handleSelectTab = useCallback((id: string) => {
     selectTab(id);
-  }, [selectTab]);
+    // 点击 tab 时同步把键盘焦点交给该 tab 的内容（终端 / 编辑器 / 富文本），
+    // 使其立即可输入（对齐 VS Code 点击 tab 即聚焦内容区）。
+    const tab = leaf.tabs.find((t) => t.id === id);
+    if (!tab) return;
+    if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
+      focusPane(id);
+      return;
+    }
+    // preview / diff / session-content：聚焦内容区中第一个可编辑元素。
+    // 延迟到下一帧，确保 store 更新 + active 类生效后 DOM 可见。
+    // 用 getAttribute 精确匹配而非 CSS 属性选择器：tab id 含 Windows 路径反斜杠，
+    // CSS 会把 \w 等当作转义序列导致选择器失配。
+    requestAnimationFrame(() => {
+      const host = Array.from(document.querySelectorAll<HTMLElement>('[data-tab-content-id]')).find(
+        (el) => el.getAttribute('data-tab-content-id') === id,
+      );
+      if (!host) return;
+      const editable = host.querySelector<HTMLElement>(
+        '.monaco-editor textarea, .ProseMirror, [contenteditable="true"]',
+      );
+      editable?.focus();
+    });
+  }, [selectTab, leaf.tabs]);
 
   const handleReorder = useCallback((orderedIds: string[]) => {
     reorderTabsInLeaf(leaf.id, orderedIds);
@@ -620,14 +642,14 @@ function SplitPaneLeaf({
           const tabActive = t.id === leaf.activeTabId;
           const cls = tabActive ? 'tab-content active' : 'tab-content';
           if (t.kind === 'session') {
-            return <div key={t.id} className={cls}><SessionPane sessionKey={t.key} active={tabActive} /></div>;
+            return <div key={t.id} className={cls} data-tab-content-id={t.id}><SessionPane sessionKey={t.key} active={tabActive} /></div>;
           }
           if (t.kind === 'integrated-terminal') {
-            return <div key={t.id} className={cls}><IntegratedPane terminalId={t.id} active={tabActive} /></div>;
+            return <div key={t.id} className={cls} data-tab-content-id={t.id}><IntegratedPane terminalId={t.id} active={tabActive} /></div>;
           }
           if (t.kind === 'preview') {
             return (
-              <div key={t.id} className={cls}>
+              <div key={t.id} className={cls} data-tab-content-id={t.id}>
                 <PreviewTab
                   tabId={t.id}
                   root={t.root}
@@ -653,7 +675,7 @@ function SplitPaneLeaf({
               navigator.clipboard.writeText(sessionId).then(() => toast('已复制会话 ID')).catch(() => {});
             };
             return (
-              <div key={t.id} className={cls}>
+              <div key={t.id} className={cls} data-tab-content-id={t.id}>
                 <div className="session-content-tab-header">
                   <span className="session-content-tab-title">💬 {sc.sessionName}</span>
                   <div className="session-content-tab-actions">
@@ -697,7 +719,7 @@ function SplitPaneLeaf({
               </div>
             );
           }
-          return <div key={t.id} className={cls}><DiffTab cwd={t.cwd} commitHash={t.commitHash} filePath={t.filePath} singleColumn={(t as import('../store/splitStore').DiffTab).singleColumn} active={tabActive} onBack={() => closeCenterTab(t.id)} /></div>;
+          return <div key={t.id} className={cls} data-tab-content-id={t.id}><DiffTab cwd={t.cwd} commitHash={t.commitHash} filePath={t.filePath} singleColumn={(t as import('../store/splitStore').DiffTab).singleColumn} active={tabActive} onBack={() => closeCenterTab(t.id)} /></div>;
         })}
         {/* 空状态 */}
         {leaf.tabs.length === 0 && (

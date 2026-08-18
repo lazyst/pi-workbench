@@ -63,6 +63,10 @@ vi.mock('electron', () => ({
     handle: (channel: string, cb: (...a: any[]) => any) => { ipcHandlers[channel] = cb; },
     on: (channel: string, cb: (...a: any[]) => any) => { ipcListeners[channel] = cb; },
   },
+  protocol: {
+    registerSchemesAsPrivileged: vi.fn(),
+    handle: vi.fn(),
+  },
 }));
 
 vi.mock('node-pty', () => ({ default: { spawn: vi.fn() } }));

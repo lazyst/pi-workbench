@@ -2,7 +2,7 @@
 // 基于 TipTap 3 + tiptap-markdown：把 markdown 解析为可编辑文档，编辑后序列化回 markdown
 // （通过 editor.storage.markdown.getMarkdown()），由 PreviewTab 统一写盘。
 // 与 orca 的区别：不实现 orca 的 doc-link / 批注 / 斜杠菜单等内部特性，仅提供标准 GFM 编辑。
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -14,24 +14,37 @@ import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table
 import { Markdown } from 'tiptap-markdown';
 import { ContextMenu } from './ContextMenu';
 import { useMarkdownContextMenu, buildRichEditorContextMenu } from './editor/useMarkdownContextMenu';
+import { resolveImageSrc } from '../lib/mdPath';
 
 interface Props {
   /** 初始 markdown 文本（文件内容）。 */
   content: string;
   /** 当前打开文件的相对路径；变化时重载编辑器内容。 */
   filePath?: string;
+  /** 文件所在根目录（root），用于把相对路径图片解析为可加载的 pi-local URL。 */
+  root: string;
   onChange?: (markdown: string) => void;
   /** Ctrl/Cmd+S 保存请求。父组件据此落盘。不传则快捷键不拦截。 */
   onSave?: () => void;
 }
 
-export function RichMarkdownEditor({ content, filePath, onChange, onSave }: Props) {
+export function RichMarkdownEditor({ content, filePath, root, onChange, onSave }: Props) {
   const lastPath = useRef<string | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
 
-  const editor = useEditor({
-    extensions: [
+  // 扩展 Image：渲染时把相对路径 src 解析为可加载的 pi-local URL（与 MarkdownPreview 的
+  // img 组件一致），修复「富文本模式图片不显示」。仅影响 DOM 展示——节点 attrs.src 保持
+  // 原相对路径不变，序列化回 markdown 时不会被改写成绝对路径。
+  const extensions = useMemo(() => {
+    const ResolvedImage = Image.extend({
+      renderHTML({ node, HTMLAttributes }) {
+        const src = node.attrs.src as string | undefined;
+        const resolved = src ? resolveImageSrc(root, filePath ?? '', src) : src;
+        return ['img', { ...HTMLAttributes, src: resolved }];
+      },
+    });
+    return [
       // StarterKit 3 已含 Link/Underline，这里关掉其内置 Link 以便用自定义配置（不自动跳转）。
       StarterKit.configure({ link: false }),
       Link.configure({
@@ -40,7 +53,7 @@ export function RichMarkdownEditor({ content, filePath, onChange, onSave }: Prop
         HTMLAttributes: { rel: 'noopener noreferrer nofollow' },
       }),
       Placeholder.configure({ placeholder: '在此撰写 Markdown…（支持 GFM 表格、任务列表、公式、代码块）' }),
-      Image,
+      ResolvedImage,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -54,19 +67,27 @@ export function RichMarkdownEditor({ content, filePath, onChange, onSave }: Prop
         transformCopiedText: true,
         linkify: false,
       }),
-    ],
+    ];
+  }, [root, filePath]);
+
+  const editor = useEditor({
+    extensions,
     content,
     editorProps: { attributes: { class: 'md-rich-editor' } },
     onUpdate: ({ editor }) => {
       const md = (editor.storage as { markdown?: { getMarkdown: () => string } }).markdown?.getMarkdown();
       if (md != null) onChange?.(md);
     },
-  });
+    // root/filePath 变化时重建编辑器实例（TipTap 3 语义：deps 变化 → destroy + recreate），
+    // 确保新建的 ResolvedImage 扩展使用最新的 root/filePath 解析相对路径图片。
+  }, [root, filePath]);
 
   // 仅当文件切换（filePath 变化）时重载内容；用 emitUpdate=false 避免误触发 onChange / dirty。
   // 注意：不能用 content 作依赖，否则用户打字时 content 回流会重置光标。
+  // 编辑器重建（useEditor deps 变化 → destroy + recreate）时，旧实例可能已被销毁，
+  // 此时跳过（isDestroyed 为 true），新实例在创建时已携带最新 content。
   useEffect(() => {
-    if (editor && filePath !== lastPath.current) {
+    if (editor && !editor.isDestroyed && filePath !== lastPath.current) {
       lastPath.current = filePath;
       editor.commands.setContent(content, { emitUpdate: false });
     }

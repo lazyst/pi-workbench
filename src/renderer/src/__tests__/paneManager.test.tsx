@@ -19,6 +19,7 @@ import {
   paneHandleContextMenu,
   setPaneScrollHandler,
   resetPanes,
+  focusPane,
 } from '../components/paneManager';
 import { XtermTerminal } from '../components/XtermTerminal';
 import { SessionChannel, IntegratedChannel } from '../components/terminalChannel';
@@ -110,6 +111,15 @@ describe('PaneManager 实例注册表与统一通道', () => {
     expect(resizeSpy).toHaveBeenCalled();
     expect(bottomSpy).toHaveBeenCalled();
     expect(ctxSpy).toHaveBeenCalled();
+  });
+
+  it('focusPane 路由到存活实例（点击 tab 聚焦终端）', () => {
+    const focusSpy = vi.spyOn(XtermTerminal.prototype, 'focus');
+    acquirePane({ key: 'k1', kind: 'session', pi: (window as any).pi });
+    focusPane('k1');
+    expect(focusSpy).toHaveBeenCalled();
+    // 不存在的 key 安全无操作
+    expect(() => focusPane('no-such')).not.toThrow();
   });
 
   it('setPaneScrollHandler 设置实例的 onScrollState 回调', () => {

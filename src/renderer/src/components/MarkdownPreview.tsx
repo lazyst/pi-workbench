@@ -26,13 +26,15 @@ import { useMarkdownContextMenu, buildPreviewContextMenu, findLinkHref } from '.
 
 // 与 orca 一致的 sanitize schema：放行 GFM 表格/任务列表用的 input、details/summary、
 // 标题 id（slug）、代码块 language-/hljs 类、file:// 协议（留给点击处理器做安全决策）。
+// 图片 src 额外放行 pi-local（自定义本地文件协议，见 mdPath.resolveImageSrc），
+// 否则相对路径图片会被 rehype-sanitize 清空 src 导致不显示。
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary', 'kbd', 'sub', 'sup', 'ins'],
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), 'file'],
-    src: [...(defaultSchema.protocols?.src ?? []), 'file'],
+    src: [...(defaultSchema.protocols?.src ?? []), 'file', 'pi-local'],
   },
   attributes: {
     ...defaultSchema.attributes,

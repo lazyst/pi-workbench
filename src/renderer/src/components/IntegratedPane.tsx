@@ -11,6 +11,7 @@ import {
   paneHandleContextMenu,
   releasePane,
   fitAllPanes,
+  focusPane,
 } from './paneManager';
 import type { XtermTerminal } from './XtermTerminal';
 import { SYNC_FIT_PANES_EVENT } from '../constants/terminal';
@@ -105,6 +106,9 @@ export function IntegratedPane({ terminalId, active }: Props) {
     if (active) {
       mountPane(terminalId, hostRef.current!); // 幂等：已挂载则直接 return
       setPaneActive(terminalId, true);         // 切回：flush + 强制 resize 校准尺寸
+      // 焦点交给终端：首次激活时 xterm 尚未 mount（SplitPane 点击 tab 时 focusPane 为空操作），
+      // 这里在 mount 后补聚焦；已激活 tab 被再次点击时由 SplitPane.handleSelectTab 负责。
+      focusPane(terminalId);
       // 调度 followOutput 检查：如果隐藏期间有新输出且意图是 followOutput，scrollToBottom
       scheduleFollowOutputIfNeeded(terminalId);
     } else {

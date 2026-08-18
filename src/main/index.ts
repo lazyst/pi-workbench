@@ -1,8 +1,9 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain, shell, protocol, net } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { exec, execSync } from 'node:child_process';
 import { UnifiedTerminalPool } from './unifiedTerminalPool';
 import { SessionFileManager } from './sessionFileManager';
@@ -28,6 +29,26 @@ import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desk
 // 必须在 app ready / GPU 进程启动前设置。
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
+// ── 本地文件协议 pi-local://（渲染进程加载 markdown 内嵌图片/音视频等本地资源）──
+// 背景：markdown 图片以相对路径引用本地文件，渲染进程需把相对路径解析为可加载 URL。
+// 早期实现返回 file:/// 绝对 URL——在生产（file:// 页面）可加载，但开发模式页面由
+// vite dev server 以 http://localhost:5173 提供，Chromium 安全策略禁止 http 页面加载
+// file:// 子资源（“Not allowed to load local resource”），导致 dev 下预览/富文本都
+// 显示不了图片。自定义协议由主进程注册，dev/prod 同样可用，且不受跨协议限制。
+// 格式：pi-local://file/?path=<encodeURIComponent(绝对路径)>。
+// 必须在 app ready / 任何窗口创建之前注册 scheme 权限。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'pi-local',
+    privileges: {
+      standard: true, // 视为标准 URL（有 host/path 结构），img 可直接加载
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true, // 允许跨源 fetch（页面 http/file 与协议不同源时也可读）
+    },
+  },
+]);
 
 // 静默忽略 EPIPE 错误：当父进程（pi）关闭 stdout/stderr 管道后，
 // console.log/warn/error 写入时不会崩溃弹窗。
@@ -587,7 +608,22 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    // pi-local://file/?path=... → 读取本地文件（见文件顶部协议注册注释）。
+    // net.fetch(file://…) 在 dev(http://localhost) 与 prod(file:// 页面) 下均可用。
+    protocol.handle('pi-local', (request) => {
+      try {
+        const abs = new URL(request.url).searchParams.get('path');
+        // URLSearchParams.get 已做 URL 解码，勿再 decodeURIComponent（否则路径含 % 会被二次解码解错）。
+        if (!abs) return new Response('Bad Request: missing path', { status: 400 });
+        if (!path.isAbsolute(abs)) return new Response('Forbidden: not absolute', { status: 403 });
+        return net.fetch(pathToFileURL(abs).toString());
+      } catch (e) {
+        return new Response(`Not Found: ${e instanceof Error ? e.message : String(e)}`, { status: 404 });
+      }
+    });
+    createWindow();
+  });
 }
 
 // 窗口隐藏（非关闭）时应用保持存活；托盘常驻即入口，真正退出只经 before-quit

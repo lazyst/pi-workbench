@@ -873,6 +873,12 @@ export class XtermTerminal implements LiveTerminal {
     term.selectAll();
   }
 
+  /** 把键盘焦点转移到终端（点击 tab / 切回时调用，对齐 VS Code terminal.focus）。 */
+  focus(): void {
+    if (!this.term || this.disposed) return;
+    this.term.focus();
+  }
+
   /** 清除选区（对齐 VS Code clearSelection）。 */
   clearSelection(): void {
     this.term?.clearSelection();

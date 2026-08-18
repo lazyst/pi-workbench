@@ -232,7 +232,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       );
     }
     if (isMarkdown && viewMode === 'rich') {
-      return <RichMarkdownEditor content={currentContent} filePath={path} onChange={handleChange} onSave={dirty ? doSave : undefined} />;
+      return <RichMarkdownEditor content={currentContent} filePath={path} root={root} onChange={handleChange} onSave={dirty ? doSave : undefined} />;
     }
     return (
       <MonacoCodeEditor
