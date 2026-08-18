@@ -44,6 +44,12 @@ test('Ctrl+V 粘贴：PTY 收到纯文本、不含 [200~ 字面量（回归 #bra
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
 
+  // 注册会话 cwd 为已添加目录（侧边栏按 visibleDirs 过滤会话），reload 后重装 spy。
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await installSpy(page);
+
   await expect(page.locator('.session-item', { hasText: 'paste-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'paste-seeded' }).click();
   await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
@@ -77,6 +83,11 @@ test('右键粘贴（无选区）：PTY 收到纯文本、不含 [200~ 字面量
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
+
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await installSpy(page);
 
   await expect(page.locator('.session-item', { hasText: 'paste2-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'paste2-seeded' }).click();

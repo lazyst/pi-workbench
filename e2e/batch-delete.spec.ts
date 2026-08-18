@@ -36,6 +36,11 @@ test('batch delete shows a confirm dialog before deleting', async () => {
   writeDiskSession(dir, cwdB, 'batch-B1');
   const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
 
+  // 注册会话 cwd 为已添加目录（侧边栏按 visibleDirs 过滤会话）。
+  await page.evaluate((dirs) => (window as any).pi.setConfig({ addedDirs: dirs }), [cwdA, cwdB]);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+
   await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.session-item', { hasText: 'batch-A1' })).toBeVisible({ timeout: 15000 });
 

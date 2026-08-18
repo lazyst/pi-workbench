@@ -41,6 +41,12 @@ test('open disk session → continuity across switch → hover terminate → clo
   writeDiskSession(dir, cwdB, 'session-B');
   const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
 
+  // 注册会话 cwd 为已添加目录：侧边栏按 visibleDirs（addedDirs ∪ appWorkDir）过滤会话，
+  // 否则临时目录下的会话不会出现在侧边栏。
+  await page.evaluate((dirs) => (window as any).pi.setConfig({ addedDirs: dirs }), [cwdA, cwdB]);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+
   await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.session-item', { hasText: 'session-A' })).toBeVisible({ timeout: 15000 });
 
@@ -78,19 +84,29 @@ test('new session from a directory promotes into the sidebar after first message
   writeDiskSession(dir, proj, 'seeded-session');
   const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
 
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+
   await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.session-item', { hasText: 'seeded-session' })).toBeVisible({ timeout: 15000 });
 
-  // hover 目录 → 点新建会话图标（需求 2）
-  await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
+  // hover 目录 → 点新建会话图标（group-actions 默认 opacity:0，hover 后才显示）
+  const group = page.locator('.group').filter({ has: page.getByTitle(proj) });
+  await group.hover();
+  await group.locator('[data-action="new-session"]').click();
   // 新会话打开后恰有一个 pty 在跑（WebGL 渲染器无 .xterm-rows 文本层，不再依赖 data-output 镜像）。
   await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
 
+  // 新会话的 pi 进程要待 shell-ready 超时注入（默认 1.5s）后才启动，在此前输入会被 shell 当命令消费。
+  await page.waitForTimeout(2000);
+
   // 发送首条消息 → fake-pi 写盘 → 晋升进侧边栏
-  await page.locator('.terminal-host.active').click();
+  const host = page.locator('.terminal-host.active');
+  await host.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('hello from new session\n');
 
-  await expect(page.locator('.session-item', { hasText: 'hello from new session' })).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('.session-item', { hasText: 'hello from new session' })).toBeVisible({ timeout: 15000 });
   // 没发消息的 live 会话不出现；只有新建的这一个 pty 在跑（seeded 是 disk-only）
   expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
 
@@ -103,23 +119,29 @@ test('promoted session reuses the live process (no duplicate) and is highlighted
   writeDiskSession(dir, proj, 'seeded-session');
   const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
 
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+
   await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
 
-  // hover 目录 → 点新建会话图标（需求 2）。这会创建一个 live 会话（key live-<uuid>）。
-  await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
+  // hover 目录 → 点新建会话图标（group-actions 默认 opacity:0，hover 后才显示）
+  const group = page.locator('.group').filter({ has: page.getByTitle(proj) });
+  await group.hover();
+  await group.locator('[data-action="new-session"]').click();
   // 新建会话的 live 进程已启动（WebGL 渲染器无 .xterm-rows 文本层，不再依赖 data-output 镜像）。
   await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBeGreaterThanOrEqual(1);
-  // 新建会话在写盘前，终端标题显示占位名 “new-session”
-  await expect(page.locator('.header-title')).toContainText('new-session');
+  // 新会话的 pi 进程要待 shell-ready 超时注入（默认 1.5s）后才启动，在此前输入会被 shell 当命令消费。
+  await page.waitForTimeout(2000);
+  // tab 标题现在由 pty 的 OSC title 序列驱动（cmd.exe 路径），不再有 “new-session” 占位名。
 
   // 发送首条消息 → fake-pi 写盘 → 晋升进侧边栏
-  await page.locator('.terminal-host.active').click();
+  const host = page.locator('.terminal-host.active');
+  await host.locator('.xterm-helper-textarea').focus();
   await page.keyboard.type('hello from new session\n');
-  await expect(page.locator('.session-item', { hasText: 'hello from new session' })).toBeVisible({ timeout: 8000 });
+  await expect(page.locator('.session-item', { hasText: 'hello from new session' })).toBeVisible({ timeout: 15000 });
 
-  // 晋升后终端标题应更新为真实会话名（首条消息），不再显示占位名 “new-session”
-  await expect(page.locator('.header-title')).toContainText('hello from new session');
-  await expect(page.locator('.header-title')).not.toContainText('new-session ·');
+  // tab 标题现由 pty OSC 序列驱动，不再从消息文本更新，故不校验标题。
 
   // 晋升后只有一个 live pty 在跑（seeded 是 disk-only）
   expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
@@ -131,7 +153,10 @@ test('promoted session reuses the live process (no duplicate) and is highlighted
 
   // 晋升后的会话应被高亮为当前活动会话
   await expect(
-    page.locator('.group', { hasText: proj }).locator('.session-item.active', { hasText: 'hello from new session' }),
+    page
+      .locator('.group')
+      .filter({ has: page.getByTitle(proj) })
+      .locator('.session-item.active', { hasText: 'hello from new session' }),
   ).toBeVisible({ timeout: 5000 });
 
   await electronApp!.close();
@@ -143,9 +168,17 @@ test('pinning a directory persists across reload', async () => {
   writeDiskSession(dir, proj, 'pin-seeded');
   const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
 
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+
   await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
-  await page.locator('.group', { hasText: proj }).locator('[data-action="pin"]').click();
-  await expect(page.locator('.group.pinned', { hasText: proj })).toBeVisible({ timeout: 5000 });
+
+  // hover 目录 → 点击 pin 图标（group-actions 默认 opacity:0，hover 后才显示）
+  const group = page.locator('.group').filter({ has: page.getByTitle(proj) });
+  await group.hover();
+  await group.locator('[data-action="pin"]').click();
+  await expect(page.locator('.group.pinned').filter({ has: page.getByTitle(proj) })).toBeVisible({ timeout: 5000 });
 
   // pin 持久化在主进程 config.json（见 docs/adr/0001），经 pi.getConfig() 验证已写入。
   // 注：不要用 localStorage 断言——pin 不走 localStorage，且 Electron 的 localStorage 跨运行残留会污染。
@@ -155,7 +188,7 @@ test('pinning a directory persists across reload', async () => {
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
   await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('.group.pinned', { hasText: proj })).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.group.pinned').filter({ has: page.getByTitle(proj) })).toBeVisible({ timeout: 5000 });
 
   await electronApp!.close();
 });
@@ -165,6 +198,10 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));
   writeDiskSession(dir, proj, 'jump-seeded');
   const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
 
   await expect(page.locator('.session-item', { hasText: 'jump-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'jump-seeded' }).click();

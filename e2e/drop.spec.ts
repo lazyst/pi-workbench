@@ -53,6 +53,13 @@ test('拖入单文件：PTY 收到绝对路径', async () => {
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
 
+  // 注册会话 cwd 为已添加目录：侧边栏按 visibleDirs（addedDirs ∪ appWorkDir）过滤会话，
+  // 否则临时目录下的会话不会出现在侧边栏。reload 后 spy 失效需重装。
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await installSpy(page);
+
   await expect(page.locator('.session-item', { hasText: 'drop-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'drop-seeded' }).click();
   await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
@@ -88,6 +95,11 @@ test('拖入含空格路径的文件：PTY 收到双引号包裹的路径', asyn
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
 
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await installSpy(page);
+
   await expect(page.locator('.session-item', { hasText: 'drop2-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'drop2-seeded' }).click();
   await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
@@ -118,6 +130,11 @@ test('拖入多个文件：PTY 收到空格拼接的多个转义路径', async (
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
+
+  await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+  await installSpy(page);
 
   await expect(page.locator('.session-item', { hasText: 'drop3-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'drop3-seeded' }).click();

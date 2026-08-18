@@ -267,6 +267,12 @@ function createTray(win: BrowserWindow): void {
 function resolvePi(): string {
   const explicit = process.env.PI_BIN;
   if (explicit) return explicit;
+  // E2E 测试模式（PI_DESKTOP_FAKE=1，见 e2e/*.spec.ts）：用 node 直接跑 fake-pi.mjs
+  // （收到首行 stdin 即写 .jsonl 会话文件，模拟真实 pi 的写盘晋升流程，不依赖真实 pi）。
+  // fake-pi.mjs 由 scripts/copy-assets.mjs 复制到构建输出目录（out/main/）。
+  if (process.env.PI_DESKTOP_FAKE) {
+    return `node ${path.join(__dirname, 'fake-pi.mjs')}`;
+  }
   const exts = ['.cmd', '.exe', '.ps1', '.bat', ''];
   const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {

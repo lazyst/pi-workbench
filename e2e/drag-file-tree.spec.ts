@@ -68,6 +68,9 @@ test('从文件树拖文件到终端：PTY 收到绝对路径', async () => {
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
   await installSpy(page);
+  // 右栏 auto 模式跟随默认工作目录，需手动切根到 proj 才能看到其文件树。
+  await expect(page.locator('.rp-root-select')).toBeVisible({ timeout: 15000 });
+  await page.selectOption('.rp-root-select', { label: path.basename(proj) });
   await expect(page.locator('.file-tree .file-name', { hasText: 'hello.txt' })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.session-item', { hasText: 'ft-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'ft-seeded' }).click();
@@ -99,6 +102,8 @@ test('从文件树拖含空格路径文件到终端：PTY 收到双引号包裹�
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
   await installSpy(page);
+  await expect(page.locator('.rp-root-select')).toBeVisible({ timeout: 15000 });
+  await page.selectOption('.rp-root-select', { label: path.basename(proj) });
   await expect(page.locator('.file-tree .file-name', { hasText: 'my report.txt' })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.session-item', { hasText: 'ft2-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'ft2-seeded' }).click();
@@ -130,6 +135,8 @@ test('从文件树拖文件夹到终端：PTY 收到目录绝对路径', async (
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
   await installSpy(page);
+  await expect(page.locator('.rp-root-select')).toBeVisible({ timeout: 15000 });
+  await page.selectOption('.rp-root-select', { label: path.basename(proj) });
   await expect(page.locator('.file-tree .file-name', { hasText: 'subdir' })).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.session-item', { hasText: 'ft3-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'ft3-seeded' }).click();
