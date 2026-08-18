@@ -4,6 +4,8 @@
 
 面向 AI 编程工作流的桌面 IDE：把 `pi` CLI 的**真实终端界面（TUI）**封装进多个相互隔离的终端，配合现代分屏工作区进行管理。
 
+![pi-workbench 界面预览](./docs/images/screenshot.png)
+
 ---
 
 ## 功能特性

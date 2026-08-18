@@ -4,6 +4,8 @@
 
 A desktop IDE for AI coding workflows, wrapping the `pi` CLI's real terminal UI (TUI) inside multiple isolated terminals with a modern split-pane workspace.
 
+![pi-workbench screenshot](./docs/images/screenshot.png)
+
 ---
 
 ## Features
