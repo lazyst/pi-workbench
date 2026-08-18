@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.3.0 (2026-08-19)
+
+### 新功能
+
+- **体验优化三件套** — 文件树展开记忆 / 点击 tab 聚焦 / markdown 本地图片显示。
+  - **文件树展开记忆**：切换工作目录再切回时恢复之前的目录展开状态（按 root 记忆）。
+  - **点击 tab 聚焦内容区**：点击终端/编辑器/富文本 tab 后键盘焦点立即落到内容区（对齐 VS Code）。
+  - **Markdown 本地图片显示**：pi-local 自定义协议使 dev（`http://localhost`）与 prod（`file://`）模式下 markdown 相对路径图片均可加载，修复 dev 模式 `file://` 被 Chromium 阻止导致预览/富文本图片不显示的问题。
+
+- **文件树打开文件即聚焦内容区** — PreviewTab 新增激活聚焦 effect，覆盖文件树打开新文件（loading→code）与激活已有 tab（active false→true）两条路径；Monaco/TipTap DOM 异步就绪用短轮询（≤1s）兜底。提取共享 `focusEditableIn` 工具（`lib/focusEditable.ts`），消除 SplitPane 与 PreviewTab 中重复的 selector + 聚焦逻辑。
+
+- **会话列表一行显示（名称+相对时间）** — 侧边栏会话列表改为名称靠左、相对时间靠右的单行布局。新增 `formatRelativeTime` 工具函数，将 UTC 时间戳转为「分钟」「小时」「天」三种单位（不带「前」字）。名称过长省略号截断，时间靠右不被挤压，保持始终可见。
+
+### 修复
+
+- **文件树删除确认后弹窗立即关闭** — `confirmDeleteNow` 先捕获目标并立即关闭弹窗/清空选区，删除循环移入后台 IIFE，避免大目录删除时 UI 阻塞。父目录刷新去重后统一执行，避免每删一项就触发全量重拉和 git status 刷新。
+
+- **e2e 测试使用 fake-pi 驱动，注册 addedDirs 使会话可见** — 各 spec 先用 `pi.setConfig` 注册会话 cwd 为已添加目录再 reload，使侧边栏正确显示临时目录下的会话。resolvePi 支持 `PI_DESKTOP_FAKE=1`：用 node 直接运行 `fake-pi.mjs`，e2e 不再依赖真实 pi 可执行文件。playwright.config 设 `workers=1`，规避 Electron 单实例锁导致并行 worker 撞锁。
+
+- **修复全部类型检查错误（pnpm typecheck 零告警）** — renderer: fsReadFile 返回类型补 `isDirectory`（对齐主进程实际返回）；theme.ts 类型谓词泛型约束 `T extends string`。main: tsconfig.node.json 补 `vitest/globals`；node-pty v1.x 类型缺口提取 `spawnPty` 统一补齐；sessionFileManager 修正 parent 隐式 any。tests: 适配 splitStore 重构（tabs→cwdTrees）、MockPty/_cbs 类型、`vi.mocked` 替代双重断言等。75 个测试文件 / 1041 个测试全部通过。
+
+### 文档
+
+- 在 README 中添加 pi-workbench 界面截图。
+
 ## v1.2.1 (2026-08-13)
 
 ### 变更
