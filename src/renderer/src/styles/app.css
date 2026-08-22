@@ -4059,6 +4059,8 @@ html, body, #root {
   white-space: nowrap;
   min-width: 0;
 }
+/* 已删除文件 tab：红字 + 删除线（对齐 VS Code deleted 装饰，红色更醒目） */
+.terminal-tab-title.deleted { color: var(--danger); text-decoration: line-through; }
 
 .preview-empty, .preview-error { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); }
 .preview-error { color: #f87171; }

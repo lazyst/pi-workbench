@@ -184,6 +184,11 @@ export default function App() {
   const handleOpenFile = async (relPath: string, fileName: string, root: string) => {
     try {
       const res = await pi.fsReadFile(root, relPath);
+      // 文件不存在（已被删除）：直接创建 tab，由 PreviewTab 显示「已删除」提示。
+      if (res?.notFound) {
+        useTabStore.getState().openPreview(root, relPath, fileName);
+        return;
+      }
       if (res?.isDirectory) {
         // 目录：用系统默认程序打开（文件管理器），不创建 tab
         const abs = `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[\\/]+/, '')}`;

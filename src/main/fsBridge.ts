@@ -137,6 +137,9 @@ export interface ReadResult {
   isDirectory?: boolean;
   /** base64 data URI for images, when the file is an image and within size cap. */
   dataUrl?: string;
+  /** 文件不存在（已被删除/移动）。渲染端据此把 tab 标记为「已删除」（红字+删除线，可保存重建）。
+   *  作为正常业务结果返回而非抛错（见 readFile 实现处的 catch 说明）。 */
+  notFound?: boolean;
 }
 
 function extOf(name: string): string {
@@ -183,7 +186,18 @@ export async function readFile(
   maxBytes = MAX_TEXT_BYTES,
 ): Promise<ReadResult> {
   const abs = path.resolve(root, relPath);
-  const stat = await fsp.stat(abs);
+  let stat: fs.Stats;
+  try {
+    stat = await fsp.stat(abs);
+  } catch (e) {
+    // 文件不存在（已被删除/移动）：作为正常业务结果返回，不抛错——
+    // 否则 ipcMain.handle 会在主进程打印 'Error occurred in handler' 噪音日志。
+    // 渲染端据 notFound 进入「已删除」tab 态（红字+删除线，保留旧内容可保存重建）。
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { content: '', language: '', size: 0, isBinary: false, isImage: false, notFound: true };
+    }
+    throw e;
+  }
   // 目录无法作为文件读取：直接返回 isDirectory 标记，避免抛出 EISDIR 触发 IPC 错误日志。
   if (stat.isDirectory()) {
     return { content: '', language: '', size: 0, isBinary: true, isImage: false, isDirectory: true };

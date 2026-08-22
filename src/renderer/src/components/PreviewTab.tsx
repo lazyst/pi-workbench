@@ -31,6 +31,9 @@ interface Props {
   /** 向父组件（CenterPane）注册「关闭请求拦截器」：父组件 TabBar 的 × 会先调用它，
    *  以便 dirty 时弹出确认而不是直接丢弃改动。传 null 表示注销（unmount 时）。 */
   onRegisterCloseGuard?: (id: string, guard: (() => void) | null) => void;
+  /** 向父组件上报「文件已被删除」状态（true=文件已不存在于磁盘）。父组件据此
+   *  在 TabBar 标题上施加红字+删除线，文件恢复/保存后自动清除。 */
+  onDeletedChange?: (deleted: boolean) => void;
   /** 本 tab 的唯一 id（与 CenterPane tabs 中的 id 对齐，用于注册 guard）。 */
   tabId: string;
 }
@@ -40,8 +43,10 @@ function countLines(s: string): number {
   return s.split(/\r\n|\r|\n/).length;
 }
 
-export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegisterCloseGuard, tabId }: Props) {
+export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegisterCloseGuard, onDeletedChange, tabId }: Props) {
   const [dirty, setDirty] = useState(false);
+  // 文件是否已从磁盘删除：TabBar 标题红字+删除线；内容区保留已读内容仍可编辑，保存时重建。
+  const [deleted, setDeleted] = useState(false);
   const dirtyRef = useRef(false);
   // 同步 dirty state 到 ref，供外界 fsWatchFile 回调读取最新值（避免闭包过期）。
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
@@ -99,6 +104,15 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       try {
         const res = await pi.fsReadFile(root, path);
         if (cancelled) return;
+        // 文件已不存在（打开时即被删除/移动）：标记 tab 删除态，内容区显示提示。
+        if (res.notFound) {
+          setDeleted(true);
+          setKind('binary');
+          setError('文件已被删除');
+          setIsMarkdown(false);
+          return;
+        }
+        setDeleted(false);
         // 二进制 / 过大文件：无内置预览器，交系统默认程序打开（等同双击文件）。
         // 异步获取 git 行号标记（不阻塞文件加载）
         if (!res.isBinary && !res.isImage) {
@@ -157,9 +171,10 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       // 如有未保存改动，不覆盖用户编辑，待下次打开文件时自然读到新内容。
       // 通过 ref 而不是闭包捕获 latest dirty 值以避免 stale closure。
       if (dirtyRef.current) return;
-      // 重新读取文件内容
+      // 重新读取文件内容：文件删除/恢复均在此捕获（watch 监听父目录 rename 事件）。
       pi.fsReadFile(root, path).then((res) => {
-        if (res.isBinary || res.isImage) return;
+        setDeleted(!!res.notFound); // 文件删除→保留旧内容仅标记；恢复/正常变更→清除标记
+        if (res.notFound || res.isBinary || res.isImage) return;
         setCurrentContent(res.content);
         setInitialContent(res.content);
       }).catch(() => {});
@@ -174,6 +189,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       await pi.fsWriteFile(root, path, currentContent);
       setInitialContent(currentContent);
       setDirty(false);
+      setDeleted(false); // 保存会重建文件，清除「已删除」标记（对齐 VS Code 保存后标记消失）
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -201,6 +217,11 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
     onRegisterCloseGuard?.(tabId, requestClose);
     return () => { onRegisterCloseGuard?.(tabId, null); };
   }, [tabId, requestClose, onRegisterCloseGuard]);
+
+  // 上报「文件已删除」状态到父组件（TabBar 标题红字+删除线）。
+  useEffect(() => {
+    onDeletedChange?.(deleted);
+  }, [deleted, onDeletedChange]);
 
   // 激活（点击 tab / 从文件树打开文件）时把焦点交给内容区（对齐 VS Code：打开即可输入）。
   // Monaco/TipTap 的 DOM 异步生成且内容异步读盘，就绪时机不定：先试一次，
@@ -321,7 +342,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       <div className="preview-tab-body">
         {kind === 'code' && renderCodeView()}
         {kind === 'image' && <ImagePreview root={root} path={path} />}
-        {kind === 'binary' && <div className="preview-empty">二进制文件，已用系统程序打开。</div>}
+        {kind === 'binary' && !error && <div className="preview-empty">二进制文件，已用系统程序打开。</div>}
         {kind === 'loading' && <div className="preview-empty">加载中…</div>}
         {error && <div className="preview-error">{error}</div>}
       </div>

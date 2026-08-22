@@ -111,3 +111,31 @@ describe('PreviewTab 关闭确认（dirty 拦截）', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 });
+
+describe('PreviewTab 文件被删除（notFound → 上报 + 提示）', () => {
+  it('fsReadFile 返回 notFound → 上报 onDeletedChange(true) + 内容区显示提示', async () => {
+    (window as any).pi = {
+      fsReadFile: vi.fn().mockResolvedValue({ notFound: true, content: '', isImage: false, isBinary: false }),
+      fsWriteFile: vi.fn().mockResolvedValue(undefined),
+      fsOpenWithSystem: vi.fn().mockResolvedValue(true),
+      fsWatchFile: vi.fn().mockReturnValue(() => {}),
+    };
+    const onDeletedChange = vi.fn();
+    render(
+      <PreviewTab
+        tabId="p1"
+        root="C:\\work"
+        path="deleted.txt"
+        active
+        onClose={vi.fn()}
+        onRegisterCloseGuard={vi.fn()}
+        onDeletedChange={onDeletedChange}
+      />,
+    );
+    // 上报 deleted = true（TabBar 据此渲染红字+删除线）
+    await waitFor(() => expect(onDeletedChange).toHaveBeenCalledWith(true));
+    // 内容区显示「文件已被删除」提示（header drawer-error + body preview-error 两处均渲染）
+    const errs = await screen.findAllByText('文件已被删除');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+  });
+});

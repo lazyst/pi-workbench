@@ -497,6 +497,16 @@ function SplitPaneLeaf({
   onDeleteSessionRequest,
 }: Props & { leaf: SplitLeaf }) {
   const selectTab = useSplitStore((s) => s.selectTab);
+  // 各 preview tab 的「文件已删除」标记：PreviewTab 上报，TabBar 标题红字+删除线。
+  const [tabDeleted, setTabDeleted] = useState<Record<string, boolean>>({});
+  // 接收 PreviewTab 的「文件已删除」上报，更新对应 tab 的标记（与 registerCloseGuard 同为命名回调模式）。
+  const registerTabDeleted = useCallback((id: string, v: boolean) => {
+    setTabDeleted((prev) => {
+      const next = { ...prev };
+      if (v) next[id] = true; else delete next[id];
+      return next;
+    });
+  }, []);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
   const setActiveLeaf = useSplitStore((s) => s.setActiveLeaf);
   const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
@@ -624,6 +634,7 @@ function SplitPaneLeaf({
         activeId={leaf.activeTabId}
         onSelect={handleSelectTab}
         onClose={requestCloseTab}
+        tabDeleted={tabDeleted}
         onReorder={handleReorder}
         onNew={() => onOpen?.({ cwd, leafId: leaf.id })}
         onNewTerminal={onNewTerminal}
@@ -655,6 +666,7 @@ function SplitPaneLeaf({
                   onOpenFile={onOpenFile}
                   onClose={() => closeCenterTab(t.id)}
                   onRegisterCloseGuard={registerCloseGuard}
+                  onDeletedChange={(v) => registerTabDeleted(t.id, v)}
                 />
               </div>
             );

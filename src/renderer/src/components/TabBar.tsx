@@ -35,6 +35,8 @@ interface Props {
   onReorder?: (orderedIds: string[]) => void;
   // tab 脏状态标记（如 Git 工作区有改动时显示小黄点），key 为 tab id，值为 true 表示有未读改动。
   tabDirty?: Record<string, boolean>;
+  // 已删除文件 tab 标记（PreviewTab 上报）：key 为 tab id，标题渲染红字+删除线。
+  tabDeleted?: Record<string, boolean>;
   // TabAutoGroup（ADR-0001 E3）：传入则按 item.groupKey 归并分组，组间插视觉分隔。
   // 纯展示层归类，不进 store（无 group 实体）；与 onReorder 拖拽重排互不冲突——
   // 分隔符为非 sortable 静态元素，所有 tab 仍在同一 SortableContext 中可跨段拖拽。
@@ -79,6 +81,7 @@ function SortableTab({
   onSelect,
   onClose,
   dirty,
+  deleted,
   onContextMenu,
 }: {
   item: TabBarItem;
@@ -86,6 +89,7 @@ function SortableTab({
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   dirty?: boolean;
+  deleted?: boolean;
   onContextMenu?: (tabId: string, e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
@@ -115,7 +119,7 @@ function SortableTab({
       title={item.title}
     >
       <span className="terminal-tab-icon">{renderKindIcon(item.kind)}</span>
-      <span className="terminal-tab-title">{item.title}</span>
+      <span className={`terminal-tab-title${deleted ? ' deleted' : ''}`} title={deleted ? '文件已被删除' : undefined}>{item.title}</span>
       {dirty && <span className="tab-dirty-dot" />}
       {closable && (
         <button
@@ -409,7 +413,7 @@ function TabBarActions({
 //
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane, sortableItems, onTabContextMenu }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, tabDeleted, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane, sortableItems, onTabContextMenu }: Props) {
   // 分组展示行（TabAutoGroup）：纯展示归类，不影响 tabs 数据顺序。
   const rows = buildGroupedRows(tabs, groupBy);
 
@@ -432,6 +436,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
           onSelect={onSelect}
           onClose={onClose}
           dirty={tabDirty?.[row.item.id]}
+          deleted={tabDeleted?.[row.item.id]}
           onContextMenu={onTabContextMenu}
         />
       );
@@ -447,7 +452,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
         title={row.item.title}
       >
         <span className="terminal-tab-icon">{renderKindIcon(row.item.kind)}</span>
-        <span className="terminal-tab-title">{row.item.title}</span>
+        <span className={`terminal-tab-title${tabDeleted?.[row.item.id] ? ' deleted' : ''}`} title={tabDeleted?.[row.item.id] ? '文件已被删除' : undefined}>{row.item.title}</span>
         {tabDirty?.[row.item.id] && <span className="tab-dirty-dot" />}
         {(row.item.closable ?? true) && (
           <button
