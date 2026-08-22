@@ -32,6 +32,15 @@ export function RichMarkdownEditor({ content, filePath, root, onChange, onSave }
   const lastPath = useRef<string | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
+  // 记录最近一次「写入编辑器」的内容（用户输入 或 外部重载的 setContent）。
+  // 用于区分 content prop 变化的来源：若与编辑器当前内容一致 → 用户输入回流，跳过；
+  // 若不一致 → 外部修改（如文件被外部编辑器变更后的自动重载），需 setContent 覆盖。
+  const lastSyncedContent = useRef<string>(content);
+  // onChange ref：避免 useEditor 的 onUpdate 闭包捕获过期 onChange（useEditor deps
+  // 为 [root, filePath]，initialContent 变化时不会重建编辑器，导致 onUpdate 里的
+  // onChange 仍是旧值）。用 ref 读取最新值。
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   // 扩展 Image：渲染时把相对路径 src 解析为可加载的 pi-local URL（与 MarkdownPreview 的
   // img 组件一致），修复「富文本模式图片不显示」。仅影响 DOM 展示——节点 attrs.src 保持
@@ -76,19 +85,30 @@ export function RichMarkdownEditor({ content, filePath, root, onChange, onSave }
     editorProps: { attributes: { class: 'md-rich-editor' } },
     onUpdate: ({ editor }) => {
       const md = (editor.storage as { markdown?: { getMarkdown: () => string } }).markdown?.getMarkdown();
-      if (md != null) onChange?.(md);
+      if (md != null) {
+        // 记录用户输入后的内容，使后续 content prop 回流（与 md 一致）不被误判为外部变更。
+        lastSyncedContent.current = md;
+        onChangeRef.current?.(md);
+      }
     },
     // root/filePath 变化时重建编辑器实例（TipTap 3 语义：deps 变化 → destroy + recreate），
     // 确保新建的 ResolvedImage 扩展使用最新的 root/filePath 解析相对路径图片。
   }, [root, filePath]);
 
-  // 仅当文件切换（filePath 变化）时重载内容；用 emitUpdate=false 避免误触发 onChange / dirty。
-  // 注意：不能用 content 作依赖，否则用户打字时 content 回流会重置光标。
+  // 内容同步：文件切换（filePath 变化）或外部内容变更（文件被外部编辑器/命令修改，
+  // PreviewTab 的 fsWatchFile 回调更新了 content prop）时，重载编辑器内容。
+  // 用户输入回流时 content 与 lastSyncedContent 一致（onUpdate 中已同步），跳过，
+  // 避免光标重置。注意不能用 content 作唯一依赖来重载——用户打字时 content 回流会
+  // 重置光标。用 emitUpdate=false 避免误触发 onChange / dirty。
   // 编辑器重建（useEditor deps 变化 → destroy + recreate）时，旧实例可能已被销毁，
   // 此时跳过（isDestroyed 为 true），新实例在创建时已携带最新 content。
   useEffect(() => {
-    if (editor && !editor.isDestroyed && filePath !== lastPath.current) {
-      lastPath.current = filePath;
+    if (!editor || editor.isDestroyed) return;
+    const isFileSwitch = filePath !== lastPath.current;
+    if (isFileSwitch) lastPath.current = filePath;
+    // 文件切换无条件重载；否则仅当 content 与编辑器当前内容不一致时（外部变更）重载
+    if (isFileSwitch || content !== lastSyncedContent.current) {
+      lastSyncedContent.current = content;
       editor.commands.setContent(content, { emitUpdate: false });
     }
   }, [editor, filePath, content]);

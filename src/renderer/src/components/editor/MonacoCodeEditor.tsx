@@ -80,6 +80,9 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
   // 当前 decorations 的引用（用于 onMouseDown 判断）。
   const lineDecorationsRef = useRef<LineDecoration[]>(lineDecorations ?? []);
   lineDecorationsRef.current = lineDecorations ?? [];
+  // 把最新 content 挂到 ref（onMount 只调用一次，直接闭包会拿到初始值）。
+  const contentRef = useRef(content);
+  contentRef.current = content;
 
   // 把最新回调挂到 ref，避免 onMount 闭包拿到过期值。
   const onChangeRef = useRef(onChange);
@@ -136,6 +139,13 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       }
     });
 
+    // 外部内容同步（修复 keepCurrentModel 场景下显示旧内容）：
+    // @monaco-editor/react 的 value 同步 effect 使用「跳过首次运行」的 hook（he/l），
+    // 组件（重）挂载后若 value prop 不再变化，该 effect 永不执行，配合 keepCurrentModel
+    // 会复用旧 model 导致显示过期内容。此处显式把 model 内容与 content prop 对齐，
+    // 确保挂载即显示最新内容（用户输入时两者已一致，不会触发）。
+    syncModelContent(ed, contentRef.current);
+
     // 首次挂载后应用初始 decorations
     applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
   }, [root]);
@@ -146,6 +156,16 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
     if (!ed) return;
     applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
   }, [lineDecorations]);
+
+  // 外部内容变更同步：content prop 与 model 不一致时覆盖为最新内容（文件被外部
+  // 修改后的自动重载）。@monaco-editor/react 的 value-sync 理论上会处理此情形，
+  // 此处作为兜底显式同步（防止库内部行为变更或边界条件）；用户输入时 model 已与
+  // content 一致，不会触发额外 setValue。
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    syncModelContent(ed, content);
+  }, [content]);
 
   // 卸载时不销毁当前 model（keepCurrentModel 已保证），仅清缓存引用。
   useEffect(() => () => {
@@ -197,6 +217,27 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       }}
     />
   );
+}
+
+// ── 内容同步 ──
+
+/**
+ * 把 editor 当前 model 的内容与 `content` 对齐：仅当二者不一致时才用 executeEdits
+ * 覆盖（保留 undo 栈），避免用户输入时的无意义回写造成光标跳动。
+ * 用于 onMount（keepCurrentModel 复用旧 model）和 content prop 变化（外部修改重载）。
+ */
+function syncModelContent(ed: editor.IStandaloneCodeEditor, content: string): void {
+  const model = ed.getModel();
+  if (!model) return;
+  if (model.getValue() === content) return;
+  // executeEdits + pushUndoStop：与 @monaco-editor/react 内部 value-sync 一致，
+  // 保留 undo 历史（整体替换为一个可撤销的编辑操作）。
+  ed.executeEdits('external-sync', [{
+    range: model.getFullModelRange(),
+    text: content,
+    forceMoveMarkers: true,
+  }]);
+  ed.pushUndoStop();
 }
 
 // ── 装饰应用 ──
