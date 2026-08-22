@@ -15,6 +15,7 @@ interface FileTreeVirtualRowsProps {
   rows: VisibleRow[];
   expandedPaths: Set<string>;
   selection: Set<string>;
+  focusedPath: string | null;
   cutRelPaths: Set<string>;
   dropTarget: string | null;
   editing: { relPath: string; isNew: boolean; draftName: string } | null;
@@ -37,6 +38,7 @@ export function FileTreeVirtualRows({
   rows,
   expandedPaths,
   selection,
+  focusedPath,
   cutRelPaths,
   dropTarget,
   editing,
@@ -105,6 +107,7 @@ export function FileTreeVirtualRows({
         isExpanded={row.isExpanded}
         isLoading={dirLoading.has(node.fullPath)}
         isSelected={selection.has(node.fullPath)}
+        isFocused={focusedPath === node.fullPath}
         isCut={cutRelPaths.has(node.fullPath)}
         isDropTarget={dropTarget === node.fullPath}
         isEditing={isEditing}

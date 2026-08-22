@@ -27,6 +27,8 @@
   --bg-hover: #1c2230;
   --bg-menu-hover: #222d3d;
   --bg-active: rgba(124, 156, 255, 0.10);
+  /* 文件树选中高亮：比 --bg-active 略深，突出“当前选中项”（VS Code list.activeSelectionBackground 语义） */
+  --bg-selected: rgba(124, 156, 255, 0.18);
   --bg-elevated: #1b2230;
   /* 编辑器专用表面背景：与 --bg-panel 一致（GitHub Dark 冷色板 #161b22），
      使编辑器区与四周面板无缝融合，避免 Monaco 默认暖灰 #1e1e1e 造成的冷暖不搭。 */
@@ -137,6 +139,7 @@ body {
   --bg-hover: #eaeef2;
   --bg-menu-hover: #eaeef2;
   --bg-active: rgba(59, 91, 219, 0.10);
+  --bg-selected: rgba(59, 91, 219, 0.14);
   --bg-elevated: #ffffff;
   /* 编辑器专用表面背景：浅色模式下 vs 主题内置背景为 #fffffe，与面板 #f6f8fa 接近，故沿用。 */
   --editor-surface: #fffffe;
@@ -176,6 +179,7 @@ body {
   --bg-hover: #1c2535;
   --bg-menu-hover: #232f42;
   --bg-active: rgba(99, 148, 255, 0.10);
+  --bg-selected: rgba(99, 148, 255, 0.18);
   --bg-elevated: #1a2233;
   --editor-surface: #151c27;
 
@@ -209,6 +213,7 @@ body {
   --bg-hover: #eef1f6;
   --bg-menu-hover: #e8ecf3;
   --bg-active: rgba(99, 148, 255, 0.08);
+  --bg-selected: rgba(74, 130, 232, 0.14);
   --bg-elevated: #ffffff;
   --editor-surface: #ffffff;
 
@@ -247,6 +252,7 @@ body {
   --bg-hover: #1e2a38;
   --bg-menu-hover: #263546;
   --bg-active: rgba(217, 119, 6, 0.08);
+  --bg-selected: rgba(217, 119, 6, 0.18);
   --bg-elevated: #1c2834;
   --editor-surface: #17212b;
 
@@ -280,6 +286,7 @@ body {
   --bg-hover: #e8e0d4;
   --bg-menu-hover: #dfd5c6;
   --bg-active: rgba(234, 88, 12, 0.08);
+  --bg-selected: rgba(234, 88, 12, 0.14);
   --bg-elevated: #ffffff;
   --editor-surface: #faf6f0;
 

@@ -83,6 +83,11 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
 
   // 文件管理交互状态
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  // 范围选择锚点：最近一次普通点击 / Ctrl 点击的项（VS Code 语义），
+  // Shift+点击 从锚点扩展为连续范围选择；root 切换时重置。
+  const anchorRef = useRef<string | null>(null);
+  // 焦点项（最后点击的行，VS Code list.focusOutline 语义）：选中项左侧竖条指示。
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -252,6 +257,8 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       setError(null);
       setRoots([]);
       setSelection(new Set());
+      anchorRef.current = null;
+      setFocusedPath(null);
       setEditing(null);
       setCutRelPaths(new Set());
     }
@@ -342,6 +349,10 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roots, expandedPaths, editing, modelRefreshKey, model.isLoaded, model.getChildren]);
 
+  // 最新可见行快照：Shift 范围选择需按行序计算锚点→目标区间（避免事件回调闭包过期）。
+  const rowsRef = useRef<VisibleRow[]>([]);
+  rowsRef.current = rows;
+
   // ── 选择 ──
   const onToggleSelect = useCallback((fullPath: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -360,16 +371,53 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   }, []);
 
   // ── 行点击 ──
+  // VS Code 语义：
+  //   普通点击    → 单选（替换 selection，保持高亮）+ 目录展开/折叠 或 文件打开
+  //   Ctrl/⌘ 点击 → 切换多选（不打开 / 不展开），并更新锚点
+  //   Shift 点击   → 从锚点（anchor）到当前项的连续范围选择（不打开 / 不展开）
   const handleRowClick = useCallback((node: FileNode, e: React.MouseEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      onToggleSelect(node.fullPath, e);
+    // 阻止冒泡到 .file-tree 容器的 onClick（它会清空 selection），
+    // 否则「点击行 → 高亮」会被容器清空逻辑立即抹掉。
+    e.stopPropagation();
+    const fullPath = node.fullPath;
+
+    // Shift+点击：范围选择（锚点 → 当前项的可见行区间）
+    if (e.shiftKey) {
+      setFocusedPath(fullPath); // 焦点移到目标项（锚点保持，VS Code 连续 Shift 扩展语义）
+      const list = rowsRef.current;
+      const anchorIdx = list.findIndex((r) => r.node.fullPath === anchorRef.current);
+      const targetIdx = list.findIndex((r) => r.node.fullPath === fullPath);
+      if (anchorIdx !== -1 && targetIdx !== -1 && anchorIdx !== targetIdx) {
+        const start = Math.min(anchorIdx, targetIdx);
+        const end = Math.max(anchorIdx, targetIdx);
+        const next = new Set<string>();
+        for (let i = start; i <= end; i++) next.add(list[i].node.fullPath);
+        setSelection(next);
+      } else {
+        // 无锚点 / 锚点不在可见行（如 root 切换后）：退化为单选
+        setSelection(new Set([fullPath]));
+        anchorRef.current = fullPath;
+      }
       return;
     }
+
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/⌘+点击：切换多选；更新锚点使后续 Shift+点击从该处扩展
+      onToggleSelect(fullPath, e);
+      setFocusedPath(fullPath);
+      anchorRef.current = fullPath;
+      return;
+    }
+
+    // 普通点击：单选（保持高亮）+ 目录展开/折叠 或 文件打开
+    setSelection(new Set([fullPath]));
+    setFocusedPath(fullPath);
+    anchorRef.current = fullPath;
     if (node.isDir) {
-      const open = expandedPaths.has(node.fullPath);
-      handleToggleExpanded(node.fullPath, !open);
+      const open = expandedPaths.has(fullPath);
+      handleToggleExpanded(fullPath, !open);
     } else {
-      onOpenFile(node.fullPath, node.name, root);
+      onOpenFile(fullPath, node.name, root);
     }
   }, [expandedPaths, handleToggleExpanded, onOpenFile, root, onToggleSelect]);
 
@@ -718,7 +766,12 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     <div
       className="file-tree"
       style={{ minHeight: '100%' }}
-      onClick={() => { if (selection.size) setSelection(new Set()); }}
+      onClick={() => {
+        if (!selection.size) return;
+        setSelection(new Set());
+        anchorRef.current = null;
+        setFocusedPath(null);
+      }}
       onContextMenu={(e) => {
         // 点到文件行（或行内元素）视为节点右键；其余空白区域（含面板底部留白）视为空白右键。
         const onRow = (e.target as HTMLElement).closest('.file-row');
@@ -729,6 +782,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
         rows={rows}
         expandedPaths={expandedPaths}
         selection={selection}
+        focusedPath={focusedPath}
         cutRelPaths={cutRelPaths}
         dropTarget={dropTarget}
         editing={editing}

@@ -14,6 +14,7 @@ interface FileTreeRowProps {
   isExpanded: boolean;
   isLoading: boolean;
   isSelected: boolean;
+  isFocused: boolean;
   isCut: boolean;
   isDropTarget: boolean;
   isEditing: boolean;
@@ -42,6 +43,7 @@ export function FileTreeRow({
   isExpanded,
   isLoading,
   isSelected,
+  isFocused,
   isCut,
   isDropTarget,
   isEditing,
@@ -69,6 +71,7 @@ export function FileTreeRow({
   const className = [
     'file-row',
     isSelected ? 'selected' : '',
+    isFocused ? 'focused' : '',
     isCut ? 'cut-pending' : '',
     isDropTarget ? 'drop-target' : '',
     isEditing ? 'editing' : '',
