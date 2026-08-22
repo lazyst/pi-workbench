@@ -12,7 +12,7 @@
 // - 每个 leaf 的 TabBar 共享同一 DndContext，各自持有独立的 SortableContext
 // - 通过 DragContext 将 leaf items 动态传递给 TabBar
 
-import { useRef, useMemo, useEffect, useCallback, useState, createContext, useContext } from 'react';
+import { memo, useRef, useMemo, useEffect, useCallback, useState, createContext, useContext } from 'react';
 import { useToast } from './Toast';
 import {
   DndContext,
@@ -37,7 +37,7 @@ import { SplitDivider } from './SplitDivider';
 import { ContextMenu } from './ContextMenu';
 import type { ContextMenuItem } from './ContextMenu';
 import { useSplitStore, findTabById, findLeaf, canMoveTabToLeaf } from '../store/splitStore';
-import type { SplitTree, SplitLeaf, SplitNode, Tab, SessionContentTab } from '../store/splitStore';
+import type { SplitTree, SplitLeaf, SplitNode, Tab, SessionContentTab, SessionTab, PreviewTab as PreviewTabType, DiffTab as DiffTabType, IntegratedTerminalTab } from '../store/splitStore';
 import type { TabKind } from './TabBar';
 import { SessionPane } from './SessionPane';
 import { IntegratedPane } from './IntegratedPane';
@@ -477,6 +477,150 @@ function SplitPaneDragProviderInner({
 
 // ── Leaf 渲染 ──
 
+// ── TabContent（keep-alive 下单个 tab 的内容渲染，memo 隔离） ──
+//
+// SplitPaneLeaf 在 store 更新（cwdTrees 引用变化）时会 re-render，进而把所有 tab 内容
+// 一起 reconcile。用 memo 把每个 tab 的内容渲染独立出来：比较函数只看 tab 的「内容标识」
+// （kind + 该 kind 决定渲染的稳定字段，如 preview 的 root/path、session 的 key）+ active。
+// 标题、order、history 等元数据变化不影响内容渲染，直接跳过，避免波及 Monaco /
+// MarkdownPreview 等重组件。回调（onOpenFile/closeCenterTab 等）行为一致、引用稳定，
+// 不纳入比较——即便上层 re-render 传入新引用，也不会无谓重渲染内容区。
+
+interface TabContentProps {
+  tab: Tab;
+  active: boolean;
+  cwd: string;
+  onOpenFile?: (relPath: string, fileName: string, root: string) => void;
+  closeCenterTab: (id: string) => void;
+  registerCloseGuard: (id: string, guard: (() => void) | null) => void;
+  registerTabDeleted: (id: string, v: boolean) => void;
+  onOpen?: (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => void;
+  onDeleteSessionRequest?: (key: string, name: string, tabId: string) => void;
+  toast: (text: string) => void;
+}
+
+function tabContentPropsEqual(prev: TabContentProps, next: TabContentProps): boolean {
+  if (prev.active !== next.active) return false;
+  const a = prev.tab, b = next.tab;
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case 'session':
+      return a.key === (b as SessionTab).key;
+    case 'integrated-terminal':
+      return a.id === (b as IntegratedTerminalTab).id;
+    case 'preview':
+      return a.root === (b as PreviewTabType).root && a.path === (b as PreviewTabType).path;
+    case 'diff': {
+      const bb = b as DiffTabType;
+      return a.cwd === bb.cwd && a.commitHash === bb.commitHash && a.filePath === bb.filePath && a.singleColumn === bb.singleColumn;
+    }
+    case 'session-content': {
+      const bb = b as SessionContentTab;
+      return a.sessionKey === bb.sessionKey && a.sessionName === bb.sessionName;
+    }
+    default:
+      return false;
+  }
+}
+
+const TabContent = memo(function TabContent({
+  tab,
+  active,
+  cwd,
+  onOpenFile,
+  closeCenterTab,
+  registerCloseGuard,
+  registerTabDeleted,
+  onOpen,
+  onDeleteSessionRequest,
+  toast,
+}: TabContentProps) {
+  const cls = active ? 'tab-content active' : 'tab-content';
+  // 回调按 tab.id 闭包化：useCallback 让引用稳定（PreviewTab/DiffTab 等子组件若 memo 可生效）。
+  const handleClose = useCallback(() => closeCenterTab(tab.id), [closeCenterTab, tab.id]);
+  const handleDeletedChange = useCallback((v: boolean) => registerTabDeleted(tab.id, v), [registerTabDeleted, tab.id]);
+
+  if (tab.kind === 'session') {
+    return (
+      <div className={cls} data-tab-content-id={tab.id}>
+        <SessionPane sessionKey={tab.key} active={active} />
+      </div>
+    );
+  }
+  if (tab.kind === 'integrated-terminal') {
+    return (
+      <div className={cls} data-tab-content-id={tab.id}>
+        <IntegratedPane terminalId={tab.id} active={active} />
+      </div>
+    );
+  }
+  if (tab.kind === 'preview') {
+    return (
+      <div className={cls} data-tab-content-id={tab.id}>
+        <PreviewTab
+          tabId={tab.id}
+          root={tab.root}
+          path={tab.path}
+          active={active}
+          onOpenFile={onOpenFile}
+          onClose={handleClose}
+          onRegisterCloseGuard={registerCloseGuard}
+          onDeletedChange={handleDeletedChange}
+        />
+      </div>
+    );
+  }
+  if (tab.kind === 'session-content') {
+    const sc = tab as SessionContentTab;
+    // 从会话文件路径中提取文件名（不含 .jsonl 后缀）作为会话 ID
+    const sessionId = sc.sessionKey.split(/[\\/]/).filter(Boolean).pop()?.replace(/\.jsonl$/, '') ?? sc.sessionKey;
+    const handleCopyPath = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(sc.sessionKey).then(() => toast('已复制文件路径')).catch(() => {});
+    };
+    const handleCopyId = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(sessionId).then(() => toast('已复制会话 ID')).catch(() => {});
+    };
+    const handleLaunch = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onOpen?.({ key: sc.sessionKey, cwd, name: sc.sessionName });
+    };
+    const handleDelete = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDeleteSessionRequest?.(sc.sessionKey, sc.sessionName, sc.id);
+    };
+    return (
+      <div className={cls} data-tab-content-id={tab.id}>
+        <div className="session-content-tab-header">
+          <span className="session-content-tab-title">💬 {sc.sessionName}</span>
+          <div className="session-content-tab-actions">
+            <button className="session-content-tab-btn" title="复制会话文件路径到剪贴板" onClick={handleCopyPath}>
+              复制文件路径
+            </button>
+            <button className="session-content-tab-btn" title="复制会话 ID 到剪贴板" onClick={handleCopyId}>
+              复制会话id
+            </button>
+            <button className="session-content-tab-btn" title="启动会话" onClick={handleLaunch}>
+              启动
+            </button>
+            <button className="session-content-tab-btn session-content-tab-btn--danger" title="删除会话文件" onClick={handleDelete}>
+              删除
+            </button>
+          </div>
+        </div>
+        <SessionContentView sessionKey={sc.sessionKey} sessionName={sc.sessionName} />
+      </div>
+    );
+  }
+  // diff（union narrowing 后此处 tab 为 DiffTab）
+  return (
+    <div className={cls} data-tab-content-id={tab.id}>
+      <DiffTab cwd={tab.cwd} commitHash={tab.commitHash} filePath={tab.filePath} singleColumn={tab.singleColumn} active={active} onBack={handleClose} />
+    </div>
+  );
+}, tabContentPropsEqual);
+
 function SplitPaneLeaf({
   leaf,
   cwd,
@@ -645,91 +789,24 @@ function SplitPaneLeaf({
         onTabContextMenu={handleTabContextMenu}
       />
       <div className="center-pane-body">
-        {/* keep-alive：所有 tab 内容永久挂载，非 active 用 opacity:0 隐藏 */}
-        {leaf.tabs.map((t) => {
-          const tabActive = t.id === leaf.activeTabId;
-          const cls = tabActive ? 'tab-content active' : 'tab-content';
-          if (t.kind === 'session') {
-            return <div key={t.id} className={cls} data-tab-content-id={t.id}><SessionPane sessionKey={t.key} active={tabActive} /></div>;
-          }
-          if (t.kind === 'integrated-terminal') {
-            return <div key={t.id} className={cls} data-tab-content-id={t.id}><IntegratedPane terminalId={t.id} active={tabActive} /></div>;
-          }
-          if (t.kind === 'preview') {
-            return (
-              <div key={t.id} className={cls} data-tab-content-id={t.id}>
-                <PreviewTab
-                  tabId={t.id}
-                  root={t.root}
-                  path={t.path}
-                  active={tabActive}
-                  onOpenFile={onOpenFile}
-                  onClose={() => closeCenterTab(t.id)}
-                  onRegisterCloseGuard={registerCloseGuard}
-                  onDeletedChange={(v) => registerTabDeleted(t.id, v)}
-                />
-              </div>
-            );
-          }
-          if (t.kind === 'session-content') {
-            const sc = t as SessionContentTab;
-            // 从会话文件路径中提取文件名（不含 .jsonl 后缀）作为会话 ID
-            const sessionId = sc.sessionKey.split(/[\\/]/).filter(Boolean).pop()?.replace(/\.jsonl$/, '') ?? sc.sessionKey;
-            const handleCopyPath = (e: React.MouseEvent) => {
-              e.stopPropagation();
-              navigator.clipboard.writeText(sc.sessionKey).then(() => toast('已复制文件路径')).catch(() => {});
-            };
-            const handleCopyId = (e: React.MouseEvent) => {
-              e.stopPropagation();
-              navigator.clipboard.writeText(sessionId).then(() => toast('已复制会话 ID')).catch(() => {});
-            };
-            return (
-              <div key={t.id} className={cls} data-tab-content-id={t.id}>
-                <div className="session-content-tab-header">
-                  <span className="session-content-tab-title">💬 {sc.sessionName}</span>
-                  <div className="session-content-tab-actions">
-                    <button
-                      className="session-content-tab-btn"
-                      title="复制会话文件路径到剪贴板"
-                      onClick={handleCopyPath}
-                    >
-                      复制文件路径
-                    </button>
-                    <button
-                      className="session-content-tab-btn"
-                      title="复制会话 ID 到剪贴板"
-                      onClick={handleCopyId}
-                    >
-                      复制会话id
-                    </button>
-                    <button
-                      className="session-content-tab-btn"
-                      title="启动会话"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpen?.({ key: sc.sessionKey, cwd, name: sc.sessionName });
-                      }}
-                    >
-                      启动
-                    </button>
-                    <button
-                      className="session-content-tab-btn session-content-tab-btn--danger"
-                      title="删除会话文件"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteSessionRequest?.(sc.sessionKey, sc.sessionName, sc.id);
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </div>
-                <SessionContentView sessionKey={sc.sessionKey} sessionName={sc.sessionName} />
-              </div>
-            );
-          }
-          return <div key={t.id} className={cls} data-tab-content-id={t.id}><DiffTab cwd={t.cwd} commitHash={t.commitHash} filePath={t.filePath} singleColumn={(t as import('../store/splitStore').DiffTab).singleColumn} active={tabActive} onBack={() => closeCenterTab(t.id)} /></div>;
-        })}
+        {/* keep-alive：所有 tab 内容永久挂载，非 active 用 opacity:0 隐藏。
+            TabContent 用 memo 隔离：store 更新导致本 leaf re-render 时，未变化的 tab
+            （内容标识相同）直接跳过，避免波及 Monaco / MarkdownPreview 等重组件。 */}
+        {leaf.tabs.map((t) => (
+          <TabContent
+            key={t.id}
+            tab={t}
+            active={t.id === leaf.activeTabId}
+            cwd={cwd}
+            onOpenFile={onOpenFile}
+            closeCenterTab={closeCenterTab}
+            registerCloseGuard={registerCloseGuard}
+            registerTabDeleted={registerTabDeleted}
+            onOpen={onOpen}
+            onDeleteSessionRequest={onDeleteSessionRequest}
+            toast={toast}
+          />
+        ))}
         {/* 空状态 */}
         {leaf.tabs.length === 0 && (
           <div className="empty-state">

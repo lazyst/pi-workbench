@@ -19,6 +19,7 @@ import {
   scheduleFollowOutputIfNeeded,
   rememberVisibleScrollSnapshot,
 } from '../lib/terminal/scroll-visibility-memory';
+import { analyzeRawTitle } from '../lib/terminal/osc-title-extractor';
 
 interface Props {
   // 终端实例 id，形如 'term-<uuid>'。同时作为 XtermTerminal 的 sessionKey（仅作标识），
@@ -78,8 +79,13 @@ export function IntegratedPane({ terminalId, active }: Props) {
     };
     // 终端标题变化（OSC 0 序列）：同步更新 tab 标题（shell 自设标题 / pi 扩展 spinner 帧）。
     // 标题更新是渲染端纯本地状态（splitStore），直接调 store action，无需 IPC 往返。
-    term.onTitleChange = (title) => {
-      useTabStore.getState().updateTabTitle(terminalId, title);
+    //
+    // 标题标准化后再写入 store：去掉 pi 扩展 spinner 的 Braille 前缀（⠋ ⠙ ⠹…），
+    // 避免 spinner 每帧触发 splitStore 全树 re-render（含 keep-alive 隐藏的
+    // MarkdownPreview 的 ReactMarkdown 全量重渲染）。详见 SessionPane 同名注释。
+    term.onTitleChange = (rawTitle) => {
+      const { normalized } = analyzeRawTitle(rawTitle);
+      if (normalized) useTabStore.getState().updateTabTitle(terminalId, normalized);
     };
     if (active) mountPane(terminalId, host);
     return () => {

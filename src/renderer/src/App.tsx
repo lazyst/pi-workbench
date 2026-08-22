@@ -8,6 +8,7 @@ import { ToastProvider, useToast } from './components/Toast';
 import { CenterPane } from './components/CenterPane';
 import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
+import { useShallow } from 'zustand/react/shallow';
 import { useTabStore } from './store/tabStore';
 import { getAllTabs, findLeaf, getTabCwd } from './store/splitStore';
 import { initTheme } from './theme';
@@ -51,7 +52,9 @@ export default function App() {
   const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
   // 当前激活会话（从 store tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
   // 中间区 tab / 激活指针直接订阅 store。
-  const tabs = useTabStore((s) => getAllTabs(s));
+  // useShallow：getAllTabs 每次返回新数组，改为对元素做浅比较——只有真正有 tab 变化
+  // 才触发 App re-render，避免任何 store 更新（如 updateTabTitle）都波及整棵组件树。
+  const tabs = useTabStore(useShallow((s) => getAllTabs(s)));
   const activeCwd = useTabStore((s) => s.activeCwd);
   const activeLeafId = useTabStore((s) => s.activeLeafId);
   const cwdTrees = useTabStore((s) => s.cwdTrees);
@@ -181,7 +184,10 @@ export default function App() {
 
   // 点击文件树/Git 面板中的文件 → 中间区新增/激活预览 tab（单文件）。
   // 非文本文件（二进制/不可预览）→ 直接用系统默认程序打开，不创建空 tab。
-  const handleOpenFile = async (relPath: string, fileName: string, root: string) => {
+  // 稳定引用（useCallback([])）：本函数只依赖模块级 pi / useTabStore.getState()，无 React state。
+  // 稳定后整个 onOpenFile → CenterPane → SplitPaneLeaf → TabContent 回调链不变，
+  // tab 内容组件的 React.memo 才能拦住父级 store 刷新引发的 re-render。
+  const handleOpenFile = useCallback(async (relPath: string, fileName: string, root: string) => {
     try {
       const res = await pi.fsReadFile(root, relPath);
       // 文件不存在（已被删除）：直接创建 tab，由 PreviewTab 显示「已删除」提示。
@@ -207,7 +213,7 @@ export default function App() {
     // 统一收编进 store（openPreview action 封装「已存在则激活、不存在则新增」）。
     // title 由 store 按 fileName 或 path 末段计算，对应用户可见的文件名。
     useTabStore.getState().openPreview(root, relPath, fileName);
-  };
+  }, []);
 
   // 点击 Git 面板的「工作区改动」或某次提交 → 中间区新增/激活 diff tab（替代旧式 GitDiffDrawer）。
   // commitHash 为 null 时显示工作区 diff；为某 hash 时显示该提交 diff。

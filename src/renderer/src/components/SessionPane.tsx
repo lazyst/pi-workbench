@@ -17,6 +17,7 @@ import {
   scheduleFollowOutputIfNeeded,
   rememberVisibleScrollSnapshot,
 } from '../lib/terminal/scroll-visibility-memory';
+import { analyzeRawTitle } from '../lib/terminal/osc-title-extractor';
 
 interface Props {
   sessionKey: string;
@@ -57,8 +58,18 @@ export function SessionPane({ sessionKey, active }: Props) {
     };
     // 终端标题变化（OSC 0 序列，pi 扩展的 spinner 标题帧）：同步更新 tab 标题。
     // 标题更新是渲染端纯本地状态（splitStore），直接调 store action，无需 IPC 往返。
-    term.onTitleChange = (title) => {
-      useTabStore.getState().updateTabTitle(sessionKey, title);
+    //
+    // 标题标准化后再写入 store：去掉 pi 扩展 spinner 的 Braille 前缀（⠋ ⠙ ⠹…）。
+    // 否则 spinner 每帧标题都不同 → updateTabTitle 触发 splitStore 更新 → CenterPane
+    // 订阅整个 cwdTrees 导致全树 re-render，keep-alive 隐藏的 MarkdownPreview 的
+    // ReactMarkdown 同步全量重跑 unified 管道（KaTeX + highlight.js），主线程被占满，
+    // 表现为「打开 markdown 预览后其他 tab 卡顿」。标准化后 spinner 帧间标题不变 →
+    // updateTabTitle 内部 mapCwdTrees 的 changed 判定短路，store 不更新，不 re-render。
+    // working/idle 状态由 PtyOutputProcessor 的 onAgentBecameWorking/Idle 独立驱动，不受影响。
+    term.onTitleChange = (rawTitle) => {
+      const { normalized } = analyzeRawTitle(rawTitle);
+      // 标准化后为空（如 shell 发空标题）→ 保留上次标题，不写空串。
+      if (normalized) useTabStore.getState().updateTabTitle(sessionKey, normalized);
     };
     // 仅当当前就是 active 才立即 open；非 active 时实例已建但等待 setActive(true) 时 open。
     if (active) mountPane(sessionKey, host);
