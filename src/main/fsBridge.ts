@@ -328,3 +328,62 @@ export function uniqueName(base: string, existing: Set<string>): string {
   }
   return candidate;
 }
+
+/** 删除撤销快照：被删项下的所有文件内容（base64，文本/二进制均安全）。
+ *  dirs 为子目录相对路径（不含自身），files 为文件（relPath 相对被删根，被删根为文件时 relPath=''）。
+ *  供 fsRestore 重建。超量（默认 50MB）抛错，避免内存爆炸。 */
+export type TreeSnapshot = {
+  dirs: string[];
+  files: Array<{ relPath: string; data: string }>; // data = base64
+};
+export const SNAPSHOT_MAX_BYTES = 50 * 1024 * 1024;
+
+/** 递归读取文件/目录内容为快照，供 Ctrl+Z 撤销删除恢复。 */
+export async function snapshotTree(
+  root: string,
+  relPath: string,
+  maxBytes = SNAPSHOT_MAX_BYTES,
+): Promise<TreeSnapshot> {
+  const abs = path.resolve(root, relPath);
+  const dirs: string[] = [];
+  const files: TreeSnapshot['files'] = [];
+  let total = 0;
+  // 读取单个文件入快照（带累计大小上限检查）。
+  const readOne = async (fileAbs: string, rel: string) => {
+    const buf = await fsp.readFile(fileAbs);
+    total += buf.length;
+    if (total > maxBytes) throw new Error('快照过大，无法撤销删除');
+    files.push({ relPath: rel, data: buf.toString('base64') });
+  };
+  const walk = async (dirAbs: string, dirRel: string) => {
+    for (const ent of await fsp.readdir(dirAbs, { withFileTypes: true })) {
+      const childRel = dirRel ? `${dirRel}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) {
+        dirs.push(childRel);
+        await walk(path.join(dirAbs, ent.name), childRel);
+      } else {
+        await readOne(path.join(dirAbs, ent.name), childRel);
+      }
+    }
+  };
+  const st = await fsp.stat(abs);
+  if (st.isDirectory()) {
+    await walk(abs, '');
+  } else {
+    await readOne(abs, '');
+  }
+  return { dirs, files };
+}
+
+/** 按快照重建目录与文件（覆盖同名项），用于撤销删除。 */
+export async function restoreTree(root: string, targetRel: string, snapshot: TreeSnapshot): Promise<void> {
+  const base = path.resolve(root, targetRel);
+  for (const d of snapshot.dirs) {
+    await fsp.mkdir(path.join(base, d), { recursive: true });
+  }
+  for (const f of snapshot.files) {
+    const fileAbs = f.relPath ? path.join(base, f.relPath) : base;
+    await fsp.mkdir(path.dirname(fileAbs), { recursive: true });
+    await fsp.writeFile(fileAbs, Buffer.from(f.data, 'base64'));
+  }
+}

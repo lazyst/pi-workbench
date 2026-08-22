@@ -29,6 +29,13 @@ function parentOf(relPath: string): string {
   return relPath.slice(0, relPath.lastIndexOf('/'));
 }
 
+/** 删除撤销记录：被删项的快照，用于 Ctrl+Z 恢复。 */
+type UndoRecord = {
+  root: string;
+  relPath: string;
+  snapshot: { dirs: string[]; files: Array<{ relPath: string; data: string }> };
+};
+
 function basename(p: string): string {
   const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return idx >= 0 ? p.slice(idx + 1) : p;
@@ -93,6 +100,9 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [cutRelPaths, setCutRelPaths] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<ClipItem[] | null>(null);
+  // 删除撤销栈：每次删除前快照被删内容入栈，Ctrl+Z 时出栈恢复（仅文件树聚焦时触发）。
+  // 用 ref 持有（不触发渲染）；root 切换时清空，避免跨项目误恢复。
+  const undoStackRef = useRef<UndoRecord[]>([]);
 
   // ── Git 状态映射：文件树节点颜色联动 ──
   const [gitStatusMap, setGitStatusMap] = useState<Record<string, GitFileStatusEntry>>({});
@@ -261,6 +271,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       setFocusedPath(null);
       setEditing(null);
       setCutRelPaths(new Set());
+      undoStackRef.current = [];
     }
 
     if (!root) {
@@ -526,6 +537,42 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     }
   }, [root, refreshDir]);
 
+  // ── 删除与撤销 ──
+  const doRemove = useCallback(async (root: string, relPath: string) => {
+    // 删除前快照：使 Ctrl+Z 能恢复（快照失败如过大，仍可删除，只是无法撤销）。
+    try {
+      const snapshot = await pi.fsSnapshot(root, relPath);
+      undoStackRef.current.push({ root, relPath, snapshot });
+    } catch { /* 快照失败（过大）：仍可删除，只是无法撤销 */ }
+    await pi.fsRemove(root, relPath);
+  }, []);
+
+  const undoDelete = useCallback(async () => {
+    const rec = undoStackRef.current.pop();
+    if (!rec) return;
+    try {
+      await pi.fsRestore(rec.root, rec.relPath, rec.snapshot);
+      refreshDir(parentOf(rec.relPath));
+      // 高亮恢复项（VS Code：撤销删除后选中恢复项）
+      setSelection(new Set([rec.relPath]));
+      setFocusedPath(rec.relPath);
+      anchorRef.current = rec.relPath;
+    } catch (e) {
+      console.error('[file-tree] undo delete failed', e);
+    }
+  }, [refreshDir]);
+
+  // 键盘快捷键：文件树聚焦时 Ctrl/Cmd+Z 撤销最近一次删除。
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      // 焦点在输入控件（重命名框、搜索框）时不拦截文本撤销
+      const el = e.target as HTMLElement;
+      if (el.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+      void undoDelete();
+    }
+  }, [undoDelete]);
+
   // ── 删除 ──
   const requestDelete = useCallback((targets: ClipItem[]) => {
     setMenu(null);
@@ -533,14 +580,14 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     if (!hasDirOrMulti) {
       void (async () => {
         try {
-          await pi.fsRemove(root, targets[0].relPath);
+          await doRemove(root, targets[0].relPath);
           refreshDir(parentOf(targets[0].relPath));
         } catch (e) { console.error('[file-tree] delete failed', e); }
       })();
       return;
     }
     setConfirmDelete(targets);
-  }, [root, refreshDir]);
+  }, [root, refreshDir, doRemove]);
 
   const confirmDeleteNow = useCallback(() => {
     if (!confirmDelete || !root) { setConfirmDelete(null); return; }
@@ -552,7 +599,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     void (async () => {
       for (const item of targets) {
         try {
-          await pi.fsRemove(root, item.relPath);
+          await doRemove(root, item.relPath);
         } catch (e) {
           console.error('[file-tree] delete failed', e);
         }
@@ -560,7 +607,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       // 统一刷新涉及的父目录（去重，避免多次全量重拉/git 刷新）
       parents.forEach((p) => refreshDir(p));
     })();
-  }, [confirmDelete, root, refreshDir]);
+  }, [confirmDelete, root, refreshDir, doRemove]);
 
   // ── 拖拽 ──
   // ⚠️ 集成契约：必须保持 PI_FILE_DRAG_MIME 常量 + toAbsolutePath 逻辑不变，
@@ -754,10 +801,11 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
             onClose={() => setMenu(null)}
           />
         )}
-        {confirmDelete && (
+
+      {confirmDelete && (
           <ConfirmDialog
             title="删除确认"
-            message={`将删除 ${confirmDelete.length} 个项目${confirmDelete.some((t) => t.isDir) ? '（含目录及其全部内容）' : ''}，此操作不可撤销。`}
+            message={`将删除 ${confirmDelete.length} 个项目${confirmDelete.some((t) => t.isDir) ? '（含目录及其全部内容）' : ''}，删除后可用 Ctrl+Z 撤销。`}
             confirmLabel="删除"
             cancelLabel="取消"
             onConfirm={() => void confirmDeleteNow()}
@@ -772,6 +820,8 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     <div
       className="file-tree"
       style={{ minHeight: '100%' }}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
       onClick={() => {
         if (!selection.size) return;
         setSelection(new Set());
@@ -819,7 +869,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       {confirmDelete && (
         <ConfirmDialog
           title="删除确认"
-          message={`将删除 ${confirmDelete.length} 个项目${confirmDelete.some((t) => t.isDir) ? '（含目录及其全部内容）' : ''}，此操作不可撤销。`}
+          message={`将删除 ${confirmDelete.length} 个项目${confirmDelete.some((t) => t.isDir) ? '（含目录及其全部内容）' : ''}，删除后可用 Ctrl+Z 撤销。`}
           confirmLabel="删除"
           cancelLabel="取消"
           onConfirm={() => void confirmDeleteNow()}

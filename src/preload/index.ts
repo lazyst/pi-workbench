@@ -115,6 +115,11 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('fs:listNames', { root, dir }),
   fsUniqueName: (base: string, existing: string[]): Promise<string> =>
     ipcRenderer.invoke('fs:uniqueName', { base, existing }),
+  // ── 删除撤销（Ctrl+Z 撤销文件树删除）──
+  fsSnapshot: (root: string, filePath: string): Promise<any> =>
+    ipcRenderer.invoke('fs:snapshot', { root, path: filePath }),
+  fsRestore: (root: string, filePath: string, snapshot: any): Promise<void> =>
+    ipcRenderer.invoke('fs:restore', { root, path: filePath, snapshot }),
   // 目录监听（外部变更自动刷新，对齐 VS Code FileWatcher）：
   // 渲染端订阅某目录，主进程经 'fs:change' 通道推送变更；返回取消订阅函数。
   fsWatch: (root: string, dir: string, cb: () => void): (() => void) => {

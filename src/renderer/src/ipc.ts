@@ -51,6 +51,9 @@ export interface PiApi {
   fsCopy(root: string, from: string, to: string): Promise<void>;
   fsListNames(root: string, dir: string): Promise<string[]>;
   fsUniqueName(base: string, existing: string[]): Promise<string>;
+  // 删除撤销：快照被删项内容（base64，文本/二进制均安全）；恢复时按快照重建（覆盖同名）。
+  fsSnapshot(root: string, path: string): Promise<{ dirs: string[]; files: Array<{ relPath: string; data: string }> }>;
+  fsRestore(root: string, path: string, snapshot: { dirs: string[]; files: Array<{ relPath: string; data: string }> }): Promise<void>;
   // 目录监听（外部变更自动刷新，对齐 VS Code FileWatcher）：订阅某目录，返回取消订阅函数。
   fsWatch(root: string, dir: string, cb: () => void): () => void;
   // 文件监听（外部修改自动刷新编辑器）：订阅某个文件，文件变更时回调；返回取消订阅函数。

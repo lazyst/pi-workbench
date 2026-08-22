@@ -6,6 +6,7 @@ import {
   listDir, readFile, writeFile, statFile,
   mkdir, createFile, rename, remove, copy,
   listNames, uniqueName, watchDir, watchFile,
+  snapshotTree, restoreTree, type TreeSnapshot,
 } from '../fsBridge';
 
 /**
@@ -120,4 +121,9 @@ export function registerFsHandlers(
     listNames(req.root, req.dir));
   ipcMain.handle('fs:uniqueName', (_e, req: { base: string; existing: string[] }) =>
     uniqueName(req.base, new Set(req.existing)));
+  // ╌╌ 删除撤销：快照与恢复（Ctrl+Z 撤销文件树删除）╌╌
+  ipcMain.handle('fs:snapshot', (_e, req: { root: string; path: string }) =>
+    snapshotTree(req.root, req.path));
+  ipcMain.handle('fs:restore', (_e, req: { root: string; path: string; snapshot: TreeSnapshot }) =>
+    restoreTree(req.root, req.path, req.snapshot));
 }
