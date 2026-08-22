@@ -458,6 +458,12 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
         const finalRel = parent ? `${parent}/${finalName}` : finalName;
         if (editing.isDir) await pi.fsMkdir(root, finalRel);
         else await pi.fsCreateFile(root, finalRel, '');
+        // 选中新创建项（目录/文件均高亮，与点击选中态一致）；
+        // 新建文件额外立即在编辑器中打开（对齐 VS Code 新建文件即打开）。
+        setSelection(new Set([finalRel]));
+        setFocusedPath(finalRel);
+        anchorRef.current = finalRel;
+        if (!editing.isDir) onOpenFile(finalRel, finalName, root);
         refreshDir(parent);
       } else {
         const parent = parentOf(editing.relPath);
@@ -477,7 +483,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       refreshDir(parentOf(editing.relPath));
       console.error('[file-tree] edit failed', e);
     }
-  }, [editing, root, refreshDir]);
+  }, [editing, onOpenFile, root, refreshDir]);
 
   const onCancelEdit = useCallback(() => setEditing(null), []);
 

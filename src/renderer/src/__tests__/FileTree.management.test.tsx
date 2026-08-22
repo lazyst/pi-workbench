@@ -50,7 +50,8 @@ describe('FileTree 文件管理：根目录新建', () => {
   });
 
   it('右键空白区 → 新建文件 → 输入回车 → fsCreateFile 被调用且树刷新显示新文件', async () => {
-    render(<FileTree root={'C:\\work'} onOpenFile={vi.fn()} />);
+    const onOpenFile = vi.fn();
+    render(<FileTree root={'C:\\work'} onOpenFile={onOpenFile} />);
 
     // 初始树渲染
     expect(await screen.findByText('README.md')).toBeInTheDocument();
@@ -74,8 +75,16 @@ describe('FileTree 文件管理：根目录新建', () => {
     // 断言落盘调用
     await waitFor(() => expect(api.fsCreateFile).toHaveBeenCalledWith('C:\\work', 'hello.txt', ''));
 
-    // 断言树刷新后出现新文件（bumpDir('') 重新拉取 roots）
-    expect(await screen.findByText('hello.txt')).toBeInTheDocument();
+    // 断言树刷新后出现新文件
+    const newFileEl = await screen.findByText('hello.txt');
+    expect(newFileEl).toBeInTheDocument();
+
+    // 断言新文件行高亮（selected + focused）
+    const newFileRow = newFileEl.closest('.file-row') as HTMLElement;
+    expect(newFileRow).toHaveClass('selected', 'focused');
+
+    // 断言新建文件立即在编辑器中打开
+    expect(onOpenFile).toHaveBeenCalledWith('hello.txt', 'hello.txt', 'C:\\work');
   });
 });
 
