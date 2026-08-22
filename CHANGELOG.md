@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4.1 (2026-08-22)
+
+### 修复
+
+- **修复打开 markdown 预览导致其他 tab 卡顿的性能问题** — 根因是 CenterPane 订阅整个 cwdTrees，pi spinner 每帧推送 OSC 0 标题都会触发全树 re-render，且 react-markdown@10 无内部缓存，keep-alive 隐藏的 MarkdownPreview 每次同步全量重跑 unified 管道（KaTeX + highlight.js）占满主线程。三层修复：① 标题标准化——SessionPane/IntegratedPane 的 onTitleChange 改用去 Braille 前缀的标准化标题，spinner 帧间标题不变时 store 短路，不再触发全树 re-render；② MarkdownPreview 缓存——React.memo + components/rendered useMemo，content 不变时完全跳过 ReactMarkdown 子树，绝不重跑管道；③ 订阅细化——CenterPane 不再订阅整个 cwdTrees，拆出 CwdPane/CwdSelect 各自订阅自己的 slice，SplitPane 抽出 TabContent memo，未变化的 tab 直接跳过。
+
+- **修复多处内存泄漏（关闭所有 tab 后内存不下降）** — 排查发现打开应用后内存从 ~200MB 持续增长至 ~600MB、关闭所有 tab 后不回落，修复 4 处确定性泄漏：
+  - 主进程 `terminalBuffers` 只写不删：关闭集成终端 tab 时整个 scrollback 被序列化后永久驻留主进程内存。改为只暂存存活终端、容量上限 32 条、销毁/终止时同步删除。
+  - Monaco model 永久驻留：`keepCurrentModel` 使预览文件的 model 随编辑器卸载保留，关闭 tab 后永驻 monaco 全局 registry。现在 PreviewTab 卸载时（= tab 真正关闭时机）显式 dispose 对应 model。
+  - 终端滚动快照残留：`paneManager.scrollStates` 与 `visibleScrollSnapshots` 在 `releasePane` 时清理，避免 xterm marker 在终端销毁后仍被引用。
+  - `OperationManager` 随工作目录无限增长：`setConfig` 对比 addedDirs 差异，被移除的目录立即释放对应实例。
+
 ## v1.4.0 (2026-08-22)
 
 ### 新功能
