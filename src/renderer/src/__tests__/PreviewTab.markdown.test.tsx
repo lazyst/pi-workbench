@@ -6,6 +6,7 @@ import { PreviewTab } from '../components/PreviewTab';
 // 用可控桩替换 Monaco / 富文本编辑器，聚焦「三模式切换」行为（不驱动真实编辑器）。
 vi.mock('../components/editor/MonacoCodeEditor', () => ({
   MonacoCodeEditor: ({ content }: any) => <div data-testid="monaco-source">{content}</div>,
+  disposePreviewModel: vi.fn(),
 }));
 vi.mock('../components/RichMarkdownEditor', () => ({
   RichMarkdownEditor: () => <div data-testid="rich-editor" />,

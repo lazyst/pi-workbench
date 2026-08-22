@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { themeIsDark, getMonacoFontSize, useMonacoFontFollow } from '../../editorUtils';
+import { monaco } from './monaco-setup';
 
 export interface LineDecoration {
   /** 行号（1-based）。 */
@@ -59,6 +60,22 @@ function modelUri(root: string, path: string): string {
   const normRoot = root.replace(/\\/g, '/').replace(/\/+$/, '');
   const normPath = path.replace(/\\/g, '/').replace(/^\/+/, '');
   return `file:///${normRoot}/${normPath}`;
+}
+
+/**
+ * 释放指定预览文件的 Monaco model（tab 真正关闭时由 PreviewTab 卸载时调用）。
+ *
+ * keepCurrentModel 使 model 跨 tab 切换保留（不随编辑器卸载 dispose），副作用是关闭
+ * tab 后 model 仍永久驻留 monaco 全局 registry（monaco.editor.getModels()），导致每个
+ * 打开过的文件（内容 + undo 栈 + 语法 token + TS worker mirror）永久占内存。
+ */
+export function disposePreviewModel(root: string, path: string): void {
+  try {
+    const model = monaco.editor.getModel(monaco.Uri.parse(modelUri(root, path)));
+    if (model) model.dispose();
+  } catch {
+    /* 编辑器未初始化 / model 已释放，静默忽略 */
+  }
 }
 
 // 装饰 ID 前缀（用于 deltaDecorations 分组标识）。

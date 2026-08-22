@@ -67,6 +67,16 @@ export function rememberVisibleScrollSnapshot(
 }
 
 /**
+ * 忘记某 pane 的滚动快照与挂起的 followOutput 请求（pane 销毁时调用）。
+ * 快照持有 captureScrollState 的 xterm marker 引用，若终端实例销毁后仍残留，
+ * 会阻止相关对象被 GC（内存泄漏）。
+ */
+export function forgetVisibleScrollSnapshot(paneKey: string): void {
+  visibleScrollSnapshots.delete(paneKey)
+  pendingFollowOutputPaneIds.delete(paneKey)
+}
+
+/**
  * 调度一个 pane 在可见性恢复后执行 followOutput。
  * 如果意图是 followOutput，在下一个动画帧中 scrollToBottom。
  *

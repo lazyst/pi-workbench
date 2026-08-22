@@ -10,6 +10,7 @@ vi.mock('../components/editor/MonacoCodeEditor', () => ({
       {content}
     </div>
   ),
+  disposePreviewModel: vi.fn(),
 }));
 
 function makePi(content = 'hello world', language?: string) {

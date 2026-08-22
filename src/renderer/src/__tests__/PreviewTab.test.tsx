@@ -10,6 +10,7 @@ vi.mock('../components/editor/MonacoCodeEditor', () => ({
     // 用按钮直接触发 onChange 使 dirty（不依赖 jsdom 下驱动真实编辑器输入）。
     return <button data-testid="make-dirty" onClick={() => onChange('edited content')}>make dirty</button>;
   },
+  disposePreviewModel: vi.fn(),
 }));
 
 function makePi(content = 'hello world') {

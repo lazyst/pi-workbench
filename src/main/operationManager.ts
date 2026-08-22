@@ -112,6 +112,12 @@ export class OperationManager {
     return Array.from(this._operations);
   }
 
+  /** 释放所有监听与运行中的操作（实例不再使用时调用）。 */
+  clear(): void {
+    this._operations.clear();
+    this._listeners.clear();
+  }
+
   /** Subscribe to operation state changes. Returns unsubscribe function. */
   onChange(cb: (ops: Operation[]) => void): () => void {
     this._listeners.add(cb);
@@ -128,6 +134,17 @@ export class OperationManager {
 
 /** Map of cwd → OperationManager */
 const managers = new Map<string, OperationManager>();
+
+/**
+ * 释放指定 cwd 的 OperationManager（工作目录从侧边栏移除时调用）。
+ * 清理所有 listener 并移除 Map 条目，使实例可被 GC（防止随工作目录数量无限增长）。
+ */
+export function disposeOperationManager(cwd: string): void {
+  const m = managers.get(cwd);
+  if (!m) return;
+  m.clear();
+  managers.delete(cwd);
+}
 
 /** Get or create an OperationManager for the given cwd. */
 export function getOperationManager(cwd: string): OperationManager {

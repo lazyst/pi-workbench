@@ -20,6 +20,7 @@ import { SessionChannel, IntegratedChannel, UnifiedChannel } from './terminalCha
 import type { TerminalChannel } from './terminalChannel';
 import { XtermTerminal } from './XtermTerminal';
 import type { PiApi } from '../ipc';
+import { forgetVisibleScrollSnapshot } from '../lib/terminal/scroll-visibility-memory';
 
 /** 终端种类：会话终端走 SessionChannel，集成终端走 IntegratedChannel。 */
 export type PaneKind = 'session' | 'integrated' | 'unified';
@@ -120,12 +121,15 @@ export function focusPane(key: string): void {
  * 真正销毁实例：从注册表移除并 unmount（释放所有监听与定时器、显式 loseContext 释放 WebGL）。
  * 会话终端：仅卸载渲染实例（会话 pty 由主进程会话生命周期管理，此处不杀）。
  * 集成终端：卸载实例后由调用方（用户点 × → App.handleCloseTab → pi.destroyTerminal）杀掉主进程 pty。
+ * 同时清理遗留的滚动快照（含 xterm marker），避免终端销毁后仍被引用（内存泄漏）。
  */
 export function releasePane(key: string): void {
   const term = panes.get(key);
   if (!term) return;
   term.unmount();
   panes.delete(key);
+  scrollStates.delete(key);
+  forgetVisibleScrollSnapshot(key);
 }
 
 /** 滚动位置快照（对齐 Orca ScrollState），由 paneManager 内部存储。 */

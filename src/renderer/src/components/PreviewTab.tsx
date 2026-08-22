@@ -9,7 +9,7 @@
 //   • 预览内相对链接点击 → onOpenFile（在应用内切到目标文件）
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { pi } from '../ipc';
-import { MonacoCodeEditor, type LineDecoration } from './editor/MonacoCodeEditor';
+import { MonacoCodeEditor, disposePreviewModel, type LineDecoration } from './editor/MonacoCodeEditor';
 import { ImagePreview } from './ImagePreview';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DiffPopup } from './DiffPopup';
@@ -163,6 +163,15 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       }
     })();
     return () => { cancelled = true; };
+  }, [root, path]);
+
+  // Monaco model 释放：本组件卸载 = tab 真正关闭（keep-alive 隐藏 / markdown 视图
+  // 切换不卸载 PreviewTab）。keepCurrentModel 使 model 不随编辑器卸载而释放，若不在此
+  // dispose，每个打开过的文件永久驻留 monaco 全局 registry（内存泄漏）。
+  useEffect(() => {
+    return () => {
+      disposePreviewModel(root, path);
+    };
   }, [root, path]);
 
   // 外部修改监听：当文件被其他编辑器或命令修改时，自动重载内容（仅非 dirty 时）。

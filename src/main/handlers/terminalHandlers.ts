@@ -33,7 +33,9 @@ export function registerTerminalHandlers(
     ptyRegistry.setOwner(ptyId, ownerKey);
   });
 
-  // 滚动缓冲区持久化（内存暂存）
+  // 滚动缓冲区暂存（有上限，非永久缓存）：只收存活终端、超限丢最旧、销毁时删除。
+  // 否则关闭的终端会把整个 scrollback 永久驻留主进程内存（内存泄漏）。
+  const MAX_TERMINAL_BUFFERS = 32;
   const terminalBuffers = new Map<string, string>();
 
   // terminal:spawn — 创建终端（pi 会话或 shell 终端，由 SpawnOptions.command 区分）
@@ -64,13 +66,32 @@ export function registerTerminalHandlers(
   // terminal:ack — 背压回传
   ipcMain.on('terminal:ack', (_e, m: { id: string; bytes: number }) => unifiedPool.acknowledgeDataEvent(m.id, m.bytes));
   // terminal:destroy — 销毁终端
-  ipcMain.handle('terminal:destroy', (_e, id: string) => { unifiedPool.destroy(id); pushTerminalList(); });
+  ipcMain.handle('terminal:destroy', (_e, id: string) => {
+    unifiedPool.destroy(id);
+    // 释放该终端暂存的 scrollback（已销毁，不再被消费）。
+    terminalBuffers.delete(id);
+    pushTerminalList();
+  });
   // session:terminate — 终止 pi 会话
-  ipcMain.handle('session:terminate', (_e, key: string) => { unifiedPool.terminate(key); pushTerminalList(); });
+  ipcMain.handle('session:terminate', (_e, key: string) => {
+    unifiedPool.terminate(key);
+    // 防御性清理：按 live key 删除关联缓冲（pi 会话当前不走 saveBuffer，双保险）。
+    terminalBuffers.delete(unifiedPool.liveKeyFor(key));
+    pushTerminalList();
+  });
 
   // terminal:saveBuffer — 保存滚动缓冲区
   ipcMain.on('terminal:saveBuffer', (_e, m: { id: string; data: string }) => {
-    if (m?.id && typeof m.data === 'string') terminalBuffers.set(m.id, m.data);
+    if (!m?.id || typeof m.data !== 'string') return;
+    // 只暂存仍然存活的终端：已销毁/已退出的终端（用户关闭 tab 后迟到的 unmount
+    // 保存、shell 内输入 exit 后的卸载保存）直接丢弃，避免 scrollback 永久驻留。
+    if (!unifiedPool.has(m.id)) return;
+    if (!terminalBuffers.has(m.id) && terminalBuffers.size >= MAX_TERMINAL_BUFFERS) {
+      // 超出容量上限：丢弃最旧条目（Map 迭代顺序 = 插入顺序）。
+      const oldest = terminalBuffers.keys().next().value;
+      if (oldest !== undefined) terminalBuffers.delete(oldest);
+    }
+    terminalBuffers.set(m.id, m.data);
   });
   // terminal:loadBuffer — 加载滚动缓冲区
   ipcMain.handle('terminal:loadBuffer', (_e, id: string): string | undefined => terminalBuffers.get(id));

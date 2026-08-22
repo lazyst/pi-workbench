@@ -19,6 +19,7 @@ import { registerFsHandlers } from './handlers/fsHandlers';
 import { registerGitHandlers } from './handlers/gitHandlers';
 import { registerPiToolHandlers } from './handlers/piToolHandlers';
 import { registerUpdateHandlers } from './handlers/updateHandlers';
+import { disposeOperationManager } from './operationManager';
 import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desktop-sync-source';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -161,6 +162,20 @@ function getConfig(): AppConfig {
 
 function setConfig(partial: Partial<AppConfig>): void {
   ensureLoaded();
+  // 工作目录变更：从 addedDirs 中被移除的目录不再有 Git 操作，释放对应
+  // OperationManager（防止随工作目录切换/移除无限增长，内存泄漏）。
+  // 必须在 mergeConfig 之前对比：partial.addedDirs 是移除后的完整列表。
+  if (Array.isArray(partial.addedDirs)) {
+    const prevAddedDirs = configState?.addedDirs ?? [];
+    const nextAddedDirs = new Set(
+      partial.addedDirs
+        .filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+        .map((x) => path.normalize(x.trim())),
+    );
+    for (const dir of prevAddedDirs) {
+      if (!nextAddedDirs.has(dir)) disposeOperationManager(dir);
+    }
+  }
   configState = mergeConfig(configState!, partial);
   // addedDirs：统一为平台规范路径（path.normalize 会把混合分隔符 / 相对片段规整），
   // 避免混合分隔符（如 "D:\tmp/pi-test"）导致侧边栏精确字符串匹配失败，
