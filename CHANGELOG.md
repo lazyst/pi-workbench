@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.4.3 (2026-08-25)
+
+### 新功能
+
+- **文件树根目录标题行（VS Code 风格）** — 文件树顶部新增可折叠、加粗的项目根目录标题行，子项缩进深一级；根目录折叠状态纳入切换工作目录时的展开记忆一并恢复。移除选中行左侧的焦点竖条样式。
+
+### 修复
+
+- **修复拖拽文件到选中目录失效** — 拖拽 drop 改为从 dataTransfer 读取被拖节点（不再依赖文件树 selection），修复「先选中目录 A 再把文件 B 拖到 A」时 B 不动、反而误移 A 的问题。新增 FileTree.dragdrop / FileTree.root 回归测试。
+
+- **右栏下拉手动切换目录不再跨会话持久化** — 右栏下拉手动切换目录不再跨会话持久化（重启后回到自动跟随活跃会话目录），仅保留启动时恢复上次活跃会话目录的行为。
+
+- **修复终端右键复制后失焦 + 选中后外部工具读不到选区** —
+  - 右键复制/粘贴后 `handleContextMenu` 末尾补 `term.focus()`：右键 mousedown 不像左键那样维持 xterm 隐藏 textarea 的焦点，contextmenu 被 preventDefault 后焦点丢失，此前需再点终端才能打字（对齐 bindDragAndDrop 已有 refocus 模式）。
+  - `bindKeyShortcuts` 新增 Ctrl+C 分支：有选区时复制并阻止 SIGINT，无选区放行发 SIGINT（对齐 VS Code / Windows Terminal / cmd）。外部划词/搜索类便捷工具靠模拟一次 Ctrl+C 把选区送进系统剪贴板读取，此前只触发 SIGINT、读不到选区，表现为「无反应」。补两个单测覆盖 Ctrl+C 有选区/无选区行为。
+
 ## v1.4.2 (2026-08-24)
 
 ### 修复
