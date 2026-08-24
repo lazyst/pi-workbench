@@ -2,6 +2,7 @@ import type { TerminalProfile } from '../../renderer/src/types';
 import type { TerminalInfo, UnifiedTerminalPool } from '../unifiedTerminalPool';
 import type { PtyOwnershipRegistry } from '../ptyOwnershipRegistry';
 import { detectTerminalProfiles } from '../shellProfiles';
+import { ensureFreshPathCached } from '../envRefresh';
 
 /**
  * 终端相关 IPC handler 注册。
@@ -16,9 +17,14 @@ export function registerTerminalHandlers(
   ensureAppWorkDir: () => string,
   ptyRegistry: PtyOwnershipRegistry,
 ): void {
-  /** 创建终端后推送列表；失败时记日志并拋出友好错误。 */
-  const createAndList = (factory: () => TerminalInfo, label: string, errMsg: string): TerminalInfo => {
+  /** 创建终端后推送列表；失败时记日志并拋出友好错误。
+   *
+   * 创建前先预热最新 PATH 缓存（envRefresh）：spawn 时 UnifiedTerminalPool 会同步读取，
+   * 保证应用运行期间新装的全局命令（改了注册表 PATH）在新终端可用。预热失败静默回退，
+   * 不影响终端创建。 */
+  const createAndList = async (factory: () => TerminalInfo, label: string, errMsg: string): Promise<TerminalInfo> => {
     try {
+      await ensureFreshPathCached();
       const info = factory();
       pushTerminalList();
       return info;

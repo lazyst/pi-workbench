@@ -147,9 +147,9 @@ describe('integrated terminal IPC handlers (terminal:*)', () => {
     expect(Array.isArray(p.args)).toBe(true);
   });
 
-  it('terminal:create returns TerminalInfo and terminal:input/resize forward to pty', () => {
+  it('terminal:create returns TerminalInfo and terminal:input/resize forward to pty', async () => {
     const profiles = ipcHandlers['terminal:listProfiles']();
-    const info = ipcHandlers['terminal:create'](null, { profile: profiles[0], cwd: '/tmp' });
+    const info = await ipcHandlers['terminal:create'](null, { profile: profiles[0], cwd: '/tmp' });
     expect(typeof info.id).toBe('string');
     expect(info.id).toMatch(/^term-/);
     expect(info.type).toBe('shell');
@@ -167,9 +167,9 @@ describe('integrated terminal IPC handlers (terminal:*)', () => {
     expect(pty.resize).toHaveBeenCalledWith(120, 40);
   });
 
-  it('terminal:destroy kills the pty and tears down the terminal', () => {
+  it('terminal:destroy kills the pty and tears down the terminal', async () => {
     const profiles = ipcHandlers['terminal:listProfiles']();
-    const info = ipcHandlers['terminal:create'](null, { profile: profiles[0], cwd: '/tmp' });
+    const info = await ipcHandlers['terminal:create'](null, { profile: profiles[0], cwd: '/tmp' });
     const pty = mockPtys[0];
     expect(pty.kill).not.toHaveBeenCalled();
 

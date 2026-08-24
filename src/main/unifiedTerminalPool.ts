@@ -31,6 +31,7 @@ import {
   POST_READY_COMMAND_DELAY_MS,
   POST_READY_FALLBACK_MS,
 } from './shell-ready/pi-shell-ready';
+import { getCachedFreshPath } from './envRefresh';
 
 // node-pty v1.x 的公开类型只声明 onData/onExit 事件属性，但运行时 Terminal 仍继承
 // EventEmitter（内部经 _internalee 转发 'data'/'exit' 事件）。以下类型补齐代码实际
@@ -338,8 +339,12 @@ export class UnifiedTerminalPool {
 
     // 环境变量：不设 TERM_PROGRAM=vscode 以免触发用户的 VS Code shell integration（
     // 它会在每次 prompt 发射 OSC 133 D 序列，对终端输出造成干扰）。
+    // 若 IPC handler 在创建前预热过最新 PATH（见 envRefresh），覆盖 process.env.PATH，
+    // 使应用运行期间新装的全局命令在 pi 会话终端也可用。
+    const freshPath = getCachedFreshPath();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...(freshPath ? { PATH: freshPath } : {}),
       PI_DESKTOP: '1',
     };
 
@@ -571,8 +576,12 @@ export class UnifiedTerminalPool {
     const id = `term-${randomUUID()}`;
 
     // 像 VS Code / 其他终端模拟器一样，向 pty 显式声明终端类型与真彩色支持。
+    // 若 IPC handler 在创建前预热过最新 PATH（见 envRefresh），覆盖 process.env.PATH，
+    // 使应用运行期间新装的全局命令在集成终端也可用。
+    const freshPath = getCachedFreshPath();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...(freshPath ? { PATH: freshPath } : {}),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };

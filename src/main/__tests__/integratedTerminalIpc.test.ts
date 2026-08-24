@@ -90,6 +90,12 @@ vi.mock('../unifiedTerminalPool', () => ({
   },
 }));
 
+// envRefresh 默认返回 null（未预热 → 走原 process.env 快照），避免单测真的 spawn PowerShell。
+vi.mock('../envRefresh', () => ({
+  ensureFreshPathCached: vi.fn(async () => null),
+  getCachedFreshPath: vi.fn(() => null),
+}));
+
 vi.mock('../shellProfiles', () => ({
   detectTerminalProfiles: () => detectSpy(),
 }));
