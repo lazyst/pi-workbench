@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.4.2 (2026-08-24)
+
+### 修复
+
+- **修复新终端不使用最新环境变量，装完全局命令后开新终端不可用** — 根因是集成终端与 pi 会话 spawn 时直接展开 `...process.env`（Electron 主进程启动那一刻的环境快照），应用运行期间外部安装全局命令（修改注册表 User/Machine PATH）后，新终端继承旧 PATH 找不到命令，而项目此前没有任何 shell 环境刷新机制（对照 VS Code 的 `resolveShellEnvironment`）。修复：新增 `envRefresh` 模块，IPC handler 创建终端前异步预热最新 PATH 缓存，spawn 时同步读取覆盖 `env.PATH`。Windows 经 PowerShell（`-NoProfile`，无第三方依赖）从 .NET 读取注册表 Machine PATH + User PATH（REG_EXPAND_SZ 已展开 `%VAR%`），按系统语义拼接（系统在前、用户在后）后与当前 `process.env.PATH` 去重合并（保留启动时的自定义目录）；脚本内显式设控制台输出编码为 UTF-8，避免中文目录按 GBK 误解码。带 5s TTL 缓存与并发去重，查询失败静默回退，绝不阻塞终端创建；其他平台不刷新（交互式 shell 自行加载 profile 构建 PATH）。新增 8 项单元测试覆盖合并逻辑、平台分流、TTL、并发去重、失败回退。
+
 ## v1.4.1 (2026-08-22)
 
 ### 修复
