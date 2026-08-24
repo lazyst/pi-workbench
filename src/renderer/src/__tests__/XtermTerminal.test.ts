@@ -835,6 +835,34 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
       t.unmount();
     });
 
+    it('拦截器命中 Ctrl+C 且有选区时返回 false 并复制选区（对齐 VS Code / Windows Terminal）', () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const term = (t as any).term as Terminal;
+      vi.spyOn(term, 'hasSelection').mockReturnValue(true);
+      vi.spyOn(term, 'getSelection').mockReturnValue('sel');
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      const ret = handler(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
+      expect(ret).toBe(false);
+      expect(writeText).toHaveBeenCalledWith('sel');
+      t.unmount();
+    });
+
+    it('拦截器命中 Ctrl+C 且无选区时返回 true（放行，由 xterm 默认发 SIGINT）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const term = (t as any).term as Terminal;
+      vi.spyOn(term, 'hasSelection').mockReturnValue(false);
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      const ret = handler(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
+      expect(ret).toBe(true);
+      t.unmount();
+    });
+
     it('普通按键（非 Ctrl 组合）拦截器返回 true，不拦截', () => {
       const api = makeApi();
       const t = new XtermTerminal({ sessionKey: 'k', pi: api });

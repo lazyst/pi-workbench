@@ -698,6 +698,9 @@ export class XtermTerminal implements LiveTerminal {
     } catch {
       /* 剪贴板不可用（如非安全上下文）时静默跳过 */
     }
+    // 右键后把焦点还给终端，使其可直接键盘输入（对齐 VS Code 与 bindDragAndDrop）。
+    // 右键 mousedown 不维持 xterm 隐藏 textarea 焦点，preventDefault contextmenu 后会丢失。
+    term.focus();
   }
 
   /**
@@ -933,6 +936,14 @@ export class XtermTerminal implements LiveTerminal {
       }
       // Ctrl/Cmd+Shift+C：复制选区（仅精确组合，避免吞掉普通 Ctrl+C）
       if (key === 'c' && e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        this.copySelection();
+        return false;
+      }
+      // Ctrl/Cmd+C：有选区时复制选区（对齐 VS Code / Windows Terminal / cmd），无选区放行发 SIGINT。
+      // 外部划词/搜索类工具多靠「模拟 Ctrl+C 把选区送进剪贴板」读取；若不复制则只触发 SIGINT、读不到选区。
+      if (key === 'c' && !e.shiftKey && !e.altKey) {
+        if (!term.hasSelection()) return true; // 无选区：放行发 SIGINT
         e.preventDefault();
         this.copySelection();
         return false;
