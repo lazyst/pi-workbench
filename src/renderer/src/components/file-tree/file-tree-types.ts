@@ -34,6 +34,8 @@ export interface VisibleRow {
   isExpanded: boolean;
   /** 此行是否为新建伪节点行（仅用于定位 inline input）。 */
   isDraft?: boolean;
+  /** 此行是否为工作目录根标题行（可折叠，加粗，不可拖动）。 */
+  isRoot?: boolean;
 }
 
 /** Git 文件状态条目。 */

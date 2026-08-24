@@ -20,6 +20,7 @@ interface FileTreeRowProps {
   isEditing: boolean;
   editingValue: string;
   draggable: boolean;
+  isRoot?: boolean;
   gitCategory: string;
   gitBadge: string;
   isStaged: boolean;
@@ -49,6 +50,7 @@ export function FileTreeRow({
   isEditing,
   editingValue,
   draggable,
+  isRoot,
   gitCategory,
   gitBadge,
   isStaged,
@@ -75,6 +77,7 @@ export function FileTreeRow({
     isCut ? 'cut-pending' : '',
     isDropTarget ? 'drop-target' : '',
     isEditing ? 'editing' : '',
+    isRoot ? 'is-root' : '',
     gitCategory ? `git-${gitCategory}` : '',
     showIgnored ? 'git-ignored' : '',
     gitCategory === 'modified' && isStaged && !isUnstaged ? 'git-staged' : '',
@@ -117,7 +120,7 @@ export function FileTreeRow({
   return (
     <div
       className={className}
-      draggable={draggable && !isEditing}
+      draggable={draggable && !isEditing && !isRoot}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onDragStart={onDragStart}

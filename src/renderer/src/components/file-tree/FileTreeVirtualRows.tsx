@@ -113,6 +113,7 @@ export function FileTreeVirtualRows({
         isEditing={isEditing}
         editingValue={row.isDraft ? editing?.draftName ?? '' : node.name}
         draggable={draggable && !isEditing}
+        isRoot={row.isRoot ?? false}
         gitCategory={gitCategory}
         gitBadge={gitEntry?.badge ?? ''}
         isStaged={gitEntry?.staged ?? false}

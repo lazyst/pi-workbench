@@ -23,6 +23,19 @@ function toAbsolutePath(root: string, relPath: string): string {
   }
 }
 
+/** 由绝对路径算回相对 root 的相对路径（统一用 '/' 作分隔符，与文件树内部约定一致）。
+ *  非 root 下路径兜底原样返回（已归一化为正斜杠）。 */
+function toRelPath(root: string, absPath: string): string {
+  let rel = '';
+  try {
+    rel = nodePath.relative(root, absPath);
+  } catch {
+    // nodePath.relative 不可用时兜底用原绝对路径
+  }
+  if (!rel || rel.startsWith('..')) rel = absPath;
+  return rel.replace(/\\/g, '/');
+}
+
 /** 父目录相对路径（'' 表示根）。 */
 function parentOf(relPath: string): string {
   if (!relPath.includes('/')) return '';
@@ -261,9 +274,11 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       }
       model.setRoot(root);
       model.reset();
-      // 恢复新 root 上次的展开状态；无记忆（saved 为 undefined）则全新空集合。
+      // 恢复新 root 上次的展开状态；无记忆（saved 为 undefined）则默认展开根目录。
+      // 根目录('')的展开/折叠也纳入记忆：用户折叠根目录后切走再切回会保留折叠态。
       const saved = root ? expandedByRootRef.current.get(root) : undefined;
-      setExpandedPaths(new Set(saved));
+      const next = saved === undefined ? new Set<string>(['']) : new Set<string>(saved);
+      setExpandedPaths(next);
       setError(null);
       setRoots([]);
       setSelection(new Set());
@@ -295,6 +310,8 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   const pendingLoads = useRef<Set<string>>(new Set());
   useEffect(() => {
     expandedPaths.forEach((path) => {
+      // 根目录('')由 setRoots + fetchEntries 独立管理，不走 model 惰性加载
+      if (path === '') return;
       if (model.isLoaded(path) || pendingLoads.current.has(path)) return;
       pendingLoads.current.add(path);
       setDirLoading((prev) => new Set(prev).add(path));
@@ -314,51 +331,55 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   const rows = useMemo<VisibleRow[]>(() => {
     const result: VisibleRow[] = [];
 
-    // 根层新建伪节点（relPath===''）
-    if (editing && editing.isNew && editing.relPath === '') {
-      result.push({
+    // 根目录标题行（工作目录根，可折叠，默认展开）。fullPath='' 与根层 relPath 语义一致。
+    const rootExpanded = expandedPaths.has('');
+    result.push({
+      node: { name: basename(root), fullPath: '', isDir: true, size: 0 },
+      depth: 0,
+      isExpanded: rootExpanded,
+      isRoot: true,
+    });
+
+    if (rootExpanded) {
+      // 新建伪节点行（确认前占位输入行）；parentRel 为空表示根层，否则为该目录下新建。
+      const draftRow = (ed: EditingState, parentRel: string, depth: number): VisibleRow => ({
         node: {
-          name: editing.draftName,
-          fullPath: `__draft__${editing.draftName}`,
-          isDir: editing.isDir,
+          name: ed.draftName,
+          fullPath: parentRel ? `${parentRel}/__draft__${ed.draftName}` : `__draft__${ed.draftName}`,
+          isDir: ed.isDir,
           size: 0,
         },
-        depth: 0,
+        depth,
         isExpanded: false,
         isDraft: true,
-      } as VisibleRow);
-    }
+      });
 
-    const walk = (nodes: FileNode[], depth: number) => {
-      for (const node of nodes) {
-        const open = expandedPaths.has(node.fullPath);
-        result.push({ node, depth, isExpanded: open });
-
-        if (node.isDir && open) {
-          // 此目录下的新建伪节点
-          if (editing && editing.isNew && editing.relPath === node.fullPath) {
-            result.push({
-              node: {
-                name: editing.draftName,
-                fullPath: `${node.fullPath}/__draft__${editing.draftName}`,
-                isDir: editing.isDir,
-                size: 0,
-              },
-              depth: depth + 1,
-              isExpanded: false,
-              isDraft: true,
-            } as VisibleRow);
-          }
-          const children = model.getChildren(node.fullPath);
-          if (children) walk(children, depth + 1);
-        }
+      // 根层新建伪节点（relPath===''）
+      if (editing && editing.isNew && editing.relPath === '') {
+        result.push(draftRow(editing, '', 1));
       }
-    };
 
-    walk(roots, 0);
+      const walk = (nodes: FileNode[], depth: number) => {
+        for (const node of nodes) {
+          const open = expandedPaths.has(node.fullPath);
+          result.push({ node, depth, isExpanded: open });
+
+          if (node.isDir && open) {
+            // 此目录下的新建伪节点
+            if (editing && editing.isNew && editing.relPath === node.fullPath) {
+              result.push(draftRow(editing, node.fullPath, depth + 1));
+            }
+            const children = model.getChildren(node.fullPath);
+            if (children) walk(children, depth + 1);
+          }
+        }
+      };
+
+      walk(roots, 1);
+    }
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roots, expandedPaths, editing, modelRefreshKey, model.isLoaded, model.getChildren]);
+  }, [roots, expandedPaths, editing, root, modelRefreshKey, model.isLoaded, model.getChildren]);
 
   // 最新可见行快照：Shift 范围选择需按行序计算锚点→目标区间（避免事件回调闭包过期）。
   const rowsRef = useRef<VisibleRow[]>([]);
@@ -391,6 +412,13 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     // 否则「点击行 → 高亮」会被容器清空逻辑立即抹掉。
     e.stopPropagation();
     const fullPath = node.fullPath;
+
+    // 根目录行（工作目录标题行）：仅切换展开/折叠，不进入选中态
+    if (fullPath === '') {
+      const open = expandedPaths.has(fullPath);
+      handleToggleExpanded(fullPath, !open);
+      return;
+    }
 
     // Shift+点击：范围选择（锚点 → 当前项的可见行区间）
     if (e.shiftKey) {
@@ -441,8 +469,8 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   const startNew = useCallback((parentRel: string, isDir: boolean) => {
     setSelection(new Set());
     setEditing({ relPath: parentRel, isDir, isNew: true, draftName: isDir ? '新建文件夹' : '新建文件' });
-    // 确保父目录展开可见（根 '' 无需展开）。
-    if (parentRel && !expandedPaths.has(parentRel)) {
+    // 确保父目录展开可见（含根目录 ''：根目录可折叠后新建也需展开）。
+    if (!expandedPaths.has(parentRel)) {
       setExpandedPaths((prev) => new Set(prev).add(parentRel));
     }
     setMenu(null);
@@ -635,10 +663,32 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
     setDropTarget(null);
     if (!root) return;
     const destDir = node.fullPath;
-    const moving = selection.size > 0 ? [...selection] : [];
+    // 从 dataTransfer 读取被拖拽的节点（dragstart 写入的绝对路径 JSON 数组），
+    // 转回相对路径作为 moving。不能依赖 selection —— selection 可能与被拖项不一致：
+    // 例如先选中目录 A，再拖文件 B 到 A 上，此时 selection={A} 但实际被拖的是 B，
+    // 旧实现用 selection 作为 moving 会错误地移动 A（且 B “回到原位”未移动）。
+    const dt = e.dataTransfer as (DataTransfer & { getData?: (t: string) => string });
+    const raw = dt && typeof dt.getData === 'function' ? dt.getData(PI_FILE_DRAG_MIME) : '';
+    let moving: string[] = [];
+    if (raw) {
+      const toRel = (abs: string) => toRelPath(root, abs);
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          moving = parsed.filter((p): p is string => typeof p === 'string').map(toRel);
+        } else if (typeof parsed === 'string') {
+          moving = [toRel(parsed)];
+        }
+      } catch {
+        // 非 JSON：旧版单路径格式
+        moving = [toRel(raw)];
+      }
+    }
     if (!moving.length) return;
     try {
       for (const rel of moving) {
+        // 跳过把目录移到自身或自身子目录内（会破坏目录结构，文件系统层也会拒绝）
+        if (rel === destDir || destDir.startsWith(rel + '/')) continue;
         const base = basename(rel);
         const siblings = await pi.fsListNames(root, destDir);
         const finalName = await pi.fsUniqueName(base, siblings);
@@ -652,7 +702,7 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
       if (clip?.mode === 'cut') { clipboard.clear(); setCutRelPaths(new Set()); }
     } catch (e) { console.error('[file-tree] move failed', e); }
     setSelection(new Set());
-  }, [root, selection, refreshDir]);
+  }, [root, refreshDir]);
 
   // 当前右键所在目录（用于空白区新建/粘贴）：若目标是目录则为其本身，否则取其父目录。
   // 定义在 menuItems useMemo 之前，使回调闭包按源码顺序可读。
@@ -784,38 +834,6 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
   if (error) {
     return <div className="file-error">{error}</div>;
   }
-  if (roots.length === 0 && !editing) {
-    // 纯空目录（无编辑态）：只显示"空目录"提示，不渲染 FileTreeVirtualRows
-    return (
-      <div
-        className="file-tree file-tree-empty"
-        style={{ minHeight: '100%' }}
-        onContextMenu={(e) => onOpenContextMenu(e, null)}
-      >
-        <div className="file-empty" style={{ paddingLeft: 8 }}>空目录</div>
-        {menu && (
-          <ContextMenu
-            x={menu.x}
-            y={menu.y}
-            items={menuItems}
-            onClose={() => setMenu(null)}
-          />
-        )}
-
-      {confirmDelete && (
-          <ConfirmDialog
-            title="删除确认"
-            message={`将删除 ${confirmDelete.length} 个项目${confirmDelete.some((t) => t.isDir) ? '（含目录及其全部内容）' : ''}，删除后可用 Ctrl+Z 撤销。`}
-            confirmLabel="删除"
-            cancelLabel="取消"
-            onConfirm={() => void confirmDeleteNow()}
-            onCancel={() => setConfirmDelete(null)}
-          />
-        )}
-      </div>
-    );
-  }
-
   return (
     <div
       className="file-tree"
@@ -856,6 +874,11 @@ export function FileTree({ root, onOpenFile, onAddWorkDir }: Props) {
         onCommitEdit={onCommitEdit}
         onCancelEdit={onCancelEdit}
       />
+
+      {/* 根目录展开但无子项时显示空目录提示 */}
+      {expandedPaths.has('') && roots.length === 0 && !editing && (
+        <div className="file-empty" style={{ paddingLeft: 22 }}>空目录</div>
+      )}
 
       {menu && (
         <ContextMenu

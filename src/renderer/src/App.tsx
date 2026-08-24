@@ -64,7 +64,8 @@ export default function App() {
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
   // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次的 cwd，
   // 供右栏文件树/Git 自动模式稳定跟随。
-  // 同时持久化到 config.lastActiveDir，跨会话记住用户上一次选择的目录。
+  // 持久化到 config.lastActiveDir：启动时恢复上次活跃会话目录（自动打开上次的工作目录）。
+  // 注：右栏下拉手动切换目录不再持久化（onPickDirectory 已移除），重启回到自动跟随。
   const [lastSessionCwd, setLastSessionCwd] = useState<string | null>(null);
   useEffect(() => { if (activeCwd) { setLastSessionCwd(activeCwd); pi.setConfig({ lastActiveDir: activeCwd }).catch(() => {}); } }, [activeCwd]);
   const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
@@ -84,6 +85,7 @@ export default function App() {
     // 初始化面板布局配置 + 恢复上次打开的工作目录
     pi.getConfig().then((cfg) => {
       initFromConfig(cfg);
+      // 恢复上次活跃会话目录：启动时自动打开上次退出时的工作目录。
       if (cfg.lastActiveDir) {
         useTabStore.getState().setActiveCwd(cfg.lastActiveDir);
       }
@@ -488,7 +490,6 @@ export default function App() {
       <RightPanel
         addedDirs={Array.from(visibleDirs)}
         activeCwd={lastSessionCwd}
-        onPickDirectory={(cwd) => { pi.setConfig({ lastActiveDir: cwd }).catch(() => {}); }}
         onOpenFile={handleOpenFile}
         onAddWorkDir={(absDir: string) => {
           // 已在左侧工作目录中（含应用工作目录）→ 静默忽略

@@ -2388,9 +2388,9 @@ html, body, #root {
 
 /* 文件管理交互态 */
 .file-row.selected { background: var(--bg-selected, rgba(99, 102, 241, 0.18)); }
-/* 焦点项（最后点击的行）：左侧竖条指示，对齐 VS Code list.focusOutline */
-.file-row.focused { box-shadow: inset 2px 0 0 var(--accent); }
 .file-row.cut-pending { opacity: 0.45; }
+/* 根目录标题行（VS Code 风格）：加粗项目名，不可拖动 */
+.file-row.is-root .file-name { font-weight: 600; }
 .file-row.drop-target { background: var(--bg-drop, rgba(99, 102, 241, 0.30)); outline: 1px dashed var(--accent, #6366f1); outline-offset: -1px; }
 .file-row.editing { background: var(--bg-hover); }
 

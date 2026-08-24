@@ -37,7 +37,7 @@ export function defaultConfig(): AppConfig {
     scrollback: 5000,
     // 侧边栏折叠的目录分组（cwd 列表），初始全部展开
     collapsedGroups: [],
-    // 右栏（文件树/Git）上一次选择的目录，首次启动为空
+    // 右栏（文件树/Git）上次活跃会话目录，启动时自动恢复（打开上次的工作目录）
     lastActiveDir: '',
     // 左侧栏初始不折叠
     sidebarCollapsed: false,
