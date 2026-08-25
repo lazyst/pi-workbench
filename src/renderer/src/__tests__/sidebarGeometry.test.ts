@@ -33,10 +33,10 @@ describe('clampRightPanelWidth', () => {
     expect(clampRightPanelWidth(-50, 1000)).toBe(RIGHT_PANEL_MIN_WIDTH);
   });
 
-  it('caps at 50% of the window width', () => {
-    expect(clampRightPanelWidth(800, 1000)).toBe(500);
-    expect(clampRightPanelWidth(501, 1000)).toBe(500); // 501 > 500 → clamp to ceiling
-    expect(clampRightPanelWidth(600, 1000)).toBe(500);
+  it('caps at 60% of the window width', () => {
+    expect(clampRightPanelWidth(800, 1000)).toBe(600);
+    expect(clampRightPanelWidth(601, 1000)).toBe(600); // 601 > 600 → clamp to ceiling
+    expect(clampRightPanelWidth(700, 1000)).toBe(600);
   });
 
   it('passes through in-range widths', () => {
@@ -45,7 +45,7 @@ describe('clampRightPanelWidth', () => {
   });
 
   it('never lets the floor exceed the ceiling on a tiny window', () => {
-    // 300px 窗口 → 50% = 150 → max(200, 150) = 200；夹取后仍是 200
+    // 300px 窗口 → 60% = 180 → max(200, 180) = 200；夹取后仍是 200
     expect(clampRightPanelWidth(500, 300)).toBe(RIGHT_PANEL_MIN_WIDTH);
     expect(clampRightPanelWidth(100, 300)).toBe(RIGHT_PANEL_MIN_WIDTH);
   });

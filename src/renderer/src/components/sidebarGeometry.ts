@@ -8,7 +8,8 @@ export const SIDEBAR_MAX_RATIO = 0.6;
 
 // 右栏（文件树 / Git）拖拽宽度约束，与侧边栏同思路。
 export const RIGHT_PANEL_MIN_WIDTH = 200;
-export const RIGHT_PANEL_MAX_RATIO = 0.5;
+// 上限系数：右栏宽度不能超过窗口宽度的 60%。
+export const RIGHT_PANEL_MAX_RATIO = 0.6;
 
 /**
  * 构造一个把期望宽度夹进 [min, floor(windowWidth * maxRatio)] 区间的函数。
