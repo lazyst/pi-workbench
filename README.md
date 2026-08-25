@@ -93,7 +93,7 @@ A desktop IDE for AI coding workflows, wrapping the `pi` CLI's real terminal UI 
 - System tray with show/quit context menu.
 - Splash screen on startup.
 - Window state persistence (position, size, maximized).
-- Single-instance lock. Dev mode via `PI_DESKTOP_DEV=1` (separate config, separate instance).
+- Single-instance lock. `pnpm dev` sets `PI_DESKTOP_DEV=1` by default, running as a separate instance (own config, runs alongside the installed app).
 
 ### Version Update
 
