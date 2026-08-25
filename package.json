@@ -5,6 +5,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node scripts/copy-assets.mjs && electron-vite dev",
+    "dev:standalone": "node scripts/copy-assets.mjs && cross-env PI_DESKTOP_DEV=1 electron-vite dev",
     "build": "electron-vite build && node scripts/copy-assets.mjs",
     "start": "electron-vite preview",
     "test": "vitest run",
@@ -68,6 +69,7 @@
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.1",
+    "cross-env": "^10.1.0",
     "electron": "^32.3.3",
     "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
