@@ -7,7 +7,7 @@ export { FONT_SIZE_MIN, FONT_SIZE_MAX };
 // 与主题同构：单一根属性驱动整个 UI 与终端字号。
 // UI 通过 CSS 变量 --font-scale（= fontSize / 13）在 tokens.css 中按比例缩放各 --fs-*；
 // 终端（xterm 字体为硬编码 px）由 XtermTerminal 订阅本模块变更后 setOption('fontSize')。
-// 默认基准 13px（见 defaultConfig）。
+// 13 为缩放归一化基准（与默认字号解耦）；默认字号见 defaultConfig()。
 
 const listeners = new Set<(size: number) => void>();
 

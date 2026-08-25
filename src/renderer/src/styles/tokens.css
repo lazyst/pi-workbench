@@ -57,7 +57,7 @@
   /* Type */
   /* 全局字体缩放因子：由 JS（fontSize.ts）按 fontSize/13 写入根节点，
      所有 --fs-* 与 --term-font-size 均乘以它，实现“一处缩放、处处联动”。
-     默认 1（=13px 基准）；8–28px 范围对应 0.615–2.154。 */
+     13 为归一化基准（scale = 字号/13）；默认字号 15px → scale≈1.154。 */
   --font-scale: 1;
   /* 终端专用字体栈：前置一个"含 CJK 的等宽字体"（更纱黑体/Sarasa Mono SC）。
      JetBrains Mono 仅含 latin 子集（见上方 @font-face），CJK 字符会回退到系统字体、

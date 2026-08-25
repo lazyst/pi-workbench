@@ -31,8 +31,8 @@ describe('config (pure)', () => {
     expect(c.window.bounds.width).toBe(1100); // untouched
   });
 
-  it('defaultConfig includes fontSize default 13', () => {
-    expect(defaultConfig().fontSize).toBe(13);
+  it('defaultConfig includes fontSize default 15', () => {
+    expect(defaultConfig().fontSize).toBe(15);
   });
 
   it('defaultConfig includes integrated terminal fields with correct defaults', () => {
@@ -48,15 +48,15 @@ describe('config (pure)', () => {
     expect(parseConfig(JSON.stringify({ fontSize: 999 })).fontSize).toBe(FONT_SIZE_MAX);
     expect(parseConfig(JSON.stringify({ fontSize: -5 })).fontSize).toBe(FONT_SIZE_MIN);
     // 损坏/非数字回退默认
-    expect(parseConfig(JSON.stringify({ fontSize: 'big' })).fontSize).toBe(13);
-    expect(parseConfig('not json').fontSize).toBe(13);
+    expect(parseConfig(JSON.stringify({ fontSize: 'big' })).fontSize).toBe(15);
+    expect(parseConfig('not json').fontSize).toBe(15);
   });
 
   it('clampFontSize rounds and clamps to [FONT_SIZE_MIN, FONT_SIZE_MAX]', () => {
     expect(clampFontSize(13.6)).toBe(14);
     expect(clampFontSize(FONT_SIZE_MIN - 1)).toBe(FONT_SIZE_MIN);
     expect(clampFontSize(FONT_SIZE_MAX + 1)).toBe(FONT_SIZE_MAX);
-    expect(clampFontSize(NaN)).toBe(13);
-    expect(clampFontSize('x')).toBe(13);
+    expect(clampFontSize(NaN)).toBe(15);
+    expect(clampFontSize('x')).toBe(15);
   });
 });

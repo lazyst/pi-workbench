@@ -26,7 +26,7 @@ export function defaultConfig(): AppConfig {
     filePanelWidth: 260,
     rightPanelWidth: 280,
     closeBehavior: 'minimize-to-tray',
-    fontSize: 13,
+    fontSize: 15,
     // 集成终端：默认 profile（null = 探测到的第一个 / 平台默认）。
     defaultTerminalProfile: null,
     // 用户自定义终端 profile 覆盖（key 为 profile id）。
@@ -125,7 +125,7 @@ function clampNumber(
   return Math.min(max, Math.max(min, v));
 }
 
-/** 字体大小（px），取整；非法输入回退默认 13。 */
+/** 字体大小（px），取整；非法输入回退默认 15。 */
 export function clampFontSize(n: unknown): number {
   return clampNumber(n, FONT_SIZE_MIN, FONT_SIZE_MAX, defaultConfig().fontSize);
 }

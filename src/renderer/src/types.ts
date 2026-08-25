@@ -50,7 +50,7 @@ export interface AppConfig {
   sidebarWidth: number;
   closeBehavior: CloseBehavior;
   // 全局字体大小（UI + 终端统一基准，单位 px）。持久化于主进程 config，
-  // 与主题同构：单一根属性驱动整个 UI 与终端字号。范围 8–28，默认 13。
+  // 与主题同构：单一根属性驱动整个 UI 与终端字号。范围 8–28，默认 15。
   fontSize: number;
   // 集成终端：默认终端 profile 的 id；null 表示用探测到的第一个 / 平台默认。
   defaultTerminalProfile: string | null;

@@ -1244,7 +1244,7 @@ export class XtermTerminal implements LiveTerminal {
         overviewRuler: { showTopBorder: true },
       },
       fontFamily: getFontFamily(),
-      // 跟随全局字体大小（fontSize.ts）：默认基准 13px，可 8–28px 调节。
+      // 跟随全局字体大小（fontSize.ts）：默认 15px，可 8–28px 调节。
       fontSize: getFontSize(),
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
       lineHeight: getLineHeight(),
