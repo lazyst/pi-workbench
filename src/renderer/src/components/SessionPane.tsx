@@ -42,6 +42,19 @@ export function SessionPane({ sessionKey, active }: Props) {
     scrollPaneToBottom(sessionKey);
   }, [sessionKey]);
 
+  // 修复手机远程（uu 远程等）点击终端无法聚焦输入。
+  // 根因（诊断确认）：uu 远程注入的是 touch 事件（pointerType:'touch'）。xterm 在 screenElement
+  // 上的 Gesture 手势处理会 preventDefault+stopPropagation touch，阻止浏览器合成 mousedown/click
+  // 事件——导致 xterm 的 _handleMouseDown（含 ctx.focus()=textarea.focus）和 host 的 mouse handler
+  // 都不触发，textarea 不聚焦、无法输入。点击 tab 在标签栏（不在 xterm 手势区），touch 正常合成
+  // click→focusPane 生效，故可输入。
+  // 对策：在 host 的 pointerdown capture（touch 必产生 pointerdown，先于 xterm touch 处理）时手动
+  // focusPane 聚焦 textarea。pointerdown 统一覆盖 touch/mouse/pen，本地 mouse 点击亦触发但无害。
+  const handlePointerDownCapture = useCallback(() => {
+    if (!active) return;
+    focusPane(sessionKey);
+  }, [active, sessionKey]);
+
   // 创建终端实例一次（keep-alive）：经 PaneManager.acquirePane 取/建实例，跨 active 切换保留
   // （对齐 VS Code setVisible 不析构语义）。非 active 时只隐藏 host，实例本身不销毁。
   useEffect(() => {
@@ -138,6 +151,7 @@ export function SessionPane({ sessionKey, active }: Props) {
         data-session={sessionKey}
         className={active ? 'terminal-host active' : 'terminal-host'}
         onContextMenu={handleContextMenu}
+        onPointerDownCapture={handlePointerDownCapture}
       />
       {/* 「跳到底部」浮钮：仅在视口上滚离底、且当前面板为 active 时显示（见 XtermTerminal.onScrollState）。
           点击调用 term.scrollToBottom() 回到最新输出。不参与非 active 面板的滚动态。 */}

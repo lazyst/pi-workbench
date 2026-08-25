@@ -57,6 +57,13 @@ export function IntegratedPane({ terminalId, active }: Props) {
     scrollPaneToBottom(terminalId);
   }, [terminalId]);
 
+  // 修复手机远程（uu 远程等）点击终端无法聚焦输入（详见 SessionPane 同名注释）。
+  // 对策：在 host 的 pointerdown capture 时手动 focusPane。
+  const handlePointerDownCapture = useCallback(() => {
+    if (!active) return;
+    focusPane(terminalId);
+  }, [active, terminalId]);
+
   // 创建终端实例一次（keep-alive）：经 PaneManager.acquirePane 取/建 IntegratedChannel 实例，
   // 跨 active 切换保留。非 active 时实例已建但等待 setActive(true) 时 open。
   useEffect(() => {
@@ -199,6 +206,7 @@ export function IntegratedPane({ terminalId, active }: Props) {
         data-terminal={terminalId}
         className={active ? 'integrated-terminal-host active' : 'integrated-terminal-host'}
         onContextMenu={handleContextMenu}
+        onPointerDownCapture={handlePointerDownCapture}
       />
       {/* 「跳到底部」浮钮：仅在视口上滚离底、且当前面板为 active 时显示。 */}
       {active && !atBottom && (
