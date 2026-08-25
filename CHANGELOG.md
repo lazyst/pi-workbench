@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.4.5 (2026-08-26)
+
+### 修复
+
+- **修复 pi 输出时终端偶发卡死（停止输出但光标闪烁、调宽无响应）** — 根因是渲染端背压 ack 唯一依赖 xterm.write 的完成回调：一旦 xterm WriteBuffer 被上游 issue #2836（parser 层同步 throw）永久冻结，回调永不触发、ack 链断裂，主进程 inflight 超 100KB 后 pty.pause() 永久生效，pi stdout 被管道背压阻塞停止输出，但进程存活（光标动画独立），pi 的重绘输出也写不进阻塞的 stdout 故调整宽度无响应。而项目为「回调失联」准备的 stall-watch 自愈机制是 output-scheduler 重构遗留的死代码，从未接入生产路径。三层修复：① 主进程 BackpressureController 新增 resume 看门狗——paused 后 3s 未收到足够 ack 即强制清零 inflight 并 resume，确保 PTY 不被永久背压憋死（止血）；② `_writeProcessDataViaScheduler` 接入 arm/settle/cancel stall-watch，让 10s probe 认证死亡机制真正生效；③ 新增 `recoverFromWritePipelineStall`——认证死亡时序列化 scrollback → 重建全新 xterm 实例（全新 WriteBuffer）→ 重放 → 校准尺寸，自动恢复（治本）。新增 6 项回归测试（看门狗 3 + 重建 3）。
+
+### 调整
+
+- **默认字号从 13px 调整为 15px** — 改善初始可读性。缩放基准（13）保持不变、与默认字号解耦（默认 15px → scale≈1.154 → 终端/Monaco/UI 自动 ≈15px）。同步更新 config / SettingsPanel 测试断言。
+
+- **右栏最大宽度比例从 50% 调整为 60%** — RIGHT_PANEL_MAX_RATIO 0.5 → 0.6，右栏可拖拽至窗口宽度的 60%。同步更新 sidebarGeometry 测试断言。
+
+### 工程
+
+- **dev 脚本默认以独立实例运行** — `pnpm dev` 默认带 `PI_DESKTOP_DEV=1`，与安装版独立配置、可同时运行，移除单独的 dev:standalone 脚本。同步更新 README 中英文描述；e2e 测试直接启动编译产物不受影响。
+
 ## v1.4.4 (2026-08-25)
 
 ### 修复
