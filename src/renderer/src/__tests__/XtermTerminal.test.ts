@@ -1080,6 +1080,54 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     });
   });
 
+  describe('recoverFromWritePipelineStall (写管道冻结后的实例恢复)', () => {
+    // stall watch 的触发/认证逻辑由 write-pipeline-health.test.ts 模块单测覆盖；
+    // 此处直接调用 recoverFromWritePipelineStall 验证「序列化→清理→重建→重放→尺寸」恢复路径。
+    it('rebuilds a fresh xterm instance and keeps host/registry consistent', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const host = mountHost();
+      t.mount(host);
+      const termBefore = (t as any).term as Terminal;
+      expect(termBefore).toBeTruthy();
+      // 写入数据进 scrollback，验证重建前后实例均可用。
+      expect(() => termBefore.write('before recover\r\n')).not.toThrow();
+
+      (t as any).recoverFromWritePipelineStall();
+
+      const termAfter = (t as any).term as Terminal;
+      expect(termAfter).not.toBe(termBefore); // 全新 Terminal 实例（全新 WriteBuffer）
+      expect((t as any).disposed).toBe(false);
+      expect((t as any).mounted).toBe(true);
+      expect((t as any)._recovering).toBe(false);
+      // host 下不应残留旧 .xterm（重建前已清理）
+      expect(host.querySelectorAll('.xterm').length).toBe(1);
+      // 重建后实例仍可正常写入（新 ack 链正常）
+      expect(() => termAfter.write('after recover\r\n')).not.toThrow();
+      t.unmount();
+    });
+
+    it('resets _recovering flag after recovery (no permanent lockout)', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      (t as any).recoverFromWritePipelineStall();
+      expect((t as any)._recovering).toBe(false);
+      // 可再次恢复（证明标志已复位，未被永久锁死）
+      expect(() => (t as any).recoverFromWritePipelineStall()).not.toThrow();
+      expect((t as any)._recovering).toBe(false);
+      t.unmount();
+    });
+
+    it('no-ops when there is no term / host (unmounted)', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      // 未 mount → 无 term/host → 直接返回，不抛。
+      expect(() => (t as any).recoverFromWritePipelineStall()).not.toThrow();
+      expect((t as any).term).toBeNull();
+    });
+  });
+
   describe('customGlyphs / gpuAcceleration 设置', () => {
     beforeEach(() => {
       hoist.webglActivateCalls = 0;

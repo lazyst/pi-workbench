@@ -158,4 +158,46 @@ describe('BackpressureController (aligned with VS Code pty pause/resume)', () =>
     expect(resumeCalls).toBe(0); // 从未 pause
     expect(bp.isWriteSyncMode()).toBe(false); // dispose 退出 writeSync 模式
   });
+
+  // —— resume 看门狗（渲染端 ack 链断裂时的主进程兜底）——
+  // 对应 RESUME_WATCHDOG_MS = 3000（见 backpressure.ts）。测试用 fake timers 加速。
+  describe('resume watchdog (ack-chain break fallback)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('forces resume after timeout when ack chain stalls (xterm WriteBuffer frozen)', () => {
+      vi.useFakeTimers();
+      bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+      expect(bp.isPaused()).toBe(true);
+      expect(resumeCalls).toBe(0);
+      // 模拟渲染端 ack 链断裂：永不 acknowledge，推进看门狗超时。
+      vi.advanceTimersByTime(3000);
+      expect(bp.isPaused()).toBe(false);
+      expect(resumeCalls).toBe(1);
+    });
+
+    it('cancels watchdog on normal acknowledge resume (no late spurious resume)', () => {
+      vi.useFakeTimers();
+      bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+      expect(bp.isPaused()).toBe(true);
+      // 正常 ack 降到低水位 → resume，应取消看门狗。
+      bp.acknowledge(FlowControlConstants.HighWatermarkChars + 1);
+      expect(bp.isPaused()).toBe(false);
+      expect(resumeCalls).toBe(1);
+      vi.advanceTimersByTime(3000);
+      // 看门狗已取消，不应再触发额外 resume。
+      expect(resumeCalls).toBe(1);
+    });
+
+    it('cancels watchdog on dispose (no late resume after teardown)', () => {
+      vi.useFakeTimers();
+      bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+      expect(bp.isPaused()).toBe(true);
+      bp.dispose();
+      expect(resumeCalls).toBe(1); // dispose 强制 resume 一次
+      vi.advanceTimersByTime(3000);
+      expect(resumeCalls).toBe(1); // 看门狗已取消，不再触发
+    });
+  });
 });

@@ -73,6 +73,9 @@ import { getTerminalWebglAutoDecision } from '../lib/terminal/webgl-auto-policy'
 import { CURSOR_RESET_MINIMAL } from '../lib/terminal/replay-cursor-reset';
 import {
   registerUndeliverableWriteHandler,
+  armTerminalWriteStallWatch,
+  settleTerminalWriteStallWatch,
+  cancelTerminalWriteStallWatch,
 } from '../lib/terminal/write-pipeline-health';
 import { configureTerminalOutputBacklogCap, discardQueuedOutput } from '../lib/terminal/output-scheduler';
 import { installGuardedLinkProviderRegistration } from '../lib/terminal/link-provider-guard';
@@ -239,6 +242,8 @@ export class XtermTerminal implements LiveTerminal {
   private mounted = false; // 是否已完成首次 mount（keep-alive 下不再重建）
   private active = false; // keep-alive：当前是否可见（对齐 VS Code setVisible）
   private disposed = false;
+  /** 写管道恢复重建进行中（防重入）。 */
+  private _recovering = false;
   private host: HTMLElement | null = null;
   // 当前装载的 WebGL addon 实例引用（open 后锁定、会话内恒定；上下文丢失时置回退）。
   private webgl: WebglAddon | null = null;
@@ -568,6 +573,71 @@ export class XtermTerminal implements LiveTerminal {
     this.opened = false;
     this.mounted = false;
     this.host = null;
+  }
+
+  /**
+   * 写管道死亡后的实例恢复：序列化旧 scrollback → 完整清理旧 xterm（复用 unmount 的资源释放）
+   * → 重建新 xterm（_initXterm 自包含：new Terminal + 所有 addon + 重新订阅 channel + 注册新 handler）
+   * → 经 replayCoordinator 重放 scrollback → 校准尺寸。
+   *
+   * 为什么需要：xterm WriteBuffer 一旦被上游 issue #2836（parser 层同步 throw）永久冻结，
+   * 之后所有 term.write 的回调都不再触发，ack 链彻底断裂，主进程 pty.pause() 永久生效。
+   * 重建一个全新的 xterm 实例（全新 WriteBuffer）是唯一恢复途径。外层壳的 ResizeObserver /
+   * IntersectionObserver 绑的是 host DOM，host 不变，故重建不影响尺寸/可见性监听。
+   *
+   * 防重入：_recovering 标志。重建期间 channel.onData 旧订阅已取消、新订阅待 _initXterm 重绑，
+   * 这段时间 pi 的输出会丢失（异常恢复场景可接受）。主进程背压由 BackpressureController 的
+   * resume 看门狗兜底（见 backpressure.ts），确保重建期间 pty 不被永久 pause。
+   */
+  private recoverFromWritePipelineStall(): void {
+    if (this._recovering || this.disposed || !this.host || !this.term) return;
+    this._recovering = true;
+    const savedHost = this.host;
+    const savedActive = this.active;
+    // 1. 在旧 term 还活着时序列化 scrollback，供重建后重放。
+    let snapshot: string | null = null;
+    try {
+      snapshot = this.serializeScrollback();
+    } catch {
+      /* serializeScrollback 失败：snapshot 保持 null，重放分支自动跳过 */
+    }
+    try {
+      // 2. 完整释放旧 xterm 资源（addon/webgl/订阅/ack 信用）。unmount 会置 disposed=true、host=null。
+      this.unmount();
+      // 清理 host 下旧 xterm 的 DOM 残留（xterm dispose 不保证移除 element），
+      // 避免重建后 host 出现两个 .xterm 叠加渲染。
+      savedHost.querySelectorAll('.xterm').forEach((el) => el.remove());
+      // 3. 恢复生命周期状态：把 unmount 清掉的状态重置回「可重建」。
+      this.disposed = false;
+      this.mounted = false;
+      this.host = savedHost;
+      this._latestWriteSeq = 0;
+      this._latestParsedSeq = 0;
+      this._pendingWritePromise = undefined;
+      // replayCoordinator 被 unmount dispose 置 null（构造函数里才 new，此处补 new）。
+      this.replayCoordinator = new TerminalStructuralReplayCoordinator();
+      // 4. 重建 xterm：_initXterm 自包含 new Terminal + 所有 addon + 重绑 channel.onData/onExit +
+      //    重新 registerUndeliverableWriteHandler（新 term 对象，certifiedDead WeakSet 不含它）。
+      this._initXterm(savedHost);
+      this.mounted = true;
+      this.active = savedActive;
+      registerTerminal(this);
+      // 5. 重放旧 scrollback（经 replayCoordinator 保护滚动意图）。
+      if (snapshot && this.replayCoordinator) {
+        this.replayCoordinator
+          .run(() => {
+            this.term?.write(snapshot as string);
+          })
+          .catch(() => { /* 重放失败不阻塞恢复 */ });
+      }
+      // 6. 校准尺寸（用 host 真实尺寸）。
+      this.doResize(true);
+      console.warn('[terminal] 写管道恢复完成：已重建 xterm 实例并重放 scrollback。');
+    } catch (e) {
+      console.error('[terminal] 写管道恢复重建失败：', e);
+    } finally {
+      this._recovering = false;
+    }
   }
 
   /**
@@ -1510,7 +1580,8 @@ export class XtermTerminal implements LiveTerminal {
     // 当 xterm 写管道因同步 throw 逃逸或实例已销毁而永久停滞时，
     // 注册的处理器会被通知以触发面板恢复（重建 xterm 并重新挂载存活 PTY）。
     registerUndeliverableWriteHandler(this.term, (reason) => {
-      console.warn(`[terminal] 写管道死锁 (${reason})，等待面板恢复。`);
+      console.error(`[terminal] 写管道死锁 (${reason})，触发实例恢复重建。`);
+      this.recoverFromWritePipelineStall();
     });
 
     // 配置输出 backlog 上限：基于 scrollback 行数计算容量，
@@ -1720,6 +1791,14 @@ export class XtermTerminal implements LiveTerminal {
     let resolveWrite: (() => void) | null = null;
     const writePromise = trackCommit ? new Promise<void>((r) => { resolveWrite = r; }) : undefined;
 
+    // 写管道停滞监视器：write 前武装，解析完成回调中 settle。
+    // 若回调因 xterm WriteBuffer 冻结（上游 issue #2836）永不触发，10s 后 probe 认证死亡，
+    // 触发 registerUndeliverableWriteHandler 注册的恢复（重建 xterm 实例）。
+    // 这是 ack 链路的唯一自愈入口——回调失联则 ack 永断、主进程 pty.pause() 永久生效。
+    armTerminalWriteStallWatch(term, {
+      onCertifiedDead: () => discardQueuedOutput(term),
+    });
+
     try {
       term.write(data, () => {
         // 使用 runGuardedWriteCompletionStep 保护每一步，防止同步 throw 逃逸到 xterm WriteBuffer
@@ -1747,10 +1826,18 @@ export class XtermTerminal implements LiveTerminal {
           // 对齐 VS Code _onData：写解析完毕后通知外部消费者
           this.onData?.(data);
         });
+
+        // 写解析正常完成：解除停滞监视器（证明 WriteBuffer 存活）。
+        runGuardedWriteCompletionStep('settle-stall-watch', () => {
+          settleTerminalWriteStallWatch(term);
+        });
       });
     } catch {
       /* 终端已销毁等边界：term.write 同步抛异常（如 xterm WriteBuffer 内部 pendingData 超限），
          必须释放 ack 和 resolveWrite，否则主进程背压 inflight 永久泄漏 → 终端冻结。 */
+      runGuardedWriteCompletionStep('cancel-stall-watch', () => {
+        cancelTerminalWriteStallWatch(term);
+      });
       runGuardedWriteCompletionStep('ack-on-catch', () => {
         this.ackBufferer?.ack(data.length);
       });

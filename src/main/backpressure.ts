@@ -24,6 +24,18 @@ export const FlowControlConstants = {
   CharCountAckSize: 5000,
 } as const;
 
+/**
+ * resume 看门狗超时（ms）。进入 paused 后启动；若在此期间渲染端未回传足够 ack
+ * 降到低水位，则强制清零 inflight 并 resume PTY。
+ *
+ * 为什么需要：渲染端的 ack 完全依赖 xterm.write 的完成回调；一旦 xterm WriteBuffer
+ * 被上游 issue #2836（parser 层同步 throw）永久冻结，回调永不触发，ack 链断裂，
+ * inflight 永不下降，PTY 将被永久 pause（pi stdout 被管道背压阻塞、终端停止输出
+ * 但进程存活）。看门狗作为主进程侧兜底，确保即便 ack 链断裂，PTY 也能在限时内
+ * 恢复输出，避免 pi 被永久憋死（与渲染端的 stall-watch 自愈机制互补）。
+ */
+const RESUME_WATCHDOG_MS = 3000;
+
 export class BackpressureController {
   /** 已下发、尚未收到渲染端 ack 的累计字符数（对齐 VS Code _unacknowledgedCharCount）。 */
   private inflight = 0;
@@ -40,10 +52,44 @@ export class BackpressureController {
    * 当标记为 true 时，onData 不计入 inflight，也不触发 pause。
    */
   private _writeSyncMode = false;
+  /**
+   * resume 看门狗定时器：进入 paused 时武装，正常 resume 或销毁时取消。
+   * 超时则强制清零 inflight 并 resume，作为渲染端 ack 链断裂时的主进程兜底。
+   */
+  private _resumeWatchdog: ReturnType<typeof setTimeout> | null = null;
 
   constructor(onPause: () => void, onResume: () => void) {
     this.onPause = onPause;
     this.onResume = onResume;
+  }
+
+  /** 武装 resume 看门狗（进入 paused 时调用）。已武装则幂等跳过。 */
+  private armResumeWatchdog(): void {
+    if (this._resumeWatchdog !== null) return;
+    this._resumeWatchdog = setTimeout(() => {
+      this._resumeWatchdog = null;
+      if (!this.paused) return;
+      // 看门狗超时仍未收到足够 ack：渲染端 ack 链疑似断裂（xterm WriteBuffer 冻结）。
+      // 强制清零 inflight 并 resume，避免 PTY 被永久背压憋死。
+      this.inflight = 0;
+      this.paused = false;
+      try {
+        this.onResume();
+      } catch {
+        /* onResume 回调失败不应阻塞看门狗清理 */
+      }
+      console.warn(
+        '[backpressure] resume 看门狗超时：渲染端 ack 链疑似断裂，已强制 resume PTY',
+      );
+    }, RESUME_WATCHDOG_MS);
+  }
+
+  /** 取消 resume 看门狗（正常 resume / 销毁时调用）。 */
+  private cancelResumeWatchdog(): void {
+    if (this._resumeWatchdog !== null) {
+      clearTimeout(this._resumeWatchdog);
+      this._resumeWatchdog = null;
+    }
   }
 
   /**
@@ -57,6 +103,7 @@ export class BackpressureController {
     if (!this.paused && this.inflight > FlowControlConstants.HighWatermarkChars) {
       this.paused = true;
       this.onPause();
+      this.armResumeWatchdog();
     }
   }
 
@@ -68,6 +115,7 @@ export class BackpressureController {
     this.inflight = Math.max(0, this.inflight - charCount);
     if (this.paused && this.inflight < FlowControlConstants.LowWatermarkChars) {
       this.paused = false;
+      this.cancelResumeWatchdog();
       this.onResume();
     }
   }
@@ -92,6 +140,7 @@ export class BackpressureController {
     this._writeSyncMode = false;
     if (this.paused && this.inflight < FlowControlConstants.LowWatermarkChars) {
       this.paused = false;
+      this.cancelResumeWatchdog();
       this.onResume();
     }
   }
@@ -114,6 +163,7 @@ export class BackpressureController {
    * 与 dispose 的区别：dispose 同时退出 writeSync 模式；本方法保留 writeSync 状态。 */
   clearUnacknowledgedChars(): void {
     this.inflight = 0;
+    this.cancelResumeWatchdog();
     if (this.paused) {
       this.paused = false;
       this.onResume();
