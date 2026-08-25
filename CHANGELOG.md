@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.4 (2026-08-25)
+
+### 修复
+
+- **修复手机远程（uu 远程等）点击终端无法聚焦输入** — 远程工具注入的是 touch 事件（pointerType:'touch'），xterm 在 screenElement 上的 Gesture 手势处理会 preventDefault+stopPropagation touch，阻止浏览器合成 mousedown/click，导致 xterm 的 mousedown 聚焦逻辑与 host 的 mouse handler 都不触发，textarea 不聚焦、无法输入（点击 tab 因不在 xterm 手势区所以正常）。对策：SessionPane / IntegratedPane 的 host 改用 `onPointerDownCapture`（touch 必产生 pointerdown，先于 xterm 手势处理）手动 `focusPane` 聚焦，pointerdown 统一覆盖 touch/mouse/pen，本地鼠标点击亦触发但无害。
+
+- **修复「检查更新」只有第一次有效，后续点击沿用旧结果（检查时间也不刷新）** — 根因是主进程 `checkForUpdate` 的 5 分钟 TTL 缓存对手动点击同样生效，后续点击直接返回第一次检查的结果。修复：`checkForUpdate` 增加 `force` 参数，设置面板手动点击「检查更新」时传 `force=true` 绕过缓存强制重新请求，保证结果与检查时间实时刷新；`getUpdateStatus` 仍返回缓存，面板打开不产生无谓网络请求。
+
 ## v1.4.3 (2026-08-25)
 
 ### 新功能
