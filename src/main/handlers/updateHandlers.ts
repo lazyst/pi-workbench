@@ -14,9 +14,9 @@ export function registerUpdateHandlers(
   _win: Electron.BrowserWindow,
 ): void {
   // ╌╌ 版本更新检查 ╌╌
-  ipcMain.handle('update:check', async () => {
+  ipcMain.handle('update:check', async (_e, force = false) => {
     try {
-      return await checkForUpdate();
+      return await checkForUpdate(force);
     } catch (err) {
       console.error('[update:check] failed:', err);
       throw new Error('检查更新失败');

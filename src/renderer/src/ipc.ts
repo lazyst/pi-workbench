@@ -164,7 +164,8 @@ export interface PiApi {
   piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
   piExtensionsDelete(payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult>;
   // 版本更新检查（仅检查 + 提供 release 页面链接，下载由用户在浏览器中完成）
-  checkUpdate(): Promise<UpdateInfo>;
+  /** 检查更新；force 为 true 时绕过主进程缓存强制重新请求（手动点击场景）。 */
+  checkUpdate(force?: boolean): Promise<UpdateInfo>;
   getUpdateStatus(): Promise<UpdateInfo | null>;
   getCurrentVersion(): Promise<string>;
 }

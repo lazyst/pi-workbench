@@ -290,7 +290,8 @@ function UpdateCheck() {
     setChecking(true);
     setResult(null);
     try {
-      const info = await pi.checkUpdate();
+      // 手动点击 → 绕过主进程 TTL 缓存，强制重新请求，保证检查时间/结果实时刷新
+      const info = await pi.checkUpdate(true);
       setResult(info);
     } catch (err) {
       setResult({

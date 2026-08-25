@@ -103,12 +103,14 @@ export function getCurrentVersion(): string {
  * Location 头形如 /lazyst/pi-workbench/releases/tag/v0.4.2，从中提取 tag。
  * GitHub 页面/CDN 服务没有 API 的 60 次/小时速率限制，且不需要任何认证。
  *
+ * @param force 为 true 时绕过缓存，强制发起网络请求。
+ *
  * 缓存有效期内返回缓存结果，不发起网络请求。
  */
-export async function checkForUpdate(): Promise<UpdateInfo> {
-  // 缓存有效 → 直接返回
+export async function checkForUpdate(force = false): Promise<UpdateInfo> {
+  // 缓存有效且非强制 → 直接返回
   const now = Date.now();
-  if (cachedResult && now - cachedAt < CACHE_TTL_MS) {
+  if (!force && cachedResult && now - cachedAt < CACHE_TTL_MS) {
     return cachedResult;
   }
 

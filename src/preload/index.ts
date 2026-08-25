@@ -291,7 +291,7 @@ contextBridge.exposeInMainWorld('pi', {
   piExtensionsDelete: (payload: { name: string; type: string; source: string; dir?: string }): Promise<GitWriteResult> =>
     ipcRenderer.invoke('pi:extensions:delete', payload),
   // 版本更新检查（仅检查 + 提供 release 页面链接，下载由用户在浏览器中完成）
-  checkUpdate: (): Promise<UpdateInfo> => ipcRenderer.invoke('update:check'),
+  checkUpdate: (force = false): Promise<UpdateInfo> => ipcRenderer.invoke('update:check', force),
   getUpdateStatus: (): Promise<UpdateInfo | null> => ipcRenderer.invoke('update:get-status'),
   getCurrentVersion: (): Promise<string> => ipcRenderer.invoke('update:get-current-version'),
 });
