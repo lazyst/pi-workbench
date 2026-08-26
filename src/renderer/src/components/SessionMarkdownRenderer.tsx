@@ -128,7 +128,10 @@ export const SessionMarkdownRenderer = memo(function SessionMarkdownRenderer({ c
     e.preventDefault();
     const target = e.target instanceof HTMLElement ? e.target : null;
     const linkHref = target ? findLinkHref(target) : null;
-    const items = buildPreviewContextMenu(linkHref);
+    // 右键瞬间快照选区文本：菜单打开后 Radix 聚焦菜单会清除文档选区，
+    // 此时再读 window.getSelection() 得到空串，导致复制失效。
+    const selectedText = window.getSelection()?.toString() ?? '';
+    const items = buildPreviewContextMenu(linkHref, selectedText);
     setMenuState({ x: e.clientX, y: e.clientY, items });
   }, [setMenuState]);
 

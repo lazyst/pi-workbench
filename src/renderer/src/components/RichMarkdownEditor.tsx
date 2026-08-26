@@ -26,12 +26,20 @@ interface Props {
   onChange?: (markdown: string) => void;
   /** Ctrl/Cmd+S 保存请求。父组件据此落盘。不传则快捷键不拦截。 */
   onSave?: () => void;
+  /** 滚动比例变化上报（0~1），供 PreviewTab 跨视图复用滚动位置。 */
+  onScrollFraction?: (fraction: number) => void;
+  /** 进入本视图时应恢复的滚动比例；变化即恢复一次。 */
+  restoreFraction?: number | null;
 }
 
-export function RichMarkdownEditor({ content, filePath, root, onChange, onSave }: Props) {
+export function RichMarkdownEditor({ content, filePath, root, onChange, onSave, onScrollFraction, restoreFraction }: Props) {
   const lastPath = useRef<string | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
+  // onScrollFraction 走 ref：高频滚动上报不引发父级 re-render。
+  const onScrollFractionRef = useRef(onScrollFraction);
+  onScrollFractionRef.current = onScrollFraction;
+  const scrollRafRef = useRef<number | null>(null);
   // 记录最近一次「写入编辑器」的内容（用户输入 或 外部重载的 setContent）。
   // 用于区分 content prop 变化的来源：若与编辑器当前内容一致 → 用户输入回流，跳过；
   // 若不一致 → 外部修改（如文件被外部编辑器变更后的自动重载），需 setContent 覆盖。
@@ -112,6 +120,51 @@ export function RichMarkdownEditor({ content, filePath, root, onChange, onSave }
       editor.commands.setContent(content, { emitUpdate: false });
     }
   }, [editor, filePath, content]);
+
+  // 滚动比例上报：.md-rich-body（overflow:auto）为滚动容器。
+  useEffect(() => {
+    const el = containerRef.current?.querySelector('.md-rich-body') as HTMLElement | null;
+    if (!el) return;
+    const onScroll = () => {
+      if (scrollRafRef.current != null) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        const max = el.scrollHeight - el.clientHeight;
+        onScrollFractionRef.current?.(max > 0 ? el.scrollTop / max : 0);
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (scrollRafRef.current != null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, []);
+
+  // 恢复滚动位置：editor 就绪 + restoreFraction 变化时按比例恢复。
+  // TipTap 内容异步渲染，用一次性 ResizeObserver 在短窗口内重设几次兜底。
+  useEffect(() => {
+    if (restoreFraction == null || !editor || editor.isDestroyed) return;
+    const el = containerRef.current?.querySelector('.md-rich-body') as HTMLElement | null;
+    if (!el) return;
+    const apply = () => {
+      const max = el.scrollHeight - el.clientHeight;
+      if (max > 0) el.scrollTop = Math.round(restoreFraction * max);
+    };
+    const raf = requestAnimationFrame(apply);
+    let retries = 3;
+    const ro = new ResizeObserver(() => {
+      if (retries-- > 0) apply();
+      else ro.disconnect();
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [editor, restoreFraction]);
 
   // Ctrl/Cmd+S 保存：在容器上监听 keydown，拦截保存快捷键
   useEffect(() => {

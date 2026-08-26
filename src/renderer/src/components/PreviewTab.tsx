@@ -65,6 +65,19 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
   const [isMarkdown, setIsMarkdown] = useState(false);
   const [viewMode, setViewMode] = useState<'rendered' | 'source' | 'rich'>('source');
 
+  // 跨视图滚动位置复用：各视图 onScroll 上报比例（写 ref，不触发 re-render），
+  // 切换视图时把当前比例快照为 restoreFraction 传入新视图，新视图就绪后按比例恢复。
+  // 三视图内容总长不同，用比例（0~1）近似映射，停在文档相近位置。
+  const scrollFractionRef = useRef<number | null>(null);
+  const [restoreFraction, setRestoreFraction] = useState<number | null>(null);
+  const handleScrollFraction = useCallback((f: number) => {
+    scrollFractionRef.current = f;
+  }, []);
+  const switchViewMode = useCallback((mode: 'rendered' | 'source' | 'rich') => {
+    setRestoreFraction(scrollFractionRef.current);
+    setViewMode(mode);
+  }, []);
+
   // Git 行号变更标记
   const [lineDecorations, setLineDecorations] = useState<LineDecoration[]>([]);
   const [diffPopup, setDiffPopup] = useState<{ x: number; y: number; lines: Array<{ type: 'add' | 'del' | 'ctx'; text: string; newLine: number | null }> } | null>(null);
@@ -282,11 +295,13 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
           filePath={path}
           root={root}
           onOpenFile={onOpenFile}
+          onScrollFraction={handleScrollFraction}
+          restoreFraction={restoreFraction}
         />
       );
     }
     if (isMarkdown && viewMode === 'rich') {
-      return <RichMarkdownEditor content={currentContent} filePath={path} root={root} onChange={handleChange} onSave={dirty ? doSave : undefined} />;
+      return <RichMarkdownEditor content={currentContent} filePath={path} root={root} onChange={handleChange} onSave={dirty ? doSave : undefined} onScrollFraction={handleScrollFraction} restoreFraction={restoreFraction} />;
     }
     return (
       <MonacoCodeEditor
@@ -299,6 +314,8 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
         lineDecorations={lineDecorations}
         onDecorationClick={(line, x, y) => { void openDiffPopup(line, x, y); }}
         revealSelection={selection}
+        onScrollFraction={handleScrollFraction}
+        restoreFraction={restoreFraction}
       />
     );
   };
@@ -312,21 +329,21 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
             <button
               type="button"
               className={viewMode === 'rendered' ? 'is-active' : ''}
-              onClick={() => setViewMode('rendered')}
+              onClick={() => switchViewMode('rendered')}
             >
               预览
             </button>
             <button
               type="button"
               className={viewMode === 'source' ? 'is-active' : ''}
-              onClick={() => setViewMode('source')}
+              onClick={() => switchViewMode('source')}
             >
               源码
             </button>
             <button
               type="button"
               className={viewMode === 'rich' ? 'is-active' : ''}
-              onClick={() => setViewMode('rich')}
+              onClick={() => switchViewMode('rich')}
             >
               富文本
             </button>

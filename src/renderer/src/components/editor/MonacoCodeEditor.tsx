@@ -47,6 +47,10 @@ interface Props {
   onDecorationClick?: (line: number, clientX: number, clientY: number) => void;
   /** 点击搜索结果跳转时定位的选区；变化即 reveal+高亮，null 清高亮。 */
   revealSelection?: PreviewSelection | null;
+  /** 滚动比例变化上报（0~1），供 PreviewTab 跨视图复用滚动位置。 */
+  onScrollFraction?: (fraction: number) => void;
+  /** 进入本视图时应恢复的滚动比例；变化即恢复一次。 */
+  restoreFraction?: number | null;
 }
 
 // 把 root + path 合成一个稳定、合法的 monaco model uri。
@@ -91,7 +95,7 @@ const GUTTER_CLASS: Record<LineDecoration['type'], string> = {
   modified: 'git-gutter',
 };
 
-export function MonacoCodeEditor({ root, path, language, content, onChange, onSave, lineDecorations, onDecorationClick, revealSelection }: Props) {
+export function MonacoCodeEditor({ root, path, language, content, onChange, onSave, lineDecorations, onDecorationClick, revealSelection, onScrollFraction, restoreFraction }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   // 应用层视图状态缓存：key 为 model uri，value 为保存的 view state（cursor/scroll/selection）。
   const viewStateCache = useRef<Map<string, editor.ICodeEditorViewState | null>>(new Map());
@@ -111,6 +115,12 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
   onSaveRef.current = onSave;
   const onDecorationClickRef = useRef(onDecorationClick);
   onDecorationClickRef.current = onDecorationClick;
+  // 滚动比例上报走 ref：onDidScrollChange 高频触发，走 ref 不引发父级 re-render。
+  const onScrollFractionRef = useRef(onScrollFraction);
+  onScrollFractionRef.current = onScrollFraction;
+  // 恢复滚动比例走 ref：onMount 闭包（handleMount 只在 editor 创建时调用一次）读最新值。
+  const restoreFractionRef = useRef(restoreFraction);
+  restoreFractionRef.current = restoreFraction;
   // 搜索结果跳转：reveal + 选区 + 临时整行高亮（search-hit-line），变化即重应用。
   // 不依赖 content（避免用户输入时 re-reveal 打断编辑）；首次打开文件时由
   // [content] effect 先 setValue、本 effect 后 reveal 的顺序保证 model 已有内容。
@@ -140,6 +150,29 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       range: { startLineNumber: startLine, startColumn: 1, endLineNumber: endLine, endColumn: 1 },
       options: { isWholeLine: true, className: 'search-hit-line' },
     }]);
+  }, []);
+
+  // 恢复跨视图滚动位置：按 restoreFraction 比例设 scrollTop。
+  // 必须在 onMount（handleMount）里调用——组件重挂载时 restoreFraction 的 effect 首次
+  // 运行，但此时 @monaco-editor/react 尚未异步完成 onMount，editorRef.current 仍为 null，
+  // effect 会跳过且不会在 onMount 后重跑（依赖 [restoreFraction] 未变），导致源码视图
+  // 切回总停在顶部。这里在 editor 就绪后直接应用，与 applyReveal 同模式。
+  const applyRestore = useCallback((ed: editor.IStandaloneCodeEditor) => {
+    const fraction = restoreFractionRef.current;
+    if (fraction == null) return;
+    const apply = () => {
+      try {
+        const max = ed.getScrollHeight() - ed.getLayoutInfo().height;
+        if (max > 0) ed.setScrollTop(Math.round(fraction * max));
+      } catch {
+        /* editor 已销毁，忽略 */
+      }
+    };
+    // Monaco 的 scrollHeight 在 setValue + automaticLayout 后才稳定；
+    // rAF + 短延迟多次尝试，确保高度就绪后再设。
+    requestAnimationFrame(apply);
+    setTimeout(apply, 0);
+    setTimeout(apply, 80);
   }, []);
 
   const uri = modelUri(root, path);
@@ -200,7 +233,18 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
     applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
     // 应用初始跳转选区（从搜索结果打开文件时）
     applyReveal(ed);
-  }, [root, applyReveal]);
+
+    // 滚动比例上报：供 PreviewTab 跨视图复用滚动位置。
+    ed.onDidScrollChange(() => {
+      const cb = onScrollFractionRef.current;
+      if (!cb) return;
+      const max = ed.getScrollHeight() - ed.getLayoutInfo().height;
+      cb(max > 0 ? ed.getScrollTop() / max : 0);
+    });
+
+    // 恢复跨视图滚动位置（onMount 后 editor 才就绪，effect 在重挂载时拿不到 editor）。
+    applyRestore(ed);
+  }, [root, applyReveal, applyRestore]);
 
   // lineDecorations 变化时更新 decorations
   useEffect(() => {

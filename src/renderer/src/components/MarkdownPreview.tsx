@@ -99,6 +99,10 @@ interface Props {
   root: string;
   /** 预览内相对链接点击 → 在应用内切到目标文件。 */
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
+  /** 滚动比例变化上报（0~1），供 PreviewTab 跨视图复用滚动位置。 */
+  onScrollFraction?: (fraction: number) => void;
+  /** 进入本视图时应恢复的滚动比例；变化即恢复一次（视图切换时由父组件快照传入）。 */
+  restoreFraction?: number | null;
 }
 
 // memo 比较：只关注影响渲染产物的 content/filePath/root。onOpenFile 等回调变化时
@@ -107,9 +111,11 @@ interface Props {
 const markdownPreviewPropsEqual = (prev: Props, next: Props): boolean =>
   prev.content === next.content &&
   prev.filePath === next.filePath &&
-  prev.root === next.root;
+  prev.root === next.root &&
+  // restoreFraction 是值类型，变化需重渲染以触发恢复 effect；onScrollFraction 走 ref 不参与比较。
+  prev.restoreFraction === next.restoreFraction;
 
-function MarkdownPreviewImpl({ content, filePath, root, onOpenFile }: Props) {
+function MarkdownPreviewImpl({ content, filePath, root, onOpenFile, onScrollFraction, restoreFraction }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [toc, setToc] = useState<TocItem[]>([]);
   const tocRef = useRef<TocItem[]>([]);
@@ -117,6 +123,11 @@ function MarkdownPreviewImpl({ content, filePath, root, onOpenFile }: Props) {
   // 回调走 ref：components 的 useMemo 不依赖 onOpenFile，引用稳定，memo 比较也因此有效。
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
+  // onScrollFraction 走 ref：onScroll 高频触发，走 ref 不破坏 memo、不引发父级 re-render。
+  const onScrollFractionRef = useRef(onScrollFraction);
+  onScrollFractionRef.current = onScrollFraction;
+  // 滚动上报节流 rAF 句柄。
+  const scrollRafRef = useRef<number | null>(null);
 
   // 渲染后从 DOM 收集标题（id 由 rehype-slug 生成），保证 TOC 锚点与正文一致。
   // content 不变时（如父级 store 刷新触发的 re-render）不重新收集；仅在 TOC 真实变化
@@ -135,6 +146,53 @@ function MarkdownPreviewImpl({ content, filePath, root, onOpenFile }: Props) {
       setToc(newToc);
     }
   }, [content]);
+
+  // 滚动比例上报：rAF 节流读取 scrollTop/(scrollHeight-clientHeight)，写回父级 ref。
+  // bodyRef（.markdown-file-preview，overflow:auto）即滚动容器。
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (scrollRafRef.current != null) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        const max = el.scrollHeight - el.clientHeight;
+        onScrollFractionRef.current?.(max > 0 ? el.scrollTop / max : 0);
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (scrollRafRef.current != null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, []);
+
+  // 恢复滚动位置：restoreFraction 变化（视图切换）时按比例设 scrollTop。
+  // 图片/Mermaid/KaTeX 异步加载会改变 scrollHeight，用一次性 ResizeObserver 在
+  // 短窗口内重设几次兜底，避免内容加载后位置漂移。
+  useEffect(() => {
+    if (restoreFraction == null) return;
+    const el = bodyRef.current;
+    if (!el) return;
+    const apply = () => {
+      const max = el.scrollHeight - el.clientHeight;
+      if (max > 0) el.scrollTop = Math.round(restoreFraction * max);
+    };
+    const raf = requestAnimationFrame(apply);
+    let retries = 3;
+    const ro = new ResizeObserver(() => {
+      if (retries-- > 0) apply();
+      else ro.disconnect();
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [restoreFraction]);
 
   const onTocClick = (id: string) => {
     const el = bodyRef.current?.querySelector(`#${CSS.escape(id)}`);
@@ -224,7 +282,10 @@ function MarkdownPreviewImpl({ content, filePath, root, onOpenFile }: Props) {
     e.preventDefault();
     const target = e.target instanceof HTMLElement ? e.target : null;
     const linkHref = target ? findLinkHref(target) : null;
-    const items = buildPreviewContextMenu(linkHref);
+    // 右键瞬间快照选区文本：菜单打开后 Radix 聚焦菜单会清除文档选区，
+    // 此时再读 window.getSelection() 得到空串，导致复制失效。
+    const selectedText = window.getSelection()?.toString() ?? '';
+    const items = buildPreviewContextMenu(linkHref, selectedText);
     setMenuState({ x: e.clientX, y: e.clientY, items });
   }, [setMenuState]);
 

@@ -85,17 +85,18 @@ export function buildRichEditorContextMenu(
  */
 export function buildPreviewContextMenu(
   targetLink: string | null,
+  selectedText: string = '',
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
 
-  // 复制选中文本
+  // 复制选中文本。selectedText 由调用方在 contextmenu 事件触发瞬间快照传入——
+  // 菜单打开后 Radix 会把焦点移到菜单 Content，清除文档选区，此时再读
+  // window.getSelection() 已是空串，复制会失效。disabled 防止无选区时误点。
   items.push({
     label: '复制',
+    disabled: !selectedText,
     onClick: () => {
-      const sel = window.getSelection();
-      if (sel && sel.toString()) {
-        void navigator.clipboard.writeText(sel.toString()).catch(() => {});
-      }
+      void navigator.clipboard.writeText(selectedText).catch(() => {});
     },
   });
 
