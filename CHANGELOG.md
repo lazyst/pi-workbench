@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.4.6 (2026-08-26)
+
+### 新功能
+
+- **搜索功能（右栏第三 Tab）** — 基于 ripgrep（`@vscode/ripgrep`，`--json` 流式解析）的全文搜索，主进程封装搜索引擎 + IPC handlers，preload 暴露 `pi.searchRun` API（增量回调 + 取消），渲染层 SearchView 提供虚拟滚动结果树、关键词高亮、搜索选项，点击行号在 Monaco 编辑器中 `revealLineInCenter + setSelection` 跳转。修复 `ERR_REQUIRE_ESM`：`@vscode/ripgrep` 改为 bundle 进 CJS 而不 externalize。
+
+### 依赖升级
+
+- **全量依赖升级（批次 A+B+C）** — electron 32.3 → 44.0（Node 20→24，与系统 Node ABI 一致，node-pty 无需 rebuild）；react/react-dom 18.3 → 19.2 + @types/react 19；vite 5.4 → 7.3；electron-vite 2.3 → 5.0；vitest 2.1 → 4.1；typescript 5.9 → 7.0（`moduleResolution: node10` 移除，改用 `bundler`）；zustand 4.5 → 5.0；monaco-editor 0.52 → 0.56（API 变更：`languages.typescript` → 顶层 `typescript`）；@dnd-kit/sortable 8.0 → 10.0 等。
+  - monaco-setup 适配：`monaco.languages.typescript` → `monaco.typescript`（0.56 顶层 namespace）；worker import 去 `esm/vs` 前缀（exports 限制）；CSS 绝对路径 alias。
+  - tsconfig 适配：renderer types 加 `node`（TS 7 不再自动解析 node 全局）；node 模块 `moduleResolution` → `bundler`（TS 7 移除 node10）。
+  - 修复 React 19 `useSyncExternalStore` 双调用检查：`useShallow` 包装 `getAllTabs`。
+  - 修复 vitest 4 `Mock` 类型变化：`vi.fn()` cast。
+
 ## v1.4.5 (2026-08-26)
 
 ### 修复
