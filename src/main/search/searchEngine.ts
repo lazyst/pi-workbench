@@ -15,6 +15,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { rgPath } from '@vscode/ripgrep';
 
+/**
+ * 打包（asar）环境下 rgPath 解析指向 app.asar 归档内部，而 child_process.spawn 无法
+ * 从 asar 内执行二进制（Electron 仅 fs/require 支持 asar），会报 ENOENT/ENOTDIR。
+ * rg.exe 已由 asarUnpack 解包到 app.asar.unpacked，故把路径重写过去；开发模式无
+ * app.asar，替换为空操作；幂等（不会把 .unpacked 再改写一遍）。
+ */
+const rgBinPath = rgPath.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+
 /** 每文件匹配上限（防单文件海量匹配刷屏）。对齐 VS Code search.maxResults 的单文件语义。 */
 const PER_FILE_LIMIT = 1000;
 /** 跳过大于此大小的文件（与 readFile MAX_TEXT_BYTES 一致量级）。 */
@@ -159,7 +167,7 @@ export function runSearch(args: RunSearchArgs, cb: SearchCallbacks): { cancel: (
 
   let child: ChildProcess;
   try {
-    child = spawn(rgPath, argv, { cwd: root, windowsHide: true });
+    child = spawn(rgBinPath, argv, { cwd: root, windowsHide: true });
   } catch (e) {
     cb.onError(`无法启动 ripgrep：${e instanceof Error ? e.message : String(e)}`);
     return { cancel: () => {} };

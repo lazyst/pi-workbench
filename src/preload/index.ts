@@ -148,6 +148,9 @@ contextBridge.exposeInMainWorld('pi', {
   },
   // 全局搜索（ripgrep）：invoke 启动拿 id，结果经 search:* 事件增量推送；返回 cancel 函数。
   // 渲染层 useEffect 持有 cancel，query/root 变化或卸载时调用以终止在途搜索。
+  // 注意：必须先注册监听再 invoke——spawn 失败等早期事件可能在 invoke 返回前就到达，
+  // 若等拿到 id 再挂监听，这些事件会被静默丢弃（表现为一直“搜索中”且无错误提示）。
+  // 这里先挂监听，id 未知时先进缓冲，invoke 返回后再按 id 冲刷。
   searchRun: (
     root: string,
     query: string,
@@ -157,21 +160,34 @@ contextBridge.exposeInMainWorld('pi', {
     onDone: (summary: SearchSummary | null) => void,
     onError: (message: string) => void,
   ): Promise<() => void> => {
+    let searchId: number | null = null;
+    // 事件可能在 invoke 返回前到达（此时 searchId 未知）：先按 id 暂存，返回后冲刷。
+    const pending: Array<{ id: number; deliver: () => void }> = [];
+    const route = (id: number, deliver: () => void) => {
+      if (searchId === null) {
+        pending.push({ id, deliver });
+        return;
+      }
+      if (id === searchId) deliver();
+    };
+    const resultHandler = (_e: unknown, p: { id: number; file: SearchFileResult }) => route(p.id, () => onResult(p.file));
+    const progressHandler = (_e: unknown, p: { id: number } & SearchProgress) => route(p.id, () => onProgress({ matches: p.matches, files: p.files }));
+    const doneHandler = (_e: unknown, p: { id: number; summary: SearchSummary | null }) => route(p.id, () => { cleanup(); onDone(p.summary); });
+    const errorHandler = (_e: unknown, p: { id: number; message: string }) => route(p.id, () => { cleanup(); onError(p.message); });
+    const cleanup = () => {
+      ipcRenderer.removeListener('search:result', resultHandler);
+      ipcRenderer.removeListener('search:progress', progressHandler);
+      ipcRenderer.removeListener('search:done', doneHandler);
+      ipcRenderer.removeListener('search:error', errorHandler);
+    };
+    ipcRenderer.on('search:result', resultHandler);
+    ipcRenderer.on('search:progress', progressHandler);
+    ipcRenderer.on('search:done', doneHandler);
+    ipcRenderer.on('search:error', errorHandler);
     return ipcRenderer.invoke('search:run', { root, query, options }).then((id: number) => {
-      const r = (_e: unknown, p: { id: number; file: SearchFileResult }) => { if (p.id === id) onResult(p.file); };
-      const p1 = (_e: unknown, p: { id: number } & SearchProgress) => { if (p.id === id) onProgress({ matches: p.matches, files: p.files }); };
-      const d = (_e: unknown, p: { id: number; summary: SearchSummary | null }) => { if (p.id === id) { cleanup(); onDone(p.summary); } };
-      const er = (_e: unknown, p: { id: number; message: string }) => { if (p.id === id) { cleanup(); onError(p.message); } };
-      const cleanup = () => {
-        ipcRenderer.removeListener('search:result', r);
-        ipcRenderer.removeListener('search:progress', p1);
-        ipcRenderer.removeListener('search:done', d);
-        ipcRenderer.removeListener('search:error', er);
-      };
-      ipcRenderer.on('search:result', r);
-      ipcRenderer.on('search:progress', p1);
-      ipcRenderer.on('search:done', d);
-      ipcRenderer.on('search:error', er);
+      searchId = id;
+      // 冲刷 invoke 返回前到达的早期事件（含 spawn 失败错误）
+      for (const evt of pending.splice(0)) if (evt.id === searchId) evt.deliver();
       return () => { cleanup(); ipcRenderer.send('search:cancel', id); };
     });
   },
