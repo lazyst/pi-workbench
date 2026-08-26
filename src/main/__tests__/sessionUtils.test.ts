@@ -94,6 +94,57 @@ describe('readSessionName', () => {
   it('returns undefined for nonexistent file', () => {
     expect(readSessionName('/tmp/nonexistent.jsonl')).toBeUndefined();
   });
+
+  it('reads the latest session_info name when present (latest wins)', () => {
+    const file = __dirname + '/fixtures/session-info.jsonl';
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const lines = [
+      JSON.stringify({ type: 'message', message: { role: 'user', content: 'should be overridden' } }),
+      JSON.stringify({ type: 'session_info', name: 'old name' }),
+      JSON.stringify({ type: 'session_info', name: '最新会话名' }),
+    ];
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    expect(readSessionName(file)).toBe('最新会话名');
+    fs.unlinkSync(file);
+  });
+
+  it('reads session_info name even when it lies beyond the 64KB head', () => {
+    const file = __dirname + '/fixtures/session-info-beyond-64k.jsonl';
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    // 一条 70KB 的 assistant 消息把 session_info 推到前 64KB 之外，
+    // 模拟长会话中 /name 后 session_info 位于文件尾部。
+    const padding = 'x'.repeat(70000);
+    const lines = [
+      JSON.stringify({ type: 'session', version: 3 }),
+      JSON.stringify({ type: 'message', message: { role: 'user', content: 'first user msg' } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: padding }] } }),
+      JSON.stringify({ type: 'session_info', name: '远端会话名' }),
+    ];
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    expect(readSessionName(file)).toBe('远端会话名');
+    fs.unlinkSync(file);
+  });
+
+  it('falls back to first user message when session_info has empty name', () => {
+    const file = __dirname + '/fixtures/session-info-empty.jsonl';
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const lines = [
+      JSON.stringify({ type: 'message', message: { role: 'user', content: 'hello world' } }),
+      JSON.stringify({ type: 'session_info', name: '' }),
+    ];
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    expect(readSessionName(file)).toBe('hello world');
+    fs.unlinkSync(file);
+  });
 });
 
 describe('readGroupCwd', () => {

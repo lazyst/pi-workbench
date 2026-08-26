@@ -41,43 +41,84 @@ export function readSessionCwd(file: string): string | undefined {
  * 1. 最新的 session_info 条目的 name 字段（由 /name 命令设置）
  * 2. 第一条 user 消息（截断到 80 字符）
  * 3. undefined（无匹配时）
+ *
+ * pi 的 jsonl 是 append-only：/name 会把 session_info 记录追加到文件末尾附近，
+ * 因此长会话的 session_info 可能远在前 64KB 之外。这里从文件尾部反向分块扫描，
+ * 取「最新」（文件中最后一条）有 name 的 session_info——与 pi 自身
+ * session-manager 的 getSessionName() 反向遍历语义一致。找不到再回退到
+ * 文件头部的首条 user 消息。
  */
 export function readSessionName(file: string): string | undefined {
   let fd: number;
   try { fd = fs.openSync(file, 'r'); } catch { return undefined; }
   try {
-    const buf = Buffer.alloc(65536);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    const text = buf.toString('utf8', 0, n);
+    const size = fs.fstatSync(fd).size;
+    const sessionInfoName = scanLatestSessionInfoName(fd, size);
+    if (sessionInfoName) return sessionInfoName;
 
-    let sessionInfoName: string | undefined;
-    let firstUserMessage: string | undefined;
+    // 回退：从头读首条 user 消息（截断到 80 字符）
+    return readFirstUserMessage(fd);
+  } catch { /* ignore read errors (e.g. file being written) */
+  } finally {
+    try { fs.closeSync(fd); } catch { /* noop */ }
+  }
+  return undefined;
+}
 
-    for (const line of text.split('\n')) {
-      const t = line.trim();
+/**
+ * 从文件末尾反向分块扫描，返回最新一条 session_info 的 name（trim 后非空）。
+ * 由于 pi 追加写入，最新的 session_info 总在文件末尾附近，通常 1~2 个块即命中。
+ * 块边界可能把一行 JSON 切成两段：把当前块的「块首残行」拼到下一（更早）块的
+ * 末尾再解析，保证跨块行完整。
+ */
+function scanLatestSessionInfoName(fd: number, size: number): string | undefined {
+  const CHUNK = 65536;
+  let tail = '';
+  let pos = size;
+  while (pos > 0) {
+    const readLen = Math.min(CHUNK, pos);
+    const chunkStart = pos - readLen;
+    const buf = Buffer.alloc(readLen);
+    fs.readSync(fd, buf, 0, readLen, chunkStart);
+    const text = buf.toString('utf8') + tail;
+    const lines = text.split('\n');
+    // 块首可能是不完整行，留给下一（更早的）块末尾拼接后再解析
+    tail = lines[0];
+    // 从块尾往块首解析（最新在前），跳过残行 lines[0]
+    for (let i = lines.length - 1; i >= 1; i--) {
+      const t = lines[i].trim();
       if (!t) continue;
       try {
         const obj = JSON.parse(t);
         if (obj?.type === 'session_info' && typeof obj.name === 'string' && obj.name.trim()) {
-          // 记录最新的 session_info name（行顺序即时间顺序，后来的覆盖前面的）
-          sessionInfoName = obj.name.trim();
-        } else if (obj?.type === 'message' && obj?.message?.role === 'user' && !firstUserMessage) {
-          const c = obj.message.content;
-          const str = Array.isArray(c)
-            ? c.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join(' ')
-            : String(c ?? '');
-          const clean = str.replace(/\s+/g, ' ').trim();
-          if (clean) firstUserMessage = clean.length > 80 ? clean.slice(0, 80) : clean;
+          return obj.name.trim();
         }
       } catch { /* skip non-JSON / malformed lines */ }
     }
+    pos = chunkStart;
+  }
+  return undefined;
+}
 
-    // 优先返回 session_info 中的 name
-    if (sessionInfoName) return sessionInfoName;
-    if (firstUserMessage) return firstUserMessage;
-  } catch { /* ignore read errors (e.g. file being written) */
-  } finally {
-    try { fs.closeSync(fd); } catch { /* noop */ }
+/** 从文件头部读首条 user 消息（截断到 80 字符）。回退用：文件无 session_info 时。 */
+function readFirstUserMessage(fd: number): string | undefined {
+  const buf = Buffer.alloc(65536);
+  const n = fs.readSync(fd, buf, 0, buf.length, 0);
+  const text = buf.toString('utf8', 0, n);
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const obj = JSON.parse(t);
+      if (obj?.type === 'message' && obj?.message?.role === 'user') {
+        const c = obj.message.content;
+        const str = Array.isArray(c)
+          ? c.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join(' ')
+          : String(c ?? '');
+        const clean = str.replace(/\s+/g, ' ').trim();
+        if (clean) return clean.length > 80 ? clean.slice(0, 80) : clean;
+      }
+    } catch { /* skip non-JSON / malformed lines */ }
   }
   return undefined;
 }
