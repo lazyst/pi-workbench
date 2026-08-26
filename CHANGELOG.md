@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.7 (2026-08-26)
+
+### 修复
+
+- **修复安装版搜索一直卡在搜索中、不显示结果** — 根因有二：① `@vscode/ripgrep` 的 rgPath 经 `require.resolve` 解析指向 app.asar 归档内部，而 `child_process.spawn` 无法从 asar 内执行二进制（Electron 仅 fs/require 支持 asar），spawn 报 ENOENT；rg.exe 已由 asarUnpack 解包到 `app.asar.unpacked`，故将 rgPath 幂等重写为 unpacked 路径（开发模式无 app.asar 时为空操作）。② 原先 preload 在 `invoke` 返回后才注册事件监听，spawn 失败的早期事件先到达被静默丢弃，界面停在搜索中且无错误提示；改为先注册监听再 `invoke`，searchId 未知时按 id 暂存早期事件、返回后冲刷，保持 id 过滤语义不变。
+
+- **修复长会话中 `/name` 后侧边栏会话名读不到** — pi 的 jsonl 是 append-only，`/name` 会把 `session_info` 记录追加到文件末尾附近，长会话的 `session_info` 可能远在前 64KB 之外，原实现只读文件头 64KB 导致读不到最新会话名。改为从文件尾部反向分块扫描（块首残行拼到下一块末尾保证跨块行完整），取最新一条有 name 的 `session_info`，与 pi 自身 session-manager `getSessionName()` 的反向遍历语义一致；找不到再回退到文件头部首条 user 消息。新增 3 项测试覆盖 latest-wins、64KB 之外、空 name 回退。
+
 ## v1.4.6 (2026-08-26)
 
 ### 新功能
