@@ -16,6 +16,7 @@ import { registerTerminalHandlers } from './handlers/terminalHandlers';
 import { registerSessionHandlers } from './handlers/sessionHandlers';
 import { registerConfigHandlers } from './handlers/configHandlers';
 import { registerFsHandlers } from './handlers/fsHandlers';
+import { registerSearchHandlers } from './handlers/searchHandlers';
 import { registerGitHandlers } from './handlers/gitHandlers';
 import { registerPiToolHandlers } from './handlers/piToolHandlers';
 import { registerUpdateHandlers } from './handlers/updateHandlers';
@@ -524,6 +525,7 @@ function createWindow() {
   // 文件系统 + Git IPC
   registerFsHandlers(ipcMain, win);
   registerGitHandlers(ipcMain, win);
+  registerSearchHandlers(ipcMain, win);
 
   // Pi 工具配置 IPC（settings、models、MCP、skills、extensions）
   const piAgentDir = path.join(os.homedir(), '.pi', 'agent');

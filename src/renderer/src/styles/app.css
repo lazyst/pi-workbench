@@ -4011,6 +4011,66 @@ html, body, #root {
   transform: translateX(0);
   opacity: 1;
 }
+/* 搜索面板切换（与 files/git 同机制；inactive 简化为淡出，不强求方向动画） */
+.rp-tab-content[data-panel="search"].active { transform: translateX(0); opacity: 1; }
+.rp-tab-content[data-panel="search"].inactive { opacity: 0; pointer-events: none; }
+
+/* ── 全局搜索面板 ── */
+.search-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.search-input-area { flex: 0 0 auto; padding: 8px 10px 6px; border-bottom: 1px solid var(--border); }
+.search-input-row { display: flex; align-items: center; gap: 6px; }
+.search-input-icon { color: var(--text-dim); flex-shrink: 0; }
+.search-input {
+  flex: 1; min-width: 0;
+  background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 5px 8px; font-size: 13px; outline: none;
+}
+.search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+.search-clear-btn, .search-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+  border-radius: 6px; cursor: pointer; padding: 4px; height: 26px; min-width: 26px; flex-shrink: 0;
+}
+.search-clear-btn:hover, .search-toggle-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.search-toggle-btn.active { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.search-options { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.search-spinner { color: var(--accent); animation: search-spin 1s linear infinite; }
+@keyframes search-spin { to { transform: rotate(360deg); } }
+.search-filters { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.search-glob-input {
+  background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 4px 8px; font-size: 12px; outline: none;
+}
+.search-glob-input:focus { border-color: var(--accent); }
+.search-status {
+  flex: 0 0 auto; padding: 4px 12px; font-size: 11px; color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.search-error { color: var(--danger, #e06c75); }
+.search-results { flex: 1; min-height: 0; overflow: auto; }
+.search-file-row {
+  display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px 0 6px;
+  cursor: pointer; color: var(--text); font-size: 12px; user-select: none;
+}
+.search-file-row:hover { background: var(--bg-hover); }
+.search-file-chevron { flex-shrink: 0; color: var(--text-dim); }
+.search-file-icon { display: inline-flex; flex-shrink: 0; }
+.search-file-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.search-file-dir { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 11px; }
+.search-file-count { flex-shrink: 0; color: var(--text-dim); font-size: 11px; background: color-mix(in srgb, var(--text-dim) 18%, transparent); border-radius: 8px; padding: 0 6px; }
+.search-match-row {
+  display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px 0 28px;
+  cursor: pointer; font-size: 12px; color: var(--text); font-family: var(--font-mono, ui-monospace, monospace);
+}
+.search-match-row:hover { background: var(--bg-hover); }
+.search-line-number { flex-shrink: 0; color: var(--text-dim); min-width: 32px; text-align: right; }
+.search-line-content { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-line-text { color: var(--text); }
+.search-hit-mark { background: color-mix(in srgb, #ffc800 35%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+.search-empty { padding: 16px 12px; color: var(--text-dim); font-size: 12px; text-align: center; }
+
+/* Monaco：搜索结果跳转后的整行临时高亮 */
+.monaco-editor .search-hit-line { background: color-mix(in srgb, #ffc800 12%, transparent) !important; }
 /* 右栏 tab（文件 / Git）使用通用 TabBar，但宽度应自适应，不沿用主内容区
    固定的 160px；用后代选择器覆盖，使其与右栏宽度解耦、独立。 */
 .right-panel .terminal-tab { width: auto; flex: 0 0 auto; }

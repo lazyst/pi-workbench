@@ -11,7 +11,7 @@
 //   SplitNode = { type: 'split', id, direction, ratios, children }
 
 import { create } from 'zustand';
-import type { IntegratedTerminalInfo } from '../types';
+import type { IntegratedTerminalInfo, PreviewSelection } from '../types';
 import { capturePaneScrollState } from '../components/paneManager';
 
 // ── Tab 类型（同原 tabStore，保持向后兼容） ──
@@ -42,6 +42,8 @@ export interface PreviewTab extends BaseTab {
   location: 'editor';
   root: string;
   path: string;
+  /** 点击搜索结果跳转时定位的选区；null=清陈旧高亮。 */
+  selection?: PreviewSelection | null;
 }
 
 export interface DiffTab extends BaseTab {
@@ -489,7 +491,7 @@ export interface SplitStore {
   // Tab 管理 action（leafId 可选，默认使用 activeLeafId）
   setActiveCwd: (cwd: string) => void;
   openSession: (req: { key?: string; cwd?: string; name?: string }, leafId?: string) => void;
-  openPreview: (root: string, path: string, fileName?: string, leafId?: string) => void;
+  openPreview: (root: string, path: string, fileName?: string, selection?: PreviewSelection | null, leafId?: string) => void;
   openDiff: (cwd: string, commitHash: string | null, leafId?: string, filePath?: string | null, singleColumn?: boolean) => void;
   openSessionContent: (sessionKey: string, sessionName: string, cwd: string, leafId?: string) => void;
   openTerminal: (id: string, cwd: string, title: string, leafId?: string) => void;
@@ -559,13 +561,14 @@ function upsertTab(
     scrollCompareCwd: string | null; // 切换离开旧 cwd 前保存滚动位置；null = 不保存
     preferredLeafId: string | null; // 目标 leaf（默认 activeLeafId）
     createTab: (leaf: SplitLeaf) => Tab; // 依据目标 leaf 构造新 tab
+    patchExisting?: Partial<Tab>; // 已存在 tab 时合并的字段（如更新 selection 触发 reveal）
   },
 ): Partial<SplitStore> {
   const captureOldScroll = () => captureOldCwdScrollStates(collectAllTabs(state.cwdTrees), state.activeCwd);
 
   if (opts.existing) {
     const { cwd, leaf, tab } = opts.existing;
-    const tabs = leaf.tabs.map((t) => (t.id === tab.id ? { ...t, hidden: false } : t));
+    const tabs = leaf.tabs.map((t) => (t.id === tab.id ? ({ ...t, hidden: false, ...(opts.patchExisting ?? {}) } as Tab) : t));
     const updatedLeaf: SplitLeaf = { ...leaf, tabs, activeTabId: tab.id };
     if (opts.scrollCompareCwd && opts.scrollCompareCwd !== state.activeCwd) captureOldScroll();
     return {
@@ -743,7 +746,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         }),
       });
     }),
-  openPreview: (root, path, fileName, leafId) =>
+  openPreview: (root, path, fileName, selection, leafId) =>
     set((state) => {
       const id = `preview:${root}//${path}`;
       return upsertTab(state, {
@@ -752,6 +755,8 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         existing: findTabById(state.cwdTrees, id),
         scrollCompareCwd: root,
         preferredLeafId: resolveLeafId(state, leafId),
+        // 已存在同文件 tab：更新 selection 以触发 reveal（手动点开无 selection 时显式置 null 清陈旧高亮）
+        patchExisting: { selection: selection ?? null },
         createTab: (leaf) => ({
           id,
           kind: 'preview',
@@ -761,6 +766,7 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
           order: nextOrder(leaf.tabs),
           root,
           path,
+          selection: selection ?? null,
         }),
       });
     }),

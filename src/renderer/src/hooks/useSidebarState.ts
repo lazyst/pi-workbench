@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { pi } from '../ipc';
 import { useTabStore } from '../store/tabStore';
 import { getAllTabs } from '../store/splitStore';
+import { useShallow } from 'zustand/react/shallow';
 import { defaultConfig } from '../../../main/config';
 import type { AppConfig } from '../types';
 
@@ -53,7 +54,11 @@ export function useSidebarState(
   // 但用户希望"未晋升"的 live 会话也立刻显示在左侧栏（按 cwd 混进对应分组，
   // 标 unsaved）。因此此处把尚未晋升的 live 会话也并入侧边栏数据源，
   // 并排除已晋升（已在 liveToDisk 映射中）的 live，避免重复出现两条。
-  const tabs = useTabStore((s) => getAllTabs(s));
+  // useShallow：getAllTabs 每次都返回新数组，React 19 的 useSyncExternalStore
+  // 在 mount 时连续调用 getSnapshot 两次并用 Object.is 校验引用稳定性；
+  // 未缓存会触发 forceStoreRerender 无限循环。用 useShallow 做浅比较并缓存，
+  // 保证两次 getSnapshot 返回同一引用，仅当 tab 真正变化时才 re-render。
+  const tabs = useTabStore(useShallow((s) => getAllTabs(s)));
   const isLiveKey = (k: string) => k.startsWith('live-') || k.startsWith('pi-');
 
   const liveUnsaved = useMemo<DiskSession[]>(() => {

@@ -1,4 +1,4 @@
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo } from './types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo, SearchOptions, SearchFileResult, SearchProgress, SearchSummary } from './types';
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
@@ -58,6 +58,16 @@ export interface PiApi {
   fsWatch(root: string, dir: string, cb: () => void): () => void;
   // 文件监听（外部修改自动刷新编辑器）：订阅某个文件，文件变更时回调；返回取消订阅函数。
   fsWatchFile(root: string, path: string, cb: () => void): () => void;
+  // ── 全局搜索（ripgrep）：invoke 启动拿 id，结果经 search:* 事件增量推送；返回 cancel 函数。
+  searchRun(
+    root: string,
+    query: string,
+    options: SearchOptions,
+    onResult: (file: SearchFileResult) => void,
+    onProgress: (stats: SearchProgress) => void,
+    onDone: (summary: SearchSummary | null) => void,
+    onError: (message: string) => void,
+  ): Promise<() => void>;
   // ── Git 只读查看（D）──
   gitStatus(cwd: string): Promise<{ isGit: boolean; branch: string | null; additions: number; deletions: number; ahead: number; behind: number; porcelain: string }>;
   gitLog(cwd: string, limit?: number): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;

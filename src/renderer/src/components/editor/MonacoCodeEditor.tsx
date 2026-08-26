@@ -19,6 +19,7 @@ import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { themeIsDark, getMonacoFontSize, useMonacoFontFollow } from '../../editorUtils';
 import { monaco } from './monaco-setup';
+import type { PreviewSelection } from '../../types';
 
 export interface LineDecoration {
   /** 行号（1-based）。 */
@@ -44,6 +45,8 @@ interface Props {
   lineDecorations?: LineDecoration[];
   /** 点击行号旁的变更标记 → 打开该行对应的 diff 弹窗。 */
   onDecorationClick?: (line: number, clientX: number, clientY: number) => void;
+  /** 点击搜索结果跳转时定位的选区；变化即 reveal+高亮，null 清高亮。 */
+  revealSelection?: PreviewSelection | null;
 }
 
 // 把 root + path 合成一个稳定、合法的 monaco model uri。
@@ -88,7 +91,7 @@ const GUTTER_CLASS: Record<LineDecoration['type'], string> = {
   modified: 'git-gutter',
 };
 
-export function MonacoCodeEditor({ root, path, language, content, onChange, onSave, lineDecorations, onDecorationClick }: Props) {
+export function MonacoCodeEditor({ root, path, language, content, onChange, onSave, lineDecorations, onDecorationClick, revealSelection }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   // 应用层视图状态缓存：key 为 model uri，value 为保存的 view state（cursor/scroll/selection）。
   const viewStateCache = useRef<Map<string, editor.ICodeEditorViewState | null>>(new Map());
@@ -108,6 +111,36 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
   onSaveRef.current = onSave;
   const onDecorationClickRef = useRef(onDecorationClick);
   onDecorationClickRef.current = onDecorationClick;
+  // 搜索结果跳转：reveal + 选区 + 临时整行高亮（search-hit-line），变化即重应用。
+  // 不依赖 content（避免用户输入时 re-reveal 打断编辑）；首次打开文件时由
+  // [content] effect 先 setValue、本 effect 后 reveal 的顺序保证 model 已有内容。
+  const searchHitDecoRef = useRef<string[]>([]);
+  const revealSelectionRef = useRef<PreviewSelection | null | undefined>(revealSelection);
+  revealSelectionRef.current = revealSelection;
+  const applyReveal = useCallback((ed: editor.IStandaloneCodeEditor) => {
+    const model = ed.getModel();
+    if (!model) return;
+    const sel = revealSelectionRef.current;
+    const oldIds = searchHitDecoRef.current;
+    if (!sel) {
+      if (oldIds.length) searchHitDecoRef.current = model.deltaDecorations(oldIds, []);
+      return;
+    }
+    const startLine = sel.startLine;
+    const startColumn = sel.startColumn ?? 1;
+    const endLine = sel.endLine ?? sel.startLine;
+    const endColumn = sel.endColumn ?? startColumn;
+    try {
+      ed.revealLineInCenter(startLine);
+      ed.setSelection({ startLineNumber: startLine, startColumn, endLineNumber: endLine, endColumn });
+    } catch {
+      /* 行号越界 Monaco 自动 clamp，忽略 */
+    }
+    searchHitDecoRef.current = model.deltaDecorations(oldIds, [{
+      range: { startLineNumber: startLine, startColumn: 1, endLineNumber: endLine, endColumn: 1 },
+      options: { isWholeLine: true, className: 'search-hit-line' },
+    }]);
+  }, []);
 
   const uri = modelUri(root, path);
 
@@ -165,7 +198,9 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
 
     // 首次挂载后应用初始 decorations
     applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
-  }, [root]);
+    // 应用初始跳转选区（从搜索结果打开文件时）
+    applyReveal(ed);
+  }, [root, applyReveal]);
 
   // lineDecorations 变化时更新 decorations
   useEffect(() => {
@@ -173,6 +208,12 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
     if (!ed) return;
     applyDecorations(ed, lineDecorations ?? [], decoIdsRef);
   }, [lineDecorations]);
+
+  // revealSelection 变化 → reveal + 高亮（不依赖 content，避免用户输入时打断）
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (ed) applyReveal(ed);
+  }, [revealSelection, applyReveal]);
 
   // 外部内容变更同步：content prop 与 model 不一致时覆盖为最新内容（文件被外部
   // 修改后的自动重载）。@monaco-editor/react 的 value-sync 理论上会处理此情形，

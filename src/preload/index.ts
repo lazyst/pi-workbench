@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo } from '../renderer/src/types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo, GitWriteResult, PiBatchResult, PiSkill, PiExtension, PiMcpConfig, UpdateInfo, SearchOptions, SearchFileResult, SearchProgress, SearchSummary } from '../renderer/src/types';
 
 // 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
 // 即确定，无需等待异步 IPC），供渲染进程首屏零闪烁地拿到主题等初始值。
@@ -145,6 +145,35 @@ contextBridge.exposeInMainWorld('pi', {
       ipcRenderer.removeListener('fs:fileChange', handler);
       ipcRenderer.send('fs:unwatchFile', { root, path });
     };
+  },
+  // 全局搜索（ripgrep）：invoke 启动拿 id，结果经 search:* 事件增量推送；返回 cancel 函数。
+  // 渲染层 useEffect 持有 cancel，query/root 变化或卸载时调用以终止在途搜索。
+  searchRun: (
+    root: string,
+    query: string,
+    options: SearchOptions,
+    onResult: (file: SearchFileResult) => void,
+    onProgress: (stats: SearchProgress) => void,
+    onDone: (summary: SearchSummary | null) => void,
+    onError: (message: string) => void,
+  ): Promise<() => void> => {
+    return ipcRenderer.invoke('search:run', { root, query, options }).then((id: number) => {
+      const r = (_e: unknown, p: { id: number; file: SearchFileResult }) => { if (p.id === id) onResult(p.file); };
+      const p1 = (_e: unknown, p: { id: number } & SearchProgress) => { if (p.id === id) onProgress({ matches: p.matches, files: p.files }); };
+      const d = (_e: unknown, p: { id: number; summary: SearchSummary | null }) => { if (p.id === id) { cleanup(); onDone(p.summary); } };
+      const er = (_e: unknown, p: { id: number; message: string }) => { if (p.id === id) { cleanup(); onError(p.message); } };
+      const cleanup = () => {
+        ipcRenderer.removeListener('search:result', r);
+        ipcRenderer.removeListener('search:progress', p1);
+        ipcRenderer.removeListener('search:done', d);
+        ipcRenderer.removeListener('search:error', er);
+      };
+      ipcRenderer.on('search:result', r);
+      ipcRenderer.on('search:progress', p1);
+      ipcRenderer.on('search:done', d);
+      ipcRenderer.on('search:error', er);
+      return () => { cleanup(); ipcRenderer.send('search:cancel', id); };
+    });
   },
   // ── Git 查看（D）──
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),

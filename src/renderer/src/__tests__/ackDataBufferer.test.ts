@@ -8,7 +8,7 @@ describe('AckDataBufferer (aligned with VS Code AckDataBufferer)', () => {
 
   beforeEach(() => {
     ackCallback = vi.fn();
-    bufferer = new AckDataBufferer(ackCallback);
+    bufferer = new AckDataBufferer(ackCallback as (charCount: number) => void);
   });
 
   it('does not send ack when under CharCountAckSize', () => {

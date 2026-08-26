@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TabBar } from './TabBar';
 import { FileTree } from './FileTree';
 import { GitView } from './GitView';
+import { SearchView } from './search/SearchView';
 import { clampRightPanelWidth } from './sidebarGeometry';
 import { pi } from '../ipc';
 import { defaultConfig } from '../../../main/config';
@@ -21,7 +22,7 @@ function basename(p: string): string {
 // 下拉框中“自动（跟随会话）”选项的特殊 value，不与任何真实目录冲突。
 const AUTO_ROOT = '__auto__';
 
-type RightTab = 'files' | 'git';
+type RightTab = 'files' | 'git' | 'search';
 
 interface Props {
   addedDirs: string[];
@@ -29,7 +30,7 @@ interface Props {
   // 由 App 维护 lastSessionCwd 后传入）。右栏自动模式据此跟随，避免打开文件后丢失根目录。
   activeCwd: string | null;
   // 点击文件 → 中间区新增预览 tab（由 App 处理）；此处仅透传回调。
-  onOpenFile: (relPath: string, fileName: string, root: string) => void;
+  onOpenFile: (relPath: string, fileName: string, root: string, selection?: { startLine: number; startColumn?: number; endLine?: number; endColumn?: number } | null) => void;
   /** 文件树目录右键「添加为工作目录」：透传给 FileTree。 */
   onAddWorkDir?: (absDir: string) => void;
   // 点击 Git 工作区/提交 diff → 中间区新增 diff tab（由 App 处理）。
@@ -172,6 +173,7 @@ export function RightPanel({
         tabs={[
           { id: 'files', title: '文件', kind: 'preview', closable: false },
           { id: 'git', title: 'Git', kind: 'diff', closable: false },
+          { id: 'search', title: '搜索', kind: 'preview', closable: false },
         ]}
         activeId={tab}
         onSelect={(id) => setTab(id as RightTab)}
@@ -208,6 +210,9 @@ export function RightPanel({
             </div>
             <div className={`rp-tab-content ${tab === 'git' ? 'active' : 'inactive'}`} data-panel="git">
               <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} onOpenFile={onOpenFile} onOpenCommitFile={onOpenCommitFile} />
+            </div>
+            <div className={`rp-tab-content ${tab === 'search' ? 'active' : 'inactive'}`} data-panel="search">
+              <SearchView cwd={effectiveRoot || null} onOpenFile={onOpenFile} />
             </div>
           </>
         )}

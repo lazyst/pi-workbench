@@ -823,7 +823,7 @@ describe('splitStore — 数据模型与基础操作', () => {
         const newLeafId = tree.children[1].id;
         s2.openTerminal('term-1', '/a', 'Terminal 1', newLeafId);
         s2.openDiff('/a', 'hash1', newLeafId);
-        s2.openPreview('/a', 'file.ts', 'file.ts', newLeafId);
+        s2.openPreview('/a', 'file.ts', 'file.ts', undefined, newLeafId);
         // 在第二个 leaf 中创建一个不同 key 的 session（用于测试"存在"场景）
         s2.openSession({ key: '/a/target-session', cwd: '/a', name: 'target-sess' }, newLeafId);
       }

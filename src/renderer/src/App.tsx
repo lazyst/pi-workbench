@@ -189,12 +189,17 @@ export default function App() {
   // 稳定引用（useCallback([])）：本函数只依赖模块级 pi / useTabStore.getState()，无 React state。
   // 稳定后整个 onOpenFile → CenterPane → SplitPaneLeaf → TabContent 回调链不变，
   // tab 内容组件的 React.memo 才能拦住父级 store 刷新引发的 re-render。
-  const handleOpenFile = useCallback(async (relPath: string, fileName: string, root: string) => {
+  const handleOpenFile = useCallback(async (
+    relPath: string,
+    fileName: string,
+    root: string,
+    selection?: { startLine: number; startColumn?: number; endLine?: number; endColumn?: number } | null,
+  ) => {
     try {
       const res = await pi.fsReadFile(root, relPath);
       // 文件不存在（已被删除）：直接创建 tab，由 PreviewTab 显示「已删除」提示。
       if (res?.notFound) {
-        useTabStore.getState().openPreview(root, relPath, fileName);
+        useTabStore.getState().openPreview(root, relPath, fileName, selection);
         return;
       }
       if (res?.isDirectory) {
@@ -214,7 +219,7 @@ export default function App() {
     }
     // 统一收编进 store（openPreview action 封装「已存在则激活、不存在则新增」）。
     // title 由 store 按 fileName 或 path 末段计算，对应用户可见的文件名。
-    useTabStore.getState().openPreview(root, relPath, fileName);
+    useTabStore.getState().openPreview(root, relPath, fileName, selection);
   }, []);
 
   // 点击 Git 面板的「工作区改动」或某次提交 → 中间区新增/激活 diff tab（替代旧式 GitDiffDrawer）。

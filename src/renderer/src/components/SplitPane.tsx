@@ -561,6 +561,7 @@ const TabContent = memo(function TabContent({
           tabId={tab.id}
           root={tab.root}
           path={tab.path}
+          selection={tab.selection}
           active={active}
           onOpenFile={onOpenFile}
           onClose={handleClose}

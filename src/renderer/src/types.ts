@@ -218,3 +218,61 @@ export interface GitFileStatusEntry {
   /** 子模块是否有未提交的改动（仅 isSubmodule=true 时有效） */
   submoduleDirty?: boolean;
 }
+
+// ── 全局搜索（ripgrep，与主进程 searchEngine 结构对应）──
+export interface SearchOptions {
+  /** true=正则；false=固定字符串。 */
+  isRegex: boolean;
+  /** true=区分大小写；false=忽略大小写。 */
+  matchCase: boolean;
+  /** true=全字匹配。 */
+  wholeWord: boolean;
+  /** 包含 glob，逗号/换行分隔。空=不限。 */
+  include?: string;
+  /** 排除 glob，逗号/换行分隔。 */
+  exclude?: string;
+}
+
+export interface SearchSubmatch {
+  /** 1-based 起始列（UTF-16 code unit，供 Monaco selection）。 */
+  startCol: number;
+  /** 1-based 结束列（exclusive）。 */
+  endCol: number;
+  /** 匹配文本。 */
+  text: string;
+}
+
+export interface SearchMatch {
+  /** 相对 root 的 posix 路径。 */
+  path: string;
+  /** 1-based 行号。 */
+  line: number;
+  /** 整行内容（去末尾换行）。 */
+  lineText: string;
+  submatches: SearchSubmatch[];
+}
+
+export interface SearchFileResult {
+  path: string;
+  matches: SearchMatch[];
+}
+
+export interface SearchProgress {
+  matches: number;
+  files: number;
+}
+
+export interface SearchSummary {
+  matchedLines: number;
+  matches: number;
+  filesWithMatch: number;
+  bytesSearched: number;
+}
+
+/** 预览跳转选区：点击搜索结果时定位到某行/某段（1-based，Monaco 友好）。 */
+export interface PreviewSelection {
+  startLine: number;
+  startColumn?: number;
+  endLine?: number;
+  endColumn?: number;
+}

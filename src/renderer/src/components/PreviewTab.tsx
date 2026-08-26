@@ -17,6 +17,7 @@ import { parseDiffLineChanges, extractHunkCompressed } from '../lib/diffLines';
 import { MarkdownPreview } from './MarkdownPreview';
 import { RichMarkdownEditor } from './RichMarkdownEditor';
 import { basenameOf, toAbsolutePath } from '../lib/mdPath';
+import type { PreviewSelection } from '../types';
 import { focusEditableIn } from '../lib/focusEditable';
 
 interface Props {
@@ -36,6 +37,8 @@ interface Props {
   onDeletedChange?: (deleted: boolean) => void;
   /** 本 tab 的唯一 id（与 CenterPane tabs 中的 id 对齐，用于注册 guard）。 */
   tabId: string;
+  /** 从搜索结果打开时定位的选区；透传给 MonacoCodeEditor 触发 reveal。 */
+  selection?: PreviewSelection | null;
 }
 
 function countLines(s: string): number {
@@ -43,7 +46,7 @@ function countLines(s: string): number {
   return s.split(/\r\n|\r|\n/).length;
 }
 
-export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegisterCloseGuard, onDeletedChange, tabId }: Props) {
+export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegisterCloseGuard, onDeletedChange, tabId, selection }: Props) {
   const [dirty, setDirty] = useState(false);
   // 文件是否已从磁盘删除：TabBar 标题红字+删除线；内容区保留已读内容仍可编辑，保存时重建。
   const [deleted, setDeleted] = useState(false);
@@ -295,6 +298,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
         onSave={dirty ? doSave : undefined}
         lineDecorations={lineDecorations}
         onDecorationClick={(line, x, y) => { void openDiffPopup(line, x, y); }}
+        revealSelection={selection}
       />
     );
   };

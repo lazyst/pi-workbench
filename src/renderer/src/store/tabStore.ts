@@ -4,10 +4,12 @@
 
 import { useSplitStore, selectNextTabOnClose, getTabCwd, cwdVisibleTabs } from './splitStore';
 import type { Tab as SplitTab, TabKind, TabLocation, BaseTab, SessionTab, PreviewTab, DiffTab, IntegratedTerminalTab, SessionContentTab } from './splitStore';
+import type { PreviewSelection } from '../types';
 
 // 重新导出所有类型
 export type { TabKind, TabLocation };
 export type { BaseTab, SessionTab, PreviewTab, DiffTab, IntegratedTerminalTab, SessionContentTab };
+export type { PreviewSelection } from '../types';
 export type Tab = SplitTab;
 export { getTabCwd, cwdVisibleTabs };
 export { selectNextTabOnClose };
@@ -23,7 +25,7 @@ export interface TabStore {
   terminals: import('../types').IntegratedTerminalInfo[];
   setActiveCwd: (cwd: string) => void;
   openSession: (req: { key?: string; cwd?: string; name?: string }) => void;
-  openPreview: (root: string, path: string, fileName?: string) => void;
+  openPreview: (root: string, path: string, fileName?: string, selection?: PreviewSelection | null) => void;
   openDiff: (cwd: string, commitHash: string | null, leafId?: string, filePath?: string | null, singleColumn?: boolean) => void;
   openSessionContent: (sessionKey: string, sessionName: string, cwd: string) => void;
   openTerminal: (id: string, cwd: string, title: string) => void;
