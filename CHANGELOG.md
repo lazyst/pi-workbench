@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4.8 (2026-08-27)
+
+### 修复
+
+- **修复 Markdown 预览右键复制失效与预览/源码/富文本三视图切换不复用滚动位置** —
+  - **右键复制失效**：预览模式选中文本 → 右键 → 复制得到空串。根因是右键菜单打开后 Radix 聚焦菜单 Content，清除了文档原生选区，复制时 `window.getSelection()` 已为空。修复：在 `contextmenu` 事件触发瞬间快照选区文本传入菜单（MarkdownPreview、SessionMarkdownRenderer），复制时使用快照而非实时选区。
+  - **三视图切换不复用滚动位置**：预览/源码/富文本三视图内容总长不同，切换后总是回到顶部。改为以滚动比例（0~1）近似映射——各视图 `onScroll` 上报比例（写 ref 不触发 re-render），切换时把当前比例快照为 `restoreFraction` 传入新视图，新视图就绪后按比例恢复：Monaco 在 `onMount`（`applyRestore`）恢复，避免 effect 在重挂载时拿不到 editor 而跳过、之后不重跑导致源码视图切回总停顶部；富文本/预览用一次性 `ResizeObserver` 兜底图片/Mermaid/KaTeX 异步高度变化导致的位置漂移。
+
+- **修复 electron 二进制缺失致 `pnpm dev` 启动失败（Error: Electron uninstall）** — 根因是 `.npmrc` 的 `ignore-scripts=true` 阻止了 electron 的 postinstall 下载二进制，electron-vite 启动时找不到二进制报错。修复：移除 `ignore-scripts=true`（pnpm 10 默认即不运行依赖的 build 脚本，保留同等安全），`.npmrc` 新增 `electron_mirror` 指向 npmmirror，`package.json` 新增 `postinstall` 脚本——以 `cross-env` 设置 `ELECTRON_MIRROR` 后运行 `electron/install.js`，删除 node_modules 重装也能自动补装 electron 二进制。
+
 ## v1.4.7 (2026-08-26)
 
 ### 修复
