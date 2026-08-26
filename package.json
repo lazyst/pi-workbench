@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "postinstall": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js || echo electron-binary-install-skipped",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "dist": "pnpm build && electron-builder --config.nsis.oneClick=false --publish never",
     "dist:win": "pnpm build && electron-builder --win --config.nsis.oneClick=false --publish never"
