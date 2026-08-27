@@ -143,26 +143,45 @@ export function RichMarkdownEditor({ content, filePath, root, onChange, onSave, 
     };
   }, []);
 
-  // 恢复滚动位置：editor 就绪 + restoreFraction 变化时按比例恢复。
-  // TipTap 内容异步渲染，用一次性 ResizeObserver 在短窗口内重设几次兜底。
+  // 恢复滚动位置：editor 就绪 + restoreFraction 变化时按比例恢复一次。
+  // ProseMirror 的 setContent/内容渲染是同步的，挂载后首帧 rAF 布局即最终高度；
+  // 富文本唯一的高度异步源是 <img> 加载——监听其 load（确定事件）补偿重设。
+  // 用户一旦手动滚动（scrollTop 偏离程序设置值），立即放弃后续补偿，不干扰用户。
   useEffect(() => {
     if (restoreFraction == null || !editor || editor.isDestroyed) return;
-    const el = containerRef.current?.querySelector('.md-rich-body') as HTMLElement | null;
-    if (!el) return;
+    const scroller = containerRef.current?.querySelector('.md-rich-body') as HTMLElement | null;
+    if (!scroller) return;
+
+    let appliedScrollTop: number | null = null;
+    let userScrolled = false;
     const apply = () => {
-      const max = el.scrollHeight - el.clientHeight;
-      if (max > 0) el.scrollTop = Math.round(restoreFraction * max);
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      if (max <= 0) return;
+      appliedScrollTop = Math.round(restoreFraction * max);
+      scroller.scrollTop = appliedScrollTop;
     };
+    // 程序设置 scrollTop 触发的 scroll 事件不算用户滚动（避让自身）；
+    // 之后任何用户滚动（scrollTop 偏离程序值）标记 userScrolled，停止补偿。
+    const onScroll = () => {
+      if (scroller.scrollTop !== appliedScrollTop) userScrolled = true;
+    };
+
+    // 同步渲染就绪后的确定时刻：首帧 rAF。
     const raf = requestAnimationFrame(apply);
-    let retries = 3;
-    const ro = new ResizeObserver(() => {
-      if (retries-- > 0) apply();
-      else ro.disconnect();
-    });
-    ro.observe(el);
+    // 图片异步加载导致的高度变化：load 是确定事件，恢复窗口内补偿一次。
+    const detachers = Array.from(scroller.querySelectorAll<HTMLImageElement>('img'))
+      .filter((img) => !img.complete)
+      .map((img) => {
+        const onLoad = () => { if (!userScrolled) apply(); };
+        img.addEventListener('load', onLoad, { once: true });
+        return () => img.removeEventListener('load', onLoad);
+      });
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+
     return () => {
       cancelAnimationFrame(raf);
-      ro.disconnect();
+      detachers.forEach((remove) => remove());
+      scroller.removeEventListener('scroll', onScroll);
     };
   }, [editor, restoreFraction]);
 
