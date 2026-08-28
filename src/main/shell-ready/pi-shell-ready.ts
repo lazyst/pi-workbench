@@ -487,8 +487,9 @@ export interface ShellReadyLaunchConfig {
  */
 export function getShellReadyLaunchConfig(profile: TerminalProfile): ShellReadyLaunchConfig {
   const shellKind = isGitBash(profile.path) ? 'git-bash' : detectShellKind(profile.path);
+  // PI_WORKBENCH=1 由 UnifiedTerminalPool.buildBaseEnv 统一设置（两类终端共享）；
+  // 此处仅保留 shell-ready 专属 env：驱动 wrapper 发射就绪标记，及 shell 特定键。
   const envMixin: NodeJS.ProcessEnv = {
-    PI_WORKBENCH: '1',
     PI_SHELL_READY_MARKER: '1',
   };
 

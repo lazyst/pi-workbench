@@ -2,15 +2,15 @@
  * 统一终端 PTY 池——合并 SessionPool（spawn pi 进程）+ IntegratedTerminalPool（spawn shell 进程）
  * 的统一终端 PTY 池。
  *
- * 对外隐藏两种终端在 spawn 参数、环境变量、id 前缀等方面的差异，提供统一的
- * create/write/resize/destroy/killAll/updateCwd/acknowledgeDataEvent 接口。
- *
- * - command === 'pi'：spawn shell 进程，等待 shell 就绪后自动注入 pi 命令
- *   （走 Shell-Ready 模式，类似 Orca 的实现），
- *   id 形如 'live-<uuid>'，env 含 PI_WORKBENCH=1。
- * - command === undefined：spawn 用户 shell 进程（走原 IntegratedTerminalPool.create 路径），
- *   id 形如 'term-<uuid>'，env 含 TERM=xterm-256color / COLORTERM=truecolor，
- *   并注入 VS Code shell integration 脚本。
+ * 对外提供统一的 create/write/resize/destroy/killAll/updateCwd/acknowledgeDataEvent 接口。
+ * 两类终端共享同一套基础 spawn 配置（buildBaseEnv + buildBaseSpawnOptions）：
+ * - env：PI_WORKBENCH=1 / TERM=xterm-256color / COLORTERM=truecolor / 预热的 PATH
+ * - spawn 选项：cols/rows、Windows shell:true + conpty.dll 规避附着竞态
+ * 仅业务相关部分不同，由各自路径叠加：
+ * - command === 'pi'：spawn shell，等就绪后注入 pi 命令（Shell-Ready 模式），
+ *   叠加 shell-ready envMixin（PI_SHELL_READY_MARKER 等），id 形如 'live-<uuid>'。
+ * - command === undefined：spawn 用户 shell，注入 VS Code shell integration，
+ *   叠加 integration envMixin（TERM_PROGRAM=vscode 等），id 形如 'term-<uuid>'。
  */
 
 import * as fs from 'node:fs';
@@ -323,7 +323,7 @@ export class UnifiedTerminalPool {
   }
 
   /** spawn pi 进程（shell-ready 模式）：先 spawn shell，等待就绪后自动注入 pi 命令。
-   * id 形如 'live-<uuid>'，env 含 PI_WORKBENCH=1。
+   * id 形如 'live-<uuid>'，env = buildBaseEnv + shell-ready 专属标记（PI_SHELL_READY_MARKER 等）。
    *
    * 支持以下场景：
    * - 新建会话：`spawnPi({ cwd, name })` → 传 pi --name 参数
@@ -337,16 +337,11 @@ export class UnifiedTerminalPool {
     const resolvedCwd = opts.sessionFile ? resolveCwdFromSessionFile(opts.sessionFile, safeCwd) : safeCwd;
     const id = opts.key ?? `live-${randomUUID()}`;
 
-    // 环境变量：不设 TERM_PROGRAM=vscode 以免触发用户的 VS Code shell integration（
-    // 它会在每次 prompt 发射 OSC 133 D 序列，对终端输出造成干扰）。
-    // 若 IPC handler 在创建前预热过最新 PATH（见 envRefresh），覆盖 process.env.PATH，
-    // 使应用运行期间新装的全局命令在 pi 会话终端也可用。
-    const freshPath = getCachedFreshPath();
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...(freshPath ? { PATH: freshPath } : {}),
-      PI_WORKBENCH: '1',
-    };
+    // 环境变量 = buildBaseEnv（PI_WORKBENCH/TERM/COLORTERM/PATH，两类终端共享）
+    //           + shell-ready 专属 envMixin（PI_SHELL_READY_MARKER、ZDOTDIR 等）。
+    // 刻意不设 TERM_PROGRAM=vscode：会触发用户的 VS Code shell integration，它在每次
+    // prompt 发射 OSC 133 D 序列，干扰 pi 退出 / pi-tui 模式切换检测。
+    const env = this.buildBaseEnv();
 
     // ── 获取默认 shell profile ──
     const profile = opts.profile ?? getDefaultShellProfile();
@@ -367,20 +362,7 @@ export class UnifiedTerminalPool {
     Object.assign(env, readyConfig.envMixin);
 
     // ── spawn shell（不是 pi） ──
-    const pty = spawnPty(profile.path, spawnArgs, {
-      cwd: resolvedCwd,
-      cols: this.opts.cols,
-      rows: this.opts.rows,
-      env,
-      // Windows 关键：shell:true 避开 conpty 附着竞态导致的原生崩溃
-      shell: process.platform === 'win32',
-      // Windows 关键：使用 node-pty 自带的 conpty.dll 替代内置 ConPTY。
-      // 当 pi-tui 从 fullscreen 切换到 regular 时，pi 进程会调用 process.stdin.pause()
-      // 和 setRawMode(false)，这会导致内置 ConPTY 误杀 shell 进程。
-      // 使用 conpty.dll 后，_$onProcessExit 不调用 _flushDataAndCleanUp，
-      // socket 不会被销毁，exit 事件不会触发，终端保持打开。
-      ...(process.platform === 'win32' ? { useConptyDll: true, conptyInheritCursor: true } : {}),
-    });
+    const pty = spawnPty(profile.path, spawnArgs, this.buildBaseSpawnOptions(resolvedCwd, env));
 
     // 打开已有 .jsonl 时尝试从文件读取会话名作为标题
     let title = 'pi';
@@ -569,22 +551,16 @@ export class UnifiedTerminalPool {
     return info;
   }
 
-  /** spawn shell 进程：id 形如 'term-<uuid>'，env 含 TERM=xterm-256color / COLORTERM=truecolor，
-   * 并注入 VS Code shell integration 脚本。 */
+  /** spawn shell 进程：id 形如 'term-<uuid>'，env = buildBaseEnv + VS Code shell integration
+   * 专属标记（TERM_PROGRAM=vscode 等），并注入 shell integration 脚本。 */
   private spawnShell(profile: TerminalProfile, cwd: string): TerminalInfo {
     const safeCwd = cwd && fs.existsSync(cwd) ? cwd : process.cwd();
     const id = `term-${randomUUID()}`;
 
-    // 像 VS Code / 其他终端模拟器一样，向 pty 显式声明终端类型与真彩色支持。
-    // 若 IPC handler 在创建前预热过最新 PATH（见 envRefresh），覆盖 process.env.PATH，
-    // 使应用运行期间新装的全局命令在集成终端也可用。
-    const freshPath = getCachedFreshPath();
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...(freshPath ? { PATH: freshPath } : {}),
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-    };
+    // 环境变量 = buildBaseEnv（PI_WORKBENCH/TERM/COLORTERM/PATH，两类终端共享）
+    //           + VS Code shell integration 专属 envMixin（TERM_PROGRAM=vscode /
+    //           VSCODE_INJECTION / VSCODE_NONCE，zsh 还含 ZDOTDIR/USER_ZDOTDIR）。
+    const env = this.buildBaseEnv();
 
     // 计算 shell integration 注入（对齐 VS Code getShellIntegrationInjection）：
     // 改写 args 让 shell 加载注入脚本，混入 nonce/injection 等 env。
@@ -593,24 +569,10 @@ export class UnifiedTerminalPool {
     let spawnArgs = profile.args;
     if (injection) {
       spawnArgs = injection.newArgs;
-      Object.assign(env, injection.envMixin); // 含 TERM_PROGRAM='vscode' / VSCODE_INJECTION / VSCODE_NONCE
+      Object.assign(env, injection.envMixin);
     }
 
-    const pty = spawnPty(profile.path, spawnArgs, {
-      cwd: safeCwd,
-      cols: this.opts.cols,
-      rows: this.opts.rows,
-      env,
-      // Windows 关键：与 SessionPool 的 ptyFactory + pi 分支对齐，显式 shell:true。
-      // 否则 node-pty 的 conpty 后端在 pty 被 kill() 销毁时会调用 conpty_console_list_agent
-      // 的 getConsoleProcessList → AttachConsole failed → 抛 0xC0000005 原生崩溃，
-      // 直接拖垮整个 Electron 主进程（表现为"新建终端一闪即逝 / 应用闪退"）。
-      // shell:true 让 node-pty 走 cmd.exe 包裹路径，避开该 conpty 附着竞态。
-      shell: true,
-      // Windows 关键：使用 node-pty 自带的 conpty.dll，避免 pi-tui 模式切换时
-      // 内置 ConPTY 误杀 shell 触发 exit 事件导致集成终端被关。
-      ...(process.platform === 'win32' ? { useConptyDll: true, conptyInheritCursor: true } : {}),
-    });
+    const pty = spawnPty(profile.path, spawnArgs, this.buildBaseSpawnOptions(safeCwd, env));
 
     const info: TerminalInfo = {
       id,
@@ -672,6 +634,56 @@ export class UnifiedTerminalPool {
 
     this.entries.set(id, entry);
     return info;
+  }
+
+  /**
+   * 构造两类终端共享的基础环境变量。
+   *
+   * pi 会话终端与集成 shell 终端共享同一套「工作台标识 + 终端能力声明」：
+   * - PI_WORKBENCH=1：标记运行在 pi-workbench 内。集成终端里手动运行 pi 时，
+   *   pi CLI 据此识别环境（与 pi 会话终端一致）。
+   * - TERM=xterm-256color / COLORTERM=truecolor：向 PTY 声明终端类型与真彩色支持，
+   *   对齐 VS Code / 其他终端模拟器。此前仅 shell 终端声明、pi 会话终端未声明，
+   *   现统一声明，避免 shell 内程序各自回退探测。
+   * - PATH：若 IPC handler 预热过最新 PATH（见 envRefresh），覆盖 process.env.PATH，
+   *   使应用运行期间新装的全局命令在新终端可用。
+   *
+   * 业务相关 env（pi 的 shell-ready 标记、shell 的 VS Code integration 标识）由各自
+   * spawn 路径经 envMixin 叠加，不在此设置。
+   */
+  private buildBaseEnv(): NodeJS.ProcessEnv {
+    const freshPath = getCachedFreshPath();
+    return {
+      ...process.env,
+      ...(freshPath ? { PATH: freshPath } : {}),
+      PI_WORKBENCH: '1',
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+    };
+  }
+
+  /**
+   * 构造两类终端共享的 node-pty spawn 选项基础部分。
+   *
+   * - shell：仅 Windows 为 true——避开 conpty 附着竞态导致的原生崩溃
+   *   （pty 被 kill() 时 getConsoleProcessList → AttachConsole failed → 0xC0000005
+   *   拖垮主进程，表现为「终端一闪即逝 / 应用闪退」）。非 Windows 直接 spawn shell，
+   *   避免 /bin/sh -c 包裹改变 rc 文件加载与参数传递——shell integration 与
+   *   shell-ready 均通过 newArgs 改写启动参数实现，不依赖 sh -c 二次解析。
+   * - Windows conpty.dll：使用 node-pty 自带 conpty.dll 替代内置 ConPTY。
+   *   pi-tui 从 fullscreen 切到 regular 时调用 process.stdin.pause() /
+   *   setRawMode(false)，内置 ConPTY 据此误杀 shell 触发 exit 事件；conpty.dll 的
+   *   _$onProcessExit 不调用 _flushDataAndCleanUp，socket 不被销毁，终端保持打开。
+   */
+  private buildBaseSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): PtySpawnOptions {
+    return {
+      cwd,
+      cols: this.opts.cols,
+      rows: this.opts.rows,
+      env,
+      shell: process.platform === 'win32',
+      ...(process.platform === 'win32' ? { useConptyDll: true, conptyInheritCursor: true } : {}),
+    };
   }
 
   /** 检测 PTY 输出中的 pi-tui 模式切换序列（\x1b[?1049l 退出 alt screen、\x1b[?2004h 启用 bracketed paste）。

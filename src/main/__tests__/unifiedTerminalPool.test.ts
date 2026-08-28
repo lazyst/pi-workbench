@@ -130,9 +130,12 @@ describe('UnifiedTerminalPool', () => {
         expect(opts.rows).toBe(24);
         expect(opts.env.PI_WORKBENCH).toBe('1');
         expect(opts.env.PI_SHELL_READY_MARKER).toBe('1');
+        // 两类终端共享终端能力声明（buildBaseEnv）
+        expect(opts.env.TERM).toBe('xterm-256color');
+        expect(opts.env.COLORTERM).toBe('truecolor');
         // TERM_PROGRAM 不再设为 'vscode'，避免触发用户 VS Code shell integration
         expect(opts.env.TERM_PROGRAM).not.toBe('vscode');
-        // Windows 上 shell:true，Unix 上 shell:false
+        // Windows 上 shell:true，Unix 上 shell:false（与 shell 终端统一）
         expect(opts.shell).toBe(process.platform === 'win32');
 
         expect(info.id).toMatch(/^live-/);
@@ -428,11 +431,14 @@ describe('UnifiedTerminalPool', () => {
       expect(opts.cwd).toBe(existingCwd);
       expect(opts.cols).toBe(80);
       expect(opts.rows).toBe(24);
+      // 两类终端共享工作台标识（buildBaseEnv）
+      expect(opts.env.PI_WORKBENCH).toBe('1');
       expect(opts.env.TERM).toBe('xterm-256color');
       expect(opts.env.COLORTERM).toBe('truecolor');
       expect(opts.env.VSCODE_INJECTION).toBe('1');
       expect(opts.env.TERM_PROGRAM).toBe('vscode');
-      expect(opts.shell).toBe(true);
+      // Windows 上 shell:true，Unix 上 shell:false（与 pi 会话终端统一）
+      expect(opts.shell).toBe(process.platform === 'win32');
 
       expect(info.id).toMatch(/^term-/);
       expect(info.type).toBe('shell');
