@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.4.9 (2026-08-29)
+
+### 新功能
+
+- **拖拽 Tab 到窗格边缘创建分屏 + 全局 keep-alive 修复终端丢内容** —
+  - **拖拽分屏（ADR-0003）**：拖拽 Tab 到窗格边缘触发分屏——边缘条带落点（30% 带宽、40% 中央死区）、所见即所得预览线框（半窗格）；支持跨窗格分屏（拖到另一窗格边缘在该窗格处分屏）；源窗格变空后自动合并（不留空窗格：同 leaf 分屏取消、跨 leaf 源窗格消失）。新增 EdgeSplitZone 组件 + splitPaneWithTab 扩展（side/allowEmptySource）。
+  - **全局 keep-alive（修复终端跨 leaf 移动丢内容）**：引入 TabContentHost + rect-sync slot 架构——每个 tab 的 portal 恒定投到自身 slot div（React 19 下 portal 容器变更会重挂载），slot 绝对定位覆盖到 leaf 内容区；修复跨 leaf 移动后 canvas 空白——无 resize 触发时 `doResize(force)` 强制整屏重绘，slot rect 变化派发 `SYNC_FIT_PANES_EVENT` 触发全量 refit；防御性 scrollback 还原——`acquirePane` 新建实例时从主进程取回缓冲区重放。
+
+### 修复
+
+- **修复切换富文本视图强制滚到底部** — 安装包（生产构建）中每次切到富文本视图都会滚动到底部，dev（StrictMode 双 mount）因时序巧合掩盖了该 bug。根因：PreviewTab/SplitPane 的「激活即聚焦」对 `.ProseMirror` 调原生 `dom.focus()`，聚焦瞬间 Chromium 把 caret 隐式放到文档末尾，ProseMirror DOMObserver 跟随该 selection 并把 `state.selection` 从开头改成末尾，selection 变化触发 `scrollToSelection` 滚到底部，覆盖跨视图滚动位置复用；`preventScroll` 只拦浏览器隐式滚动，拦不住 ProseMirror 自身的 `scrollToSelection`。修复：focusEditable 改走受控 `editor.commands.focus('start', { scrollIntoView:false })`——先 dispatch selection 到开头并同步 DOM，再聚焦且不滚动，一处改动覆盖 PreviewTab 与 SplitPane 两条调用路径；RichMarkdownEditor 滚动恢复改为确定性实现（首帧 rAF + img load 事件 + userScrolled 保护），删除观察滚动容器（内容变高不触发）的 ResizeObserver 兜底。新增 `e2e/rich-scroll.spec.ts` 回归：预览/源码切富文本均不滚底。
+
+### 重构
+
+- **统一 pi 会话与集成 shell 终端的 spawn 配置** — 提取 `buildBaseEnv` / `buildBaseSpawnOptions` 承载两类终端共享的基础配置（PI_WORKBENCH/TERM/COLORTERM/PATH 与 cols/rows/shell/Win conpty），`spawnPi`/`spawnShell` 仅各自叠加业务 envMixin，消除此前不一致：pi 终端补齐 TERM/COLORTERM（此前缺失终端能力声明）；shell 终端补齐 PI_WORKBENCH（集成终端内手动跑 pi 可正确识别环境）；shell 终端 shell 选项从 `true` 统一为 `process.platform==='win32'`（与 pi 终端一致，非 Windows 直接 spawn 更贴合 VS Code 行为）；pi-shell-ready envMixin 去掉冗余 PI_WORKBENCH（改由 base 统一设）。业务差异按设计保留：pi 走 shell-ready 注入、不设 `TERM_PROGRAM=vscode`；shell 注入 VS Code shell integration。测试同步对称断言。
+
+### 工程
+
+- **清理 pi-desktop 残留，统一为 pi-workbench** — 环境变量 `PI_DESKTOP*` → `PI_WORKBENCH*`（设置/读取/测试/e2e 同步）；OSC marker、AppData 路径、扩展文件名与 marker、localStorage key、appId 全量更名；文件重命名 `pi-desktop-sync-source.ts` → `pi-workbench-sync-source.ts`；函数/常量名 `PiDesktop` → `PiWorkbench`；修正陈旧注释（~/piDesktop、defaultWorkSpace）对齐实际路径。保留 CHANGELOG、docs/plans、git 远程 URL 的历史记录。
+
 ## v1.4.8 (2026-08-27)
 
 ### 修复
