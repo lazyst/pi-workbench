@@ -6,7 +6,7 @@ vi.mock('../../components/paneManager', () => ({
 }));
 
 import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs, findLeaf, canMoveTabToLeaf, getTabCwd } from '../splitStore';
-import type { Tab, TabKind, TabLocation, SessionTab, TabLoc } from '../splitStore';
+import type { Tab, TabKind, TabLocation, SessionTab, TabLoc, SplitLeaf, SplitTree } from '../splitStore';
 
 /** 重置 store 到初始空状态。 */
 function resetStore() {
@@ -531,6 +531,228 @@ describe('splitStore — 数据模型与基础操作', () => {
       // 树结构不应改变
       const tree = s.cwdTrees['/a'];
       expect(tree.type).toBe('leaf');
+    });
+
+    it('side:"before" 时新 leaf 为第一个子节点（拖到左/上边缘）', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'horizontal', { side: 'before' });
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      expect(tree.type).toBe('split');
+      if (tree.type === 'split') {
+        const firstLeaf = tree.children[0];
+        const secondLeaf = tree.children[1];
+        if (firstLeaf.type === 'leaf' && secondLeaf.type === 'leaf') {
+          // 第一个子节点 = 新 leaf（含被移 tab s1）
+          expect(firstLeaf.tabs).toHaveLength(1);
+          expect(firstLeaf.tabs[0].id).toBe('/a/s1.jsonl');
+          expect(firstLeaf.activeTabId).toBe('/a/s1.jsonl');
+          // 第二个子节点 = 源 leaf（保留 s2）
+          expect(secondLeaf.tabs).toHaveLength(1);
+          expect(secondLeaf.tabs[0].id).toBe('/a/s2.jsonl');
+        }
+      }
+    });
+
+    it('side:"after" 时新 leaf 为第二个子节点（拖到右/下边缘，等同默认）', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'horizontal', { side: 'after' });
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        if (tree.children[0].type === 'leaf' && tree.children[1].type === 'leaf') {
+          // 源 leaf 在前，新 leaf 在后
+          expect(tree.children[0].tabs[0].id).toBe('/a/s2.jsonl');
+          expect(tree.children[1].tabs[0].id).toBe('/a/s1.jsonl');
+        }
+      }
+    });
+
+    it('allowEmptySource:true 时单 tab 拖出后源空自动合并（同 leaf：分屏取消，树回退单 leaf）', () => {
+      // 先删除 s2，只剩 s1
+      const store = getState();
+      store.closeTab('/a/s2.jsonl');
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'horizontal', { allowEmptySource: true });
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      // 源 leaf 变空 → 自动合并：splitNode 内的空 half 被移除，只剩新 leaf → 提升 → 分屏取消
+      expect(tree.type).toBe('leaf');
+      if (tree.type === 'leaf') {
+        expect(tree.tabs).toHaveLength(1);
+        expect(tree.tabs[0].id).toBe('/a/s1.jsonl');
+        expect(tree.activeTabId).toBe('/a/s1.jsonl');
+        expect(s.activeLeafId).toBe(tree.id);
+      }
+    });
+
+    it('allowEmptySource + side:"before" 时单 tab 拖出后同样自动合并（分屏取消）', () => {
+      const store = getState();
+      store.closeTab('/a/s2.jsonl');
+      const leafId = store.cwdActiveLeafId['/a']!;
+
+      store.splitPaneWithTab(leafId, '/a/s1.jsonl', 'vertical', {
+        side: 'before',
+        allowEmptySource: true,
+      });
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      // 合并行为与 side 无关：分屏取消，树回退为单 leaf（含 s1）
+      expect(tree.type).toBe('leaf');
+      if (tree.type === 'leaf') {
+        expect(tree.tabs).toHaveLength(1);
+        expect(tree.tabs[0].id).toBe('/a/s1.jsonl');
+        expect(s.activeLeafId).toBe(tree.id);
+      }
+    });
+
+    it('跨 leaf 分屏：拖另一 leaf 的 tab 到本 leaf 边缘，在本 leaf 处创建分屏', () => {
+      const store = getState();
+      // 初始单 leaf L = [s1, s2]，再开 s3 → [s1, s2, s3]
+      store.openSession({ key: '/a/s3.jsonl', cwd: '/a', name: 's3' });
+      const L = store.cwdActiveLeafId['/a']!;
+
+      // 先在 L 上分屏：s1 移出 → [A{s2,s3}, B{s1}]
+      store.splitPaneWithTab(L, '/a/s1.jsonl', 'horizontal', { side: 'after' });
+      const t1 = getState().cwdTrees['/a'];
+      expect(t1.type).toBe('split');
+      if (t1.type !== 'split') return;
+      const leafA = t1.children[0]; // {s2, s3}
+      const leafB = t1.children[1]; // {s1}
+      if (leafA.type !== 'leaf' || leafB.type !== 'leaf') return;
+
+      // 跨 leaf：把 s2（在 A）拖到 B 的下边缘 → 在 B 处垂直分屏
+      store.splitPaneWithTab(leafB.id, '/a/s2.jsonl', 'vertical', {
+        side: 'after',
+        allowEmptySource: true,
+      });
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      expect(tree.type).toBe('split');
+      if (tree.type !== 'split') return;
+      // root 仍是水平分屏；children[0] = A（移除 s2 后剩 s3）
+      const aAfter = tree.children[0];
+      expect(aAfter.type).toBe('leaf');
+      if (aAfter.type === 'leaf') {
+        expect(aAfter.tabs.map((t) => t.id)).toEqual(['/a/s3.jsonl']);
+      }
+      // children[1] = 在 B 处新建的垂直分屏节点 [B原样{s1}, newLeaf{s2}]
+      const bSplit = tree.children[1];
+      expect(bSplit.type).toBe('split');
+      if (bSplit.type === 'split') {
+        expect(bSplit.direction).toBe('vertical');
+        expect(bSplit.children).toHaveLength(2);
+        const bLeaf = bSplit.children[0];
+        const newLeaf = bSplit.children[1];
+        if (bLeaf.type === 'leaf' && newLeaf.type === 'leaf') {
+          // B 原样保留 s1（tab 来自源，目标 tabs 不变）
+          expect(bLeaf.tabs.map((t) => t.id)).toEqual(['/a/s1.jsonl']);
+          // 新 leaf 含被拖 tab s2
+          expect(newLeaf.tabs.map((t) => t.id)).toEqual(['/a/s2.jsonl']);
+          expect(newLeaf.activeTabId).toBe('/a/s2.jsonl');
+          // 活跃 leaf 切到新 leaf
+          expect(s2.activeLeafId).toBe(newLeaf.id);
+        }
+      }
+    });
+
+    it('跨 leaf 分屏源变空时自动合并空 leaf（源窗格消失，其余窗格吸收空间）', () => {
+      const store = getState();
+      // L = [s1, s2]，先分屏移出 s1 → [A{s2}, B{s1}]
+      const L = store.cwdActiveLeafId['/a']!;
+      store.splitPaneWithTab(L, '/a/s1.jsonl', 'horizontal', { side: 'after' });
+      const t1 = getState().cwdTrees['/a'];
+      if (t1.type !== 'split') return;
+      const leafA = t1.children[0]; // {s2}
+      const leafB = t1.children[1]; // {s1}
+      if (leafA.type !== 'leaf' || leafB.type !== 'leaf') return;
+
+      // 跨 leaf：A 仅剩 s2，拖到 B 边缘 → A 变空 → 自动合并（A 从树中移除）
+      store.splitPaneWithTab(leafB.id, '/a/s2.jsonl', 'vertical', {
+        side: 'after',
+        allowEmptySource: true,
+      });
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      // 原 root = split(A, B)；A 合并移除后只剩 B 处的分屏节点 → 提升为 root
+      expect(tree.type).toBe('split');
+      if (tree.type !== 'split') return;
+      expect(tree.direction).toBe('vertical');
+      expect(tree.children).toHaveLength(2);
+      // children[0] = B{s1}，children[1] = newLeaf{s2}
+      const bLeaf = tree.children[0];
+      const newLeaf = tree.children[1];
+      if (bLeaf.type === 'leaf' && newLeaf.type === 'leaf') {
+        expect(bLeaf.tabs.map((t) => t.id)).toEqual(['/a/s1.jsonl']);
+        expect(newLeaf.tabs.map((t) => t.id)).toEqual(['/a/s2.jsonl']);
+        expect(newLeaf.activeTabId).toBe('/a/s2.jsonl');
+        expect(s2.activeLeafId).toBe(newLeaf.id);
+      }
+    });
+
+    it('3 窗格场景：拖嵌套 split 内唯一 tab 到另一窗格边缘，源窗格自动合并', () => {
+      const store = getState();
+      // L = [s1, s2]，先分屏移出 s1 → [A{s2}, B{s1}]
+      const L = store.cwdActiveLeafId['/a']!;
+      store.splitPaneWithTab(L, '/a/s1.jsonl', 'horizontal', { side: 'after' });
+      let t1 = getState().cwdTrees['/a'];
+      if (t1.type !== 'split') return;
+      // 把 B 垂直分屏 → [A{s2}, split_v(B{s1}, C{s3})]，形成 3 窗格 [左 | 右上 / 右下]
+      const leafB = t1.children[1];
+      if (leafB.type !== 'leaf') return;
+      store.openSession({ key: '/a/s3.jsonl', cwd: '/a', name: 's3' });
+      // s3 打开在 active leaf（B），把它分屏到 C
+      store.splitPaneWithTab(leafB.id, '/a/s3.jsonl', 'vertical', { side: 'after' });
+      t1 = getState().cwdTrees['/a'];
+      if (t1.type !== 'split') return;
+      const leftLeaf = t1.children[0]; // A{s2}
+      const rightSplit = t1.children[1]; // split_v(B{s1}, C{s3})
+      if (leftLeaf.type !== 'leaf' || rightSplit.type !== 'split') return;
+
+      // 用户场景：拖右下 C 的唯一 tab s3 到左窗格 A 的右边缘 → 在 A 处分屏，C 空后自动合并
+      store.splitPaneWithTab(leftLeaf.id, '/a/s3.jsonl', 'horizontal', {
+        side: 'after',
+        allowEmptySource: true,
+      });
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      // 期望：root = split_h(split_h(A{s2}, newLeaf{s3}), B{s1})
+      // （C 合并移除 → rightSplit 只剩 B → 提升；A 处新建水平分屏）
+      expect(tree.type).toBe('split');
+      if (tree.type !== 'split') return;
+      expect(tree.direction).toBe('horizontal');
+      expect(tree.children).toHaveLength(2);
+      const left = tree.children[0]; // split_h(A{s2}, newLeaf{s3})
+      const right = tree.children[1]; // B{s1}
+      if (left.type === 'split' && right.type === 'leaf') {
+        expect(left.direction).toBe('horizontal');
+        const aLeaf = left.children[0];
+        const newLeaf = left.children[1];
+        if (aLeaf.type === 'leaf' && newLeaf.type === 'leaf') {
+          expect(aLeaf.tabs.map((t) => t.id)).toEqual(['/a/s2.jsonl']);
+          expect(newLeaf.tabs.map((t) => t.id)).toEqual(['/a/s3.jsonl']);
+        }
+        expect(right.tabs.map((t) => t.id)).toEqual(['/a/s1.jsonl']);
+      }
+      // 全树无空 leaf（不留空窗格）
+      const leaves: SplitLeaf[] = [];
+      (function collect(n: SplitTree) {
+        if (n.type === 'leaf') leaves.push(n);
+        else n.children.forEach(collect);
+      })(tree);
+      expect(leaves.every((l) => l.tabs.length > 0)).toBe(true);
     });
   });
 

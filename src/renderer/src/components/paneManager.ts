@@ -62,6 +62,12 @@ export function acquirePane({ key, kind, pi }: AcquireOptions): XtermTerminal {
   const channel = createChannel(kind, pi, key);
   const term = new XtermTerminal({ sessionKey: key, channel, pi });
   panes.set(key, term);
+  // 防御性还原：新实例可能对应「上次被销毁的终端」（keep-alive 失效的任何路径，如旧版
+  // 跨 leaf 移动导致 unmount）。从主进程取回上次 saveTerminalBuffer 保存的 scrollback，
+  // 由 XtermTerminal 在 mount 后重放，避免重建后内容丢失。失败静默。
+  pi.loadTerminalBuffer?.(key)
+    .then((buf) => { if (buf) term.queueScrollbackRestore(buf); })
+    .catch(() => {});
   return term;
 }
 
@@ -177,4 +183,22 @@ export function resetPanes(): void {
  * 连续拖拽（侧边栏拖宽、分栏拖拽）走独立的 ResizeObserver + 防抖路径。 */
 export function fitAllPanes(): void {
   panes.forEach((term) => term.fitImmediate());
+}
+
+// 测试/调试钩子：暴露 pane 注册表信息（terminal 实例存活状态）。
+// 在 e2e 中通过 page.evaluate(() => (window as any).__piPaneManager()) 调用。
+if (typeof window !== 'undefined') {
+  (window as any).__piPaneManager = () => ({
+    paneCount: panes.size,
+    keys: Array.from(panes.keys()),
+    // 每 pane 的 scrollback 长度：验证内容保留（-1=序列化失败，0=空，>0=有内容）。
+    scrollbacks: Array.from(panes.entries()).map(([key, term]) => {
+      let len = -1;
+      try {
+        const s = term.serializeScrollback();
+        len = s ? s.length : 0;
+      } catch { /* 序列化失败保持 -1 */ }
+      return { key: key.slice(0, 18), len };
+    }),
+  });
 }

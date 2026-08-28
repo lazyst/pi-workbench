@@ -12,7 +12,9 @@
 // - 每个 leaf 的 TabBar 共享同一 DndContext，各自持有独立的 SortableContext
 // - 通过 DragContext 将 leaf items 动态传递给 TabBar
 
-import { memo, useRef, useMemo, useEffect, useCallback, useState, createContext, useContext } from 'react';
+import { memo, useRef, useMemo, useEffect, useLayoutEffect, useCallback, useState, useReducer, createContext, useContext } from 'react';
+import { createPortal } from 'react-dom';
+import { SYNC_FIT_PANES_EVENT } from '../constants/terminal';
 import { useToast } from './Toast';
 import {
   DndContext,
@@ -21,7 +23,7 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
-  closestCorners,
+  type CollisionDetection,
   type DragStartEvent,
   type DragEndEvent,
   type DragOverEvent,
@@ -34,10 +36,11 @@ import {
 } from '@dnd-kit/sortable';
 import { TabBar } from './TabBar';
 import { SplitDivider } from './SplitDivider';
+import { EdgeSplitZone, type EdgeSide } from './EdgeSplitZone';
 import { ContextMenu } from './ContextMenu';
 import type { ContextMenuItem } from './ContextMenu';
 import { useSplitStore, findTabById, findLeaf, canMoveTabToLeaf } from '../store/splitStore';
-import type { SplitTree, SplitLeaf, SplitNode, Tab, SessionContentTab, SessionTab, PreviewTab as PreviewTabType, DiffTab as DiffTabType, IntegratedTerminalTab } from '../store/splitStore';
+import type { SplitTree, SplitLeaf, SplitNode, SplitDirection, Tab, SessionContentTab, SessionTab, PreviewTab as PreviewTabType, DiffTab as DiffTabType, IntegratedTerminalTab } from '../store/splitStore';
 import type { TabKind } from './TabBar';
 import { SessionPane } from './SessionPane';
 import { IntegratedPane } from './IntegratedPane';
@@ -86,6 +89,16 @@ interface DragContextValue {
   canDrop: boolean;
   /** 注册 leaf 的 TabBar 滚动容器，供拖拽自动滚动使用。 */
   registerScrollContainer: (leafId: string, el: HTMLElement | null) => void;
+  /** 是否有拖拽正在进行（ADR-0003：驱动内容区边缘条带/预览格渲染）。 */
+  isDragging: boolean;
+  /** 当前悬停的边缘落点（ADR-0003：用于分屏方向预览）。 */
+  pendingSplitEdge: { leafId: string; side: EdgeSide } | null;
+  /** 注册 leaf 的内容区容器，供全局 TabContentHost portal 投射 tab 内容（ADR-0003 keep-alive）。 */
+  registerLeafBody: (leafId: string, el: HTMLElement | null) => void;
+  /** 各 preview tab 的「文件已删除」标记（PreviewTab 上报，TabBar 红字+删除线）。 */
+  tabDeleted: Record<string, boolean>;
+  /** 接收 PreviewTab 的「文件已删除」上报。 */
+  registerTabDeleted: (id: string, v: boolean) => void;
 }
 
 const DragContext = createContext<DragContextValue>({
@@ -93,11 +106,99 @@ const DragContext = createContext<DragContextValue>({
   hoveredLeafId: null,
   canDrop: true,
   registerScrollContainer: () => {},
+  isDragging: false,
+  pendingSplitEdge: null,
+  registerLeafBody: () => {},
+  tabDeleted: {},
+  registerTabDeleted: () => {},
 });
 
 export function useDragContext() {
   return useContext(DragContext);
 }
+
+// ── 拖拽创建分屏（ADR-0003）：落点 id 前缀 + 边缘方向映射 ──
+
+/** 边缘条带 droppable id 前缀：split-edge:{leafId}:{side}。 */
+export const EDGE_SPLIT_PREFIX = 'split-edge:';
+
+/** 边缘落点 → (分屏方向, 新 leaf 前置/后置)。拖到左/上边缘新窗格在前，右/下边缘在后。 */
+function edgeToDirSide(side: EdgeSide): { direction: SplitDirection; side: 'before' | 'after' } {
+  switch (side) {
+    case 'left':
+      return { direction: 'horizontal', side: 'before' };
+    case 'right':
+      return { direction: 'horizontal', side: 'after' };
+    case 'top':
+      return { direction: 'vertical', side: 'before' };
+    case 'bottom':
+      return { direction: 'vertical', side: 'after' };
+  }
+}
+
+/** 解析 split-edge:{leafId}:{side} 落点 id → { leafId, side }；格式不符返回 null。 */
+function parseEdgeId(id: string): { leafId: string; side: EdgeSide } | null {
+  const parts = id.split(':');
+  const leafId = parts[1];
+  const side = parts[2] as EdgeSide;
+  return leafId && side ? { leafId, side } : null;
+}
+
+/** DragOverlay 分屏方向提示：side → 箭头文案。 */
+const EDGE_SPLIT_HINT: Record<EdgeSide, string> = {
+  left: '⇤ 分屏',
+  right: '分屏 ⇥',
+  top: '⇧ 分屏',
+  bottom: '分屏 ⇩',
+};
+
+/**
+ * ADR-0003：边缘优先碰撞检测（纯包含性判定，无距离回退）。
+ *
+ * 优先级：边缘条带 > 排序 Tab > leaf Tab 条 > 无落点。
+ * - 边缘条带：四向不重叠，指针恰中其一 → 分屏；
+ * - 排序 Tab：指针落在某个 tab 上 → 以该 tab 为落点（支持插入位置）；
+ * - leaf Tab 条：指针在 Tab 条空白处 → 追加到该窗格；
+ * - 其余（内容区死区/中央、分隔线、右栏）→ 返回空，over=null → 无任何操作与反馈。
+ *
+ * 不用 closestCorners 兜底：它对「指针远在中央」也会返回最近的 droppable，
+ * 会把内容区中央误判成最近的边缘条带（分屏）或残留高亮，违反「中央无落点」。
+ */
+const edgeAwareCollision: CollisionDetection = (args) => {
+  const { droppableContainers, droppableRects, pointerCoordinates } = args;
+  if (!pointerCoordinates) return [];
+  const { x, y } = pointerCoordinates;
+
+  // 指针是否落在 droppable 矩形内
+  const inside = (id: string): boolean => {
+    const rect = droppableRects.get(id);
+    return !!rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  };
+
+  // 1. 边缘条带（四向不重叠，恰中其一）
+  for (const container of droppableContainers) {
+    const id = String(container.id);
+    if (id.startsWith(EDGE_SPLIT_PREFIX) && inside(id)) {
+      return [{ id }];
+    }
+  }
+
+  // 2. Tab（sortable 项，id 不以已知非 tab 前缀开头）
+  for (const container of droppableContainers) {
+    const id = String(container.id);
+    if (id.startsWith(EDGE_SPLIT_PREFIX) || id.startsWith('leaf-') || id.startsWith('split-divider-')) continue;
+    if (inside(id)) return [{ id }];
+  }
+
+  // 3. leaf Tab 条空白处 → 追加到该窗格
+  for (const container of droppableContainers) {
+    const id = String(container.id);
+    if (id.startsWith('leaf-') && inside(id)) return [{ id }];
+  }
+
+  // 4. 无落点（内容区死区/中央、分隔线、右栏）
+  return [];
+};
 
 // ── SplitPaneDragProvider ──
 
@@ -106,43 +207,57 @@ export function useDragContext() {
  * 包装单个 cwd 的分屏树，所有 leaf 的 TabBar 共享此 DndContext。
  * 每个 cwd 使用独立的 SplitPaneDragProvider 实例。
  */
-function SplitPaneDragProvider({
-  children,
-  cwd,
-  isActive,
-}: {
-  children: React.ReactNode;
-  cwd: string;
-  isActive: boolean;
-}) {
+function SplitPaneDragProvider({ children, ...rest }: Props & { children: React.ReactNode }) {
   // 总是渲染 SplitPaneDragProviderInner（相同组件类型），
   // 避免 isActive 切换时 Fragment ↔ SplitPaneDragProviderInner 的组件类型变化
   // 导致 React 卸载全部子节点（含所有 SessionPane → XtermTerminal 终端实例）。
   // 非活跃时 DnD 逻辑在 SplitPaneDragProviderInner 内部跳过。
-  return <SplitPaneDragProviderInner cwd={cwd} isActive={isActive}>{children}</SplitPaneDragProviderInner>;
+  return <SplitPaneDragProviderInner {...rest}>{children}</SplitPaneDragProviderInner>;
 }
 
 function SplitPaneDragProviderInner({
   children,
+  tree,
   cwd,
   isActive,
-}: {
-  children: React.ReactNode;
-  cwd: string;
-  isActive: boolean;
-}) {
+  ...rest
+}: Props & { children: React.ReactNode }) {
   const moveTabAcrossLeafs = useSplitStore((s) => s.moveTabAcrossLeafs);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
+  const splitPaneWithTab = useSplitStore((s) => s.splitPaneWithTab);
   const cwdTrees = useSplitStore((s) => s.cwdTrees);
 
   // 拖拽状态
   const [leafItems, setLeafItems] = useState<Record<string, string[]>>({});
   const [hoveredLeafId, setHoveredLeafId] = useState<string | null>(null);
   const [canDrop, setCanDrop] = useState(true);
+  // 各 preview tab 的「文件已删除」标记（原在 SplitPaneLeaf，提升为全局：tab.id 全局唯一）。
+  const [tabDeleted, setTabDeleted] = useState<Record<string, boolean>>({});
+  const registerTabDeleted = useCallback((id: string, v: boolean) => {
+    setTabDeleted((prev) => {
+      const next = { ...prev };
+      if (v) next[id] = true; else delete next[id];
+      return next;
+    });
+  }, []);
+  // 全局 keep-alive（修复终端跨 leaf 移动丢内容）：leaf 内容区容器注册表，
+  // TabContentHost 用 createPortal 把每个 tab 内容投射到所属 leaf。ref 变化后
+  // forceUpdate 触发 host 重渲染，使首帧未挂载的 leaf 在 ref 注册后补 slot 定位。
+  const leafBodyRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
+  const registerLeafBody = useCallback((leafId: string, el: HTMLElement | null) => {
+    if (el) leafBodyRefs.current.set(leafId, el);
+    else leafBodyRefs.current.delete(leafId);
+    forceUpdate();
+  }, []);
   /** ref 存储 drag item，回调总能读到最新值（避免 useCallback 闭包陈旧）。 */
   const activeDragItemRef = useRef<{ tabId: string; sourceLeafId: string } | null>(null);
   /** state 仅用于驱动 DragOverlay 渲染。 */
   const [activeDragTab, setActiveDragTab] = useState<Tab | null>(null);
+  /** 是否有拖拽进行中（ADR-0003：驱动边缘条带/预览格渲染）。 */
+  const [isDragging, setIsDragging] = useState(false);
+  /** 当前悬停的边缘落点（ADR-0003：分屏方向预览）。 */
+  const [pendingSplitEdge, setPendingSplitEdge] = useState<{ leafId: string; side: EdgeSide } | null>(null);
 
   // TabBar 滚动容器注册表，用于拖拽自动滚动
   const scrollContainerRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -193,6 +308,8 @@ function SplitPaneDragProviderInner({
     const sourceLeafId = found.leaf.id;
     activeDragItemRef.current = { tabId, sourceLeafId };
     setActiveDragTab(found.tab);
+    // ADR-0003：激活拖拽状态，SplitPaneLeaf 据此渲染边缘条带与分屏预览线框
+    setIsDragging(true);
 
     // 初始化 leafItems：从 defaultLeafItems 出发，只移除被拖的 tab
     // 保留其他 tab，使 onDragOver 能正确计算插入位置
@@ -201,15 +318,21 @@ function SplitPaneDragProviderInner({
       const base = Object.keys(prev).length > 0 ? prev : defaultLeafItems;
       const sourceItems = base[sourceLeafId] ?? [];
       const filtered = sourceItems.filter((id) => id !== tabId);
-      // 如果没变化，不触发更新
-      if (filtered.length === sourceItems.length && prev[sourceLeafId] === filtered) return prev;
+      // 无变化（被拖 tab 不在此 leaf 的 items 中）→ 不触发重渲染
+      if (filtered.length === sourceItems.length) return prev;
       return { ...base, [sourceLeafId]: filtered };
     });
   }, [cwdTrees, defaultLeafItems]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over || !active) return;
+    // 无落点（拖到内容区死区/中央）→ 清除所有悬停反馈，不残留任何线框
+    if (!over) {
+      setPendingSplitEdge(null);
+      setHoveredLeafId(null);
+      return;
+    }
+    if (!active) return;
 
     const activeId = String(active.id);
     const overId = String(over.id);
@@ -217,8 +340,22 @@ function SplitPaneDragProviderInner({
     // 忽略 SplitDivider 区域
     if (overId.startsWith('split-divider-')) return;
 
-    // 确定目标 leafId
-    // over.id 可能是 tab id 或 leaf 级 droppable id
+    // ADR-0003：边缘条带命中 → 记录分屏方向预览（新 leaf 恒空，去重永不冲突）
+    if (overId.startsWith(EDGE_SPLIT_PREFIX)) {
+      const edge = parseEdgeId(overId);
+      if (edge) {
+        setPendingSplitEdge(edge);
+        setHoveredLeafId(null);
+        setCanDrop(true);
+      }
+      return;
+    }
+
+    // 非边缘命中 → 清除分屏预览
+    setPendingSplitEdge(null);
+
+    // 确定目标 leafId：over.id 是 tab id 或 leaf Tab 条 droppable id（leaf-{leafId}）
+    // 移入窗格只能拖到目标窗格的 Tab 条（ADR-0003 简化：内容区中央不再是落点）
     let targetLeafId: string | null = null;
     if (overId.startsWith('leaf-')) {
       targetLeafId = overId.slice(5); // 'leaf-{leafId}'
@@ -228,7 +365,10 @@ function SplitPaneDragProviderInner({
       if (found) targetLeafId = found.leaf.id;
     }
 
-    if (!targetLeafId) return;
+    if (!targetLeafId) {
+      setHoveredLeafId(null);
+      return;
+    }
 
     // 更新 hovered leaf 高亮
     setHoveredLeafId(targetLeafId);
@@ -326,6 +466,8 @@ function SplitPaneDragProviderInner({
     // 清理临时状态
     setHoveredLeafId(null);
     setCanDrop(true);
+    setIsDragging(false);
+    setPendingSplitEdge(null);
     const dragItem = activeDragItemRef.current;
     activeDragItemRef.current = null;
     setActiveDragTab(null);
@@ -344,7 +486,17 @@ function SplitPaneDragProviderInner({
     if (!dragItem) return;
     const { sourceLeafId } = dragItem;
 
-    // 确定目标 leafId
+    // ADR-0003：边缘条带 → 创建分屏并移入被拖 Tab（源窗格可变空）
+    if (overId.startsWith(EDGE_SPLIT_PREFIX)) {
+      const edge = parseEdgeId(overId);
+      if (edge) {
+        const { direction, side: childSide } = edgeToDirSide(edge.side);
+        splitPaneWithTab(edge.leafId, activeId, direction, { side: childSide, allowEmptySource: true });
+      }
+      return;
+    }
+
+    // 确定目标 leafId：tab id 或 leaf Tab 条 droppable（leaf-{leafId}）
     let targetLeafId: string | null = null;
     if (overId.startsWith('leaf-')) {
       targetLeafId = overId.slice(5);
@@ -409,7 +561,18 @@ function SplitPaneDragProviderInner({
     }
 
     moveTabAcrossLeafs(activeId, sourceLeafId, targetLeafId, targetIndex);
-  }, [cwdTrees, reorderTabsInLeaf, moveTabAcrossLeafs]);
+  }, [cwdTrees, reorderTabsInLeaf, moveTabAcrossLeafs, splitPaneWithTab]);
+
+  /** 拖拽被取消（Esc / 窗口失焦）时清理全部临时状态。 */
+  const handleDragCancel = useCallback(() => {
+    setIsDragging(false);
+    setPendingSplitEdge(null);
+    setHoveredLeafId(null);
+    setCanDrop(true);
+    activeDragItemRef.current = null;
+    setActiveDragTab(null);
+    setLeafItems({});
+  }, []);
 
   // 合并默认 items 和动态 items：动态 items 优先
   const mergedLeafItems = useMemo(() => {
@@ -427,7 +590,12 @@ function SplitPaneDragProviderInner({
     hoveredLeafId,
     canDrop,
     registerScrollContainer,
-  }), [mergedLeafItems, hoveredLeafId, canDrop, registerScrollContainer]);
+    isDragging,
+    pendingSplitEdge,
+    registerLeafBody,
+    tabDeleted,
+    registerTabDeleted,
+  }), [mergedLeafItems, hoveredLeafId, canDrop, registerScrollContainer, isDragging, pendingSplitEdge, registerLeafBody, tabDeleted, registerTabDeleted]);
 
   // 被拖拽的 tab 信息（用于 DragOverlay），直接使用 activeDragTab state
   const activeTab = activeDragTab;
@@ -444,13 +612,24 @@ function SplitPaneDragProviderInner({
     <DragContext.Provider value={contextValue}>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={edgeAwareCollision}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
       >
         {children}
+        {/* 全局 keep-alive（修复终端跨 leaf 移动丢内容）：所有 tab 内容挂在此 host 下
+            （key=tab.id 稳定、portal 容器恒定，React 19 下不重挂载 → 终端实例保留），
+            slot div 绝对定位覆盖到所属 leaf 的内容区。 */}
+        <TabContentHost
+          tree={tree}
+          cwd={cwd}
+          leafBodyRefs={leafBodyRefs}
+          registerTabDeleted={registerTabDeleted}
+          {...rest}
+        />
         {/* DragOverlay 仅 active 时渲染：非活跃时拖拽不存在，overlay 无意义。
             条件渲染 overlay 不影响 children 的挂载状态（它在 children 之后，独立子树）。 */}
         {isActive && (
@@ -465,6 +644,12 @@ function SplitPaneDragProviderInner({
                   {activeTab.kind === 'session-content' && '💬'}
                 </span>
                 <span className="drag-overlay-title">{activeTab.title}</span>
+                {/* ADR-0003：悬停边缘时提示分屏方向 */}
+                {pendingSplitEdge && (
+                  <span className="drag-overlay-split-hint">
+                    {EDGE_SPLIT_HINT[pendingSplitEdge.side]}
+                  </span>
+                )}
                 {!canDrop && <span className="drag-overlay-invalid-icon">🚫</span>}
               </div>
             )}
@@ -622,6 +807,165 @@ const TabContent = memo(function TabContent({
   );
 }, tabContentPropsEqual);
 
+/** 收集 cwd 树所有 leaf 的 (leafId, tab, activeTabId)，保持 leaf.tabs 顺序（供 TabContentHost portal 投射）。 */
+function collectLeafTabs(tree: SplitTree): Array<{ leafId: string; tab: Tab; activeTabId: string | null }> {
+  const out: Array<{ leafId: string; tab: Tab; activeTabId: string | null }> = [];
+  const walk = (node: SplitTree): void => {
+    if (node.type === 'leaf') {
+      for (const tab of node.tabs) out.push({ leafId: node.id, tab, activeTabId: node.activeTabId });
+      return;
+    }
+    for (const child of node.children) walk(child);
+  };
+  walk(tree);
+  return out;
+}
+
+interface TabContentHostProps {
+  tree: SplitTree;
+  cwd: string;
+  leafBodyRefs: React.RefObject<Map<string, HTMLElement>>;
+  registerTabDeleted: (id: string, v: boolean) => void;
+  onOpenFile?: (relPath: string, fileName: string, root: string) => void;
+  registerCloseGuard: (id: string, guard: (() => void) | null) => void;
+  onOpen?: (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => void;
+  onDeleteSessionRequest?: (key: string, name: string, tabId: string) => void;
+}
+
+/**
+ * 全局 keep-alive 容器（修复终端 tab 跨 leaf 移动丢内容）。
+ *
+ * React 19 的 portal 在 container 变更时会重挂载内容（updatePortal 对 containerInfo 不
+ * 相等即新建 fiber）→ 不能用「改投 leaf body」的方式跨 leaf 迁移，否则终端实例销毁。
+ * 本实现把每个 tab 的 TabContent portal 到「自身 slot div」（容器恒定、永不改变），
+ * slot div 用 CSS 绝对定位覆盖到所属 leaf 的内容区矩形（getBoundingClientRect 同步，
+ * ResizeObserver 跟踪尺寸变化）——既不改 portal 容器、也不做 React 之外的 DOM 移动，
+ * 从而保证 TabContent 永不移出 React 树 → IntegratedPane/SessionPane 不 cleanup →
+ * XtermTerminal 实例与 scrollback 保留。
+ *
+ * closeTab 时 tab 从 store 移除 → collectLeafTabs 不再含该 tab → slot unmount →
+ * releasePane 正常销毁。
+ */
+function TabContentHost({
+  tree,
+  cwd,
+  leafBodyRefs,
+  registerTabDeleted,
+  onOpenFile,
+  registerCloseGuard,
+  onOpen,
+  onDeleteSessionRequest,
+}: TabContentHostProps) {
+  const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
+  const { toast } = useToast();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const entries = useMemo(() => collectLeafTabs(tree), [tree]);
+  return (
+    <div ref={hostRef} className="tab-content-host">
+      {entries.map((entry) => (
+        <TabContentSlot
+          key={entry.tab.id}
+          entry={entry}
+          cwd={cwd}
+          hostRef={hostRef}
+          leafBodyRefs={leafBodyRefs}
+          onOpenFile={onOpenFile}
+          closeCenterTab={closeCenterTab}
+          registerCloseGuard={registerCloseGuard}
+          registerTabDeleted={registerTabDeleted}
+          onOpen={onOpen}
+          onDeleteSessionRequest={onDeleteSessionRequest}
+          toast={toast}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface TabContentSlotProps {
+  entry: { leafId: string; tab: Tab; activeTabId: string | null };
+  cwd: string;
+  hostRef: React.RefObject<HTMLDivElement | null>;
+  leafBodyRefs: React.RefObject<Map<string, HTMLElement>>;
+  closeCenterTab: (id: string) => void;
+  registerTabDeleted: (id: string, v: boolean) => void;
+  onOpenFile?: (relPath: string, fileName: string, root: string) => void;
+  registerCloseGuard: (id: string, guard: (() => void) | null) => void;
+  onOpen?: (req: { key?: string; cwd?: string; name?: string; leafId?: string }) => void;
+  onDeleteSessionRequest?: (key: string, name: string, tabId: string) => void;
+  toast: (msg: string) => void;
+}
+
+interface SlotRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * 单个 tab 的稳定容器：portal target 恒为 slot div（React 19 下容器恒定 → 不重挂载），
+ * slot div 绝对定位覆盖到所属 leaf 的内容区矩形。body 可能随树重构被重建（leafId 不变但
+ * 容器换了），把 body 纳入 deps 可让效果在 body 重建后重新同步。
+ */
+function TabContentSlot({
+  entry,
+  cwd,
+  hostRef,
+  leafBodyRefs,
+  closeCenterTab,
+  registerTabDeleted,
+  onOpenFile,
+  registerCloseGuard,
+  onOpen,
+  onDeleteSessionRequest,
+  toast,
+}: TabContentSlotProps) {
+  const [rect, setRect] = useState<SlotRect | null>(null);
+  const body = leafBodyRefs.current.get(entry.leafId);
+  const host = hostRef.current;
+  // 记录上次同步的 rect，用于判断「值变化」→ 触发终端 refit（避免渲染期副作用）。
+  const lastRectRef = useRef<SlotRect | null>(null);
+  useLayoutEffect(() => {
+    if (!body || !host) return;
+    const sync = () => {
+      const br = body.getBoundingClientRect();
+      const hr = host.getBoundingClientRect();
+      const next: SlotRect = { left: br.left - hr.left, top: br.top - hr.top, width: br.width, height: br.height };
+      const last = lastRectRef.current;
+      const same = !!last && last.left === next.left && last.top === next.top && last.width === next.width && last.height === next.height;
+      lastRectRef.current = next;
+      if (same) return; // 值未变：不触发重渲染、不触发 refit
+      // ADR-0003 修复：tab 移动到新位置/新 leaf 时，即使尺寸未变（仅位置变），也强制触发
+      // 终端 refit，使 canvas 用最新缓冲区重绘（真实 GPU 环境下无 resize 触发 → canvas 空白/旧帧）。
+      // 首次挂载（last=null）不触发——避免应用启动时对每个 tab 反复全量 fit。
+      if (last) window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT));
+      setRect(next);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(body);
+    return () => ro.disconnect();
+  }, [entry.leafId, body, host]);
+  if (!rect) return null;
+  return (
+    <div className="tab-content-slot" style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}>
+      <TabContent
+        tab={entry.tab}
+        active={entry.tab.id === entry.activeTabId}
+        cwd={cwd}
+        onOpenFile={onOpenFile}
+        closeCenterTab={closeCenterTab}
+        registerCloseGuard={registerCloseGuard}
+        registerTabDeleted={registerTabDeleted}
+        onOpen={onOpen}
+        onDeleteSessionRequest={onDeleteSessionRequest}
+        toast={toast}
+      />
+    </div>
+  );
+}
+
 function SplitPaneLeaf({
   leaf,
   cwd,
@@ -642,21 +986,9 @@ function SplitPaneLeaf({
   onDeleteSessionRequest,
 }: Props & { leaf: SplitLeaf }) {
   const selectTab = useSplitStore((s) => s.selectTab);
-  // 各 preview tab 的「文件已删除」标记：PreviewTab 上报，TabBar 标题红字+删除线。
-  const [tabDeleted, setTabDeleted] = useState<Record<string, boolean>>({});
-  // 接收 PreviewTab 的「文件已删除」上报，更新对应 tab 的标记（与 registerCloseGuard 同为命名回调模式）。
-  const registerTabDeleted = useCallback((id: string, v: boolean) => {
-    setTabDeleted((prev) => {
-      const next = { ...prev };
-      if (v) next[id] = true; else delete next[id];
-      return next;
-    });
-  }, []);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
   const setActiveLeaf = useSplitStore((s) => s.setActiveLeaf);
-  const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
   const splitPaneWithTab = useSplitStore((s) => s.splitPaneWithTab);
-  const { toast } = useToast();
 
   // tab 右键菜单状态
   const [tabContextMenu, setTabContextMenu] = useState<SplitTabContextMenuState | null>(null);
@@ -693,9 +1025,16 @@ function SplitPaneLeaf({
     }, 0);
   }, []);
 
-  // 从 DragContext 获取 leaf 的动态 items
-  const { leafItems, hoveredLeafId, canDrop } = useDragContext();
+  // 从 DragContext 获取 leaf 的动态 items 与拖拽状态
+  const { leafItems, hoveredLeafId, canDrop, isDragging, pendingSplitEdge, registerLeafBody, tabDeleted } = useDragContext();
   const isDragOver = hoveredLeafId === leaf.id;
+
+  // 注册本 leaf 的内容区容器到 DragContext，供全局 TabContentHost 覆盖层定位（rect-sync）。
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    registerLeafBody(leaf.id, bodyRef.current);
+    return () => registerLeafBody(leaf.id, null);
+  }, [registerLeafBody, leaf.id]);
 
   // 该 leaf 的可见 tab（按 order 排序）
   const orderedVisibleTabs = useMemo(
@@ -789,25 +1128,25 @@ function SplitPaneLeaf({
         sortableItems={sortableItems}
         onTabContextMenu={handleTabContextMenu}
       />
-      <div className="center-pane-body">
-        {/* keep-alive：所有 tab 内容永久挂载，非 active 用 opacity:0 隐藏。
-            TabContent 用 memo 隔离：store 更新导致本 leaf re-render 时，未变化的 tab
-            （内容标识相同）直接跳过，避免波及 Monaco / MarkdownPreview 等重组件。 */}
-        {leaf.tabs.map((t) => (
-          <TabContent
-            key={t.id}
-            tab={t}
-            active={t.id === leaf.activeTabId}
-            cwd={cwd}
-            onOpenFile={onOpenFile}
-            closeCenterTab={closeCenterTab}
-            registerCloseGuard={registerCloseGuard}
-            registerTabDeleted={registerTabDeleted}
-            onOpen={onOpen}
-            onDeleteSessionRequest={onDeleteSessionRequest}
-            toast={toast}
-          />
-        ))}
+      <div className="center-pane-body" ref={bodyRef}>
+        {/* 全局 keep-alive：tab 内容由 TabContentHost 经 portal 投射到本容器
+            （跨 leaf 移动不换 React 父节点，终端实例不销毁）。 */}
+        {/* ADR-0003：拖拽激活时叠加落点区 + 分屏预览。
+            绝对定位覆盖内容区，渲染在末尾，不与 keyed 的 TabContent 冲突（不触发其卸载）。 */}
+        {isDragging && hasContent && (
+          <>
+            <EdgeSplitZone leafId={leaf.id} side="top" />
+            <EdgeSplitZone leafId={leaf.id} side="right" />
+            <EdgeSplitZone leafId={leaf.id} side="bottom" />
+            <EdgeSplitZone leafId={leaf.id} side="left" />
+            {/* ADR-0003：所见即所得——预览线框精确等于分屏后新窗格区域。
+                新窗格恒占本 leaf 矩形的一半（ratios [0.5,0.5]），左/右、上/下对应
+                side=left/right/top/bottom；仅与边缘条带同 leaf 时渲染，鼠标离边即消失。 */}
+            {pendingSplitEdge?.leafId === leaf.id && (
+              <div className={`split-preview split-preview--${pendingSplitEdge.side}`} />
+            )}
+          </>
+        )}
         {/* 空状态 */}
         {leaf.tabs.length === 0 && (
           <div className="empty-state">
@@ -1011,7 +1350,7 @@ export function SplitPane(props: Props) {
         zIndex: isActive ? 1 : 0,
       }}
     >
-      <SplitPaneDragProvider cwd={cwd} isActive={isActive}>
+      <SplitPaneDragProvider tree={tree} cwd={cwd} isActive={isActive} {...rest}>
         <SplitPaneNode node={node} tree={tree} cwd={cwd} isActive={isActive} {...rest} />
       </SplitPaneDragProvider>
     </div>

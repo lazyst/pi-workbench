@@ -54,6 +54,21 @@ html, body, #root {
   z-index: 1;
 }
 
+/* 全局 keep-alive（ADR-0003）：TabContentHost 覆盖层 + TabContentSlot 稳定容器。
+   slot div 是 portal 恒定容器（React 19 下容器变更会重挂载 → 保持恒定以保留终端实例），
+   绝对定位覆盖到所属 leaf 内容区矩形（由 JS 同步 left/top/width/height）。
+   层在边缘条带(z5)/预览(z6)之下，pointer-events:none 不拦截，active 内容自身 auto。 */
+.tab-content-host {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.tab-content-slot {
+  position: absolute;
+  overflow: hidden;
+}
+
 /* ── 中间区目录标签条 ──
    在 TabBar 上方显示当前目录名，以及可切换的其他目录按钮。 */
 .center-pane-cwd-bar {
@@ -5045,6 +5060,7 @@ html, body, #root {
   min-width: 0;
   min-height: 0;
   flex: 1;
+  position: relative; /* ADR-0003：全局 keep-alive 的 .tab-content-host 以此为定位基准 */
 }
 
 /* SplitNode 容器：flex 行/列，子节点按 direction 排列 */
@@ -5149,6 +5165,84 @@ html, body, #root {
 .split-pane-leaf--drag-over--invalid {
   outline: 2px solid var(--danger);
   outline-offset: -2px;
+}
+
+/* ── 拖拽创建分屏（ADR-0003）：边缘条带（纯感应区）+ 所见即所得预览线框 ── */
+
+/* 边缘条带：绝对定位于内容区四向，30% 带宽、互不重叠（上/下全宽，左/右介于其间）。
+   纯感应区，无自身视觉——主视觉是悬停后出现的 split-preview 线框。
+   内容区中央（40%×40%）无落点、无线框——移入窗格只能拖到目标窗格 Tab 条。 */
+.split-edge-zone {
+  position: absolute;
+  z-index: 5; /* 高于内容区，低于 DragOverlay(portal) 与 split-preview */
+  background: transparent;
+  pointer-events: auto;
+}
+.split-edge-zone--top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30%;
+}
+.split-edge-zone--bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 30%;
+}
+.split-edge-zone--left {
+  left: 0;
+  top: 30%;
+  bottom: 30%;
+  width: 30%;
+}
+.split-edge-zone--right {
+  right: 0;
+  top: 30%;
+  bottom: 30%;
+  width: 30%;
+}
+
+/* 所见即所得：预览线框精确等于分屏后新窗格在 leaf 内占的区域。
+   实际分屏 ratios 恒为 [0.5, 0.5] → 新窗格 = leaf 矩形的一半（水平分屏占左/右半，
+   垂直分屏占上/下半）。虚线边框 + 半透明填充，pointer-events:none 不拦截事件。 */
+.split-preview {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-sm);
+}
+.split-preview--top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+}
+.split-preview--bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+}
+.split-preview--left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+}
+.split-preview--right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+/* DragOverlay 方向提示 */
+.drag-overlay-split-hint {
+  margin-left: 4px;
+  opacity: 0.9;
 }
 
 /* DragOverlay 样式 */

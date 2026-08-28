@@ -398,6 +398,22 @@ export class XtermTerminal implements LiveTerminal {
   }
 
   /**
+   * 待还原的 scrollback（防御性还原）：实例若被销毁重建（keep-alive 失效的任何路径），
+   * 由 PaneManager.acquirePane 从主进程取回上次保存的缓冲区排队到此；mount 完成后重放。
+   */
+  private pendingScrollback: string | null = null;
+
+  /** 排队待还原的 scrollback：已 mount 则立即重放，否则挂起到 mount 后。 */
+  queueScrollbackRestore(data: string): void {
+    if (!data || this.disposed) return;
+    if (this.mounted && this.term) {
+      this.restoreScrollback(data);
+    } else {
+      this.pendingScrollback = data;
+    }
+  }
+
+  /**
    * 在首次进入 active 且 host 就绪时挂载终端：构造 xterm、装载 addons、open、锁定渲染器、绑定 IPC。
    * 与 VS Code XtermTerminal._initialization 等价（构造 → loadAddon 系列 → open → webgl）。
    * keep-alive：仅在首次进入时调用一次；后续 active 切换走 setActive，不重建实例。
@@ -411,6 +427,12 @@ export class XtermTerminal implements LiveTerminal {
     // 登记到存活终端注册表：主题/字号全局变更由 registry 单点订阅后统一刷新本实例
     // （见 lib/terminal-registry），无需本实例各自订阅 onThemeChange/onFontSizeChange。
     registerTerminal(this);
+    // 防御性还原：实例重建后（keep-alive 失效路径），mount 完成时重放从主进程取回的 scrollback。
+    if (this.pendingScrollback) {
+      const data = this.pendingScrollback;
+      this.pendingScrollback = null;
+      this.restoreScrollback(data);
+    }
   }
 
   /**
@@ -2126,7 +2148,15 @@ export class XtermTerminal implements LiveTerminal {
       proposed.cols = Math.max(2, Math.floor(width / cellWidth));
       proposed.rows = Math.max(1, Math.floor(height / cellHeight));
     }
-    if (proposed.cols === this.term.cols && proposed.rows === this.term.rows) return;
+    if (proposed.cols === this.term.cols && proposed.rows === this.term.rows) {
+      // force=true（fitImmediate / 切回可见 / 挂载）：即使尺寸未变，也强制整屏重绘。
+      // 修复「tab 移动到新 leaf 但尺寸不变 → 无 resize 触发 → canvas 保留旧帧/空白」
+      // （forceRepaintThroughRenderPause 只清暂停标记，不实际重绘）。
+      if (force) {
+        try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
+      }
+      return;
+    }
     try {
       this.term.resize(proposed.cols, proposed.rows);
     } catch { /* resize 边界 */ }

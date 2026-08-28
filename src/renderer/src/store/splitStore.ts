@@ -512,8 +512,12 @@ export interface SplitStore {
 
   // 分屏专用 action
   splitPane: (leafId: string, direction: SplitDirection) => void;
-  /** 分屏并将指定 tab 移到新 leaf（不自动创建终端）。 */
-  splitPaneWithTab: (leafId: string, tabId: string, direction: SplitDirection) => void;
+  /** 分屏并将指定 tab 移到新 leaf（不自动创建终端）。
+   *  opts.side：'before'=新 leaf 前置（拖到左/上边缘），'after'=后置（拖到右/下边缘，默认）。
+   *  opts.allowEmptySource：true=允许源 leaf 只剩被移 tab（拖拽到边缘创建分屏），源变空后
+   *    自动合并该空 leaf（不留空窗格：同 leaf 时分屏取消、跨 leaf 时源窗格消失）；默认 false 守卫单 Tab。
+   */
+  splitPaneWithTab: (leafId: string, tabId: string, direction: SplitDirection, opts?: { side?: 'before' | 'after'; allowEmptySource?: boolean }) => void;
   closeLeaf: (leafId: string) => void;
   setRatios: (nodeId: string, ratios: number[]) => void;
   setActiveLeaf: (leafId: string) => void;
@@ -1059,14 +1063,22 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       };
     }),
 
-  splitPaneWithTab: (leafId, tabId, direction) =>
+  splitPaneWithTab: (leafId, tabId, direction, opts) =>
     set((state) => {
-      const found = findLeaf(state.cwdTrees, leafId);
-      if (!found) return {};
-      const { cwd, leaf } = found;
+      // 目标 leaf：分屏发生处（拖拽命中边缘的 leaf，或右键菜单的当前 leaf）
+      const targetFound = findLeaf(state.cwdTrees, leafId);
+      if (!targetFound) return {};
+      const { cwd: targetCwd, leaf: targetLeaf } = targetFound;
 
-      const tab = leaf.tabs.find((t) => t.id === tabId);
-      if (!tab) return {};
+      // 源 leaf：被拖 tab 实际所在 leaf。与目标可能不同 → 跨 leaf 分屏
+      // （拖 tab 到另一窗格边缘，在该窗格处创建分屏）。
+      const sourceFound = findTabById(state.cwdTrees, tabId);
+      if (!sourceFound) return {};
+      const { cwd: sourceCwd, leaf: sourceLeaf, tab } = sourceFound;
+
+      // 拖拽在同一 SplitPane（同 cwd）内；跨 cwd 不允许
+      if (sourceCwd !== targetCwd) return {};
+      const cwd = sourceCwd;
 
       // 保存滚动位置（终端/会话类 tab）
       if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
@@ -1074,47 +1086,60 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
       }
 
       // 从源 leaf 移除 tab
-      const remainingTabs = leaf.tabs.filter((t) => t.id !== tabId);
-      // 源 leaf 不应为空（UI 侧已禁用单 tab 分屏）
-      if (remainingTabs.length === 0) return {};
+      const sourceRemaining = sourceLeaf.tabs.filter((t) => t.id !== tabId);
+      // 源 leaf 变空时：allowEmptySource=true（拖拽边缘分屏）允许继续，源空 leaf 随后自动合并
+      // （不留空窗格）；默认 false（右键菜单）守卫——单 tab 不分屏。
+      if (sourceRemaining.length === 0 && !opts?.allowEmptySource) return {};
 
-      // 更新源 leaf
-      let updatedLeaf: SplitLeaf = { ...leaf, tabs: remainingTabs };
+      let updatedSourceLeaf: SplitLeaf = { ...sourceLeaf, tabs: sourceRemaining };
       let nextCwdActiveTab = state.cwdActiveTab;
       let nextCwdTabHistory = state.cwdTabHistory;
 
-      if (leaf.activeTabId === tabId) {
+      if (sourceLeaf.activeTabId === tabId) {
         const next = selectNextTabOnClose(
-          remainingTabs, tabId, cwd,
-          leaf.activeTabId, state.activeCwd,
+          sourceRemaining, tabId, cwd,
+          sourceLeaf.activeTabId, state.activeCwd,
           state.cwdActiveTab, state.cwdTabHistory,
         );
         if (next) {
-          updatedLeaf = { ...updatedLeaf, activeTabId: next.activeTabId };
+          updatedSourceLeaf = { ...updatedSourceLeaf, activeTabId: next.activeTabId };
           nextCwdActiveTab = next.cwdActiveTab;
           nextCwdTabHistory = next.cwdTabHistory;
         }
       }
 
-      // 创建新 leaf 并放入被移动的 tab
+      // 新 leaf 放被拖 tab
       const newLeaf = createLeaf();
       newLeaf.tabs = [{ ...tab }];
       newLeaf.activeTabId = tabId;
 
-      // 构建 split node：源 leaf（已移除 tab）+ 新 leaf
-      const nodeId = uid();
+      // 在目标 leaf 处构建 split node。
+      // - 同 leaf（source === target）：分屏的「原那一半」= 移除 tab 后的源 leaf；
+      // - 跨 leaf：原那一半 = 目标 leaf 原样（tab 来自源，目标 tabs 不变），
+      //   源 leaf 另行更新（移除 tab）。两次 updateLeaf 作用于不同 leaf，不冲突。
+      const isSameLeaf = sourceLeaf.id === targetLeaf.id;
+      const updatedTargetHalf: SplitLeaf = isSameLeaf ? updatedSourceLeaf : targetLeaf;
       const splitNode: SplitNode = {
         type: 'split',
-        id: nodeId,
+        id: uid(),
         direction,
         ratios: [0.5, 0.5],
-        children: [updatedLeaf, newLeaf],
+        // side='before'（拖到左/上边缘）时新 leaf 前置，'after'（右/下边缘）时后置
+        children: opts?.side === 'before' ? [newLeaf, updatedTargetHalf] : [updatedTargetHalf, newLeaf],
       };
 
-      // 替换树中的 leaf
-      const newTree = updateLeaf(state.cwdTrees[cwd], leafId, splitNode);
+      let newTree = updateLeaf(state.cwdTrees[cwd], targetLeaf.id, splitNode);
+      if (sourceRemaining.length === 0) {
+        // 源 leaf 变空（allowEmptySource 拖拽分屏）：自动合并——移除空 leaf，其兄弟/父链
+        // 自动调整占满（单 child 提升；树全空回退为空 leaf）。
+        // - 同 leaf：空 half 在 splitNode 内 → 移除后 splitNode 只剩新 leaf → 提升 → 分屏取消（tab 留在原位）；
+        // - 跨 leaf：源窗格整个消失，其余窗格吸收空间。
+        newTree = removeLeafFromTree(newTree, sourceLeaf.id) ?? createLeaf();
+      } else if (!isSameLeaf) {
+        newTree = updateLeaf(newTree, sourceLeaf.id, updatedSourceLeaf);
+      }
 
-      // 更新历史
+      // 更新历史与活跃状态
       nextCwdTabHistory = pushTabHistory(nextCwdTabHistory, cwd, tabId);
       const allTabs = collectAllTabs({ [cwd]: newTree });
       nextCwdActiveTab = updateCwdActiveTab(nextCwdActiveTab, allTabs, cwd, tabId);
