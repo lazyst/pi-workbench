@@ -2,7 +2,7 @@
 // 右键菜单状态管理。参考 orca 的 rich-markdown-context-command-routing.ts 命令设计。
 //
 // 设计要点：
-//   • 使用 pi-desktop 已有的 React ContextMenu 组件，而非 Electron 原生菜单。
+//   • 使用 pi-workbench 已有的 React ContextMenu 组件，而非 Electron 原生菜单。
 //   • 对 TipTap 编辑器：提供格式化命令（标题、加粗、列表、链接等）。
 //   • 对 Markdown 预览：提供复制/全选/复制链接地址等只读操作。
 //   • 使用坐标命中检测（参考 orca 的 isRichMarkdownContextCommandTarget），

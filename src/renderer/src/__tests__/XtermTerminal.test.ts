@@ -588,7 +588,7 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
 
   // 终端标题变化（OSC 0 序列）：xterm 解析 \x1b]0;title\x07 后触发 onTitleChange 回调，
   // 并经 getTitle() 可查询最近标题。这是 pi 扩展 spinner 标题帧在 tab 上可见的前提
-  // （渲染端必须订阅 onTitleChange，见 pi-desktop-sync-source）。
+  // （渲染端必须订阅 onTitleChange，见 pi-workbench-sync-source）。
   it('fires onTitleChange and exposes getTitle() when OSC 0 title arrives', async () => {
     const api = makeApi();
     const titles: string[] = [];

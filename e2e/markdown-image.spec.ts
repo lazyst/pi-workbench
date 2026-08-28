@@ -16,7 +16,7 @@ const PNG_BYTES = Buffer.from(
 );
 
 async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
-  const e = { ...process.env, PI_DESKTOP_FAKE: '1' };
+  const e = { ...process.env, PI_WORKBENCH_FAKE: '1' };
   delete (e as any).ELECTRON_RENDERER_URL;
   electronApp = await _electron.launch({ args: [MAIN], env: e });
   const page = await electronApp.firstWindow();

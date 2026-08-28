@@ -39,7 +39,7 @@ test('Ctrl+V 粘贴：PTY 收到纯文本、不含 [200~ 字面量（回归 #bra
   const env = { ...process.env };
   delete (env as any).ELECTRON_RENDERER_URL;
 
-  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir } });
+  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir } });
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
@@ -79,7 +79,7 @@ test('右键粘贴（无选区）：PTY 收到纯文本、不含 [200~ 字面量
   const env = { ...process.env };
   delete (env as any).ELECTRON_RENDERER_URL;
 
-  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir } });
+  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir } });
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');

@@ -290,7 +290,7 @@ export class XtermTerminal implements LiveTerminal {
   // 命令完成回调（供未来「重跑 / 复制命令」等能力使用）。
   onCommandFinished: ((command: string) => void) | null = null;
   // 终端标题变化回调（OSC 0/1/2 标题序列）：xterm 解析 \x1b]0;title\x07 后触发。
-  // 供壳更新 tab 标题——pi 扩展的 spinner 标题帧依赖此回调才能显示（见 pi-desktop-sync-source）。
+  // 供壳更新 tab 标题——pi 扩展的 spinner 标题帧依赖此回调才能显示（见 pi-workbench-sync-source）。
   onTitleChange: ((title: string) => void) | null = null;
   // 代理状态变化回调：代理开始工作（spinner 启动）。
   onAgentBecameWorking: (() => void) | null = null;
@@ -1649,7 +1649,7 @@ export class XtermTerminal implements LiveTerminal {
   }
 
   /** 渲染器策略（S1）：open 之后探测 WebGL 可用性并装载，可重试（不再永久锁定）。
-   * 可用环境变量 PI_DESKTOP_RENDERER 强制渲染器，用于排查「WebGL cell 度量跳变导致编辑器漂移」：
+   * 可用环境变量 PI_WORKBENCH_RENDERER 强制渲染器，用于排查「WebGL cell 度量跳变导致编辑器漂移」：
    *   - 未设置 / 'auto'：探测 WebGL，可用则 GPU，否则 DOM
    *   - 'webgl'：强制 WebGL（不可用则警告并回退 DOM）
    *   - 'dom'：强制 DOM 渲染器（绕过 WebGL，验证是否 WebGL 度量问题）
@@ -1676,9 +1676,9 @@ export class XtermTerminal implements LiveTerminal {
       console.info('[terminal] 渲染器已按 gpuAcceleration=off 使用 DOM 渲染器。');
       return;
     }
-    const forced = (import.meta.env?.VITE_PI_DESKTOP_RENDERER ?? '').toLowerCase();
+    const forced = (import.meta.env?.VITE_PI_WORKBENCH_RENDERER ?? '').toLowerCase();
     if (forced === 'dom') {
-      console.info('[terminal] 渲染器已按 PI_DESKTOP_RENDERER=dom 强制使用 DOM 渲染器。');
+      console.info('[terminal] 渲染器已按 PI_WORKBENCH_RENDERER=dom 强制使用 DOM 渲染器。');
       return;
     }
     // 用户设置 gpuAcceleration=on → 强制 WebGL：跳过 auto 策略探测（对齐 VS Code gpuAcceleration:'on'）。

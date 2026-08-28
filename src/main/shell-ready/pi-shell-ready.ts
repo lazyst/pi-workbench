@@ -20,7 +20,7 @@ import type { TerminalProfile } from '../../renderer/src/types';
 // =========================================================================
 
 /** Shell-ready 标记：OSC 777 序列 */
-const SHELL_READY_MARKER_PREFIX = '\x1b]777;pi-desktop-shell-ready';
+const SHELL_READY_MARKER_PREFIX = '\x1b]777;pi-workbench-shell-ready';
 
 /** 超时兜底：最长等待 shell 就绪的时间（ms） */
 export const SHELL_READY_TIMEOUT_MS = 1500;
@@ -152,8 +152,8 @@ function getWrapperRoot(): string {
     try { return os.userInfo().username; } catch { return 'unknown'; }
   })();
   const base = process.env.APPDATA
-    ? path.join(process.env.APPDATA, 'pi-desktop', WRAPPER_ROOT_NAME)
-    : path.join(os.tmpdir(), `pi-desktop-${user}-${WRAPPER_ROOT_NAME}`);
+    ? path.join(process.env.APPDATA, 'pi-workbench', WRAPPER_ROOT_NAME)
+    : path.join(os.tmpdir(), `pi-workbench-${user}-${WRAPPER_ROOT_NAME}`);
   return base;
 }
 
@@ -177,7 +177,7 @@ function getZshWrapperDir(): string {
 }
 
 function generateZshZshenv(): string {
-  return `# pi-desktop zsh shell-ready wrapper — .zshenv
+  return `# pi-workbench zsh shell-ready wrapper — .zshenv
 # 加载用户原始 .zshenv，然后恢复 ZDOTDIR 指向 wrapper 目录
 
 # 记录 wrapper 自身的 ZDOTDIR
@@ -204,7 +204,7 @@ unset _pi_orca_wrapper_zdotdir _pi_user_zdotdir
 }
 
 function generateZshZprofile(): string {
-  return `# pi-desktop zsh shell-ready wrapper — .zprofile
+  return `# pi-workbench zsh shell-ready wrapper — .zprofile
 # 加载用户原始 .zprofile
 
 _pi_user_zdotdir="\${PI_ORIG_ZDOTDIR:-\${HOME:-}}"
@@ -224,7 +224,7 @@ unset _pi_user_zdotdir
 }
 
 function generateZshZshrc(): string {
-  return `# pi-desktop zsh shell-ready wrapper — .zshrc
+  return `# pi-workbench zsh shell-ready wrapper — .zshrc
 # 加载用户原始 .zshrc，注册 shell-ready 标记发射器
 
 _pi_user_zdotdir="\${PI_ORIG_ZDOTDIR:-\${HOME:-}}"
@@ -252,7 +252,7 @@ if [[ "\${PI_SHELL_READY_MARKER:-0}" == "1" ]]; then
   fi
 
   _pi_prompt_mark() {
-    printf '\\033]777;pi-desktop-shell-ready\\007'
+    printf '\\033]777;pi-workbench-shell-ready\\007'
     if [[ -n "\${_pi_prev_line_init:-}" ]]; then
       "\${_pi_prev_line_init}" "$@"
     fi
@@ -265,7 +265,7 @@ unset _pi_user_zdotdir _pi_prev_line_init
 }
 
 function generateZshZlogin(): string {
-  return `# pi-desktop zsh shell-ready wrapper — .zlogin
+  return `# pi-workbench zsh shell-ready wrapper — .zlogin
 # 加载用户原始 .zlogin，然后恢复 ZDOTDIR
 
 _pi_user_zdotdir="\${PI_ORIG_ZDOTDIR:-\${HOME:-}}"
@@ -305,7 +305,7 @@ function getBashWrapperDir(): string {
 }
 
 function generateBashRcfile(): string {
-  return `# pi-desktop bash shell-ready wrapper — rcfile
+  return `# pi-workbench bash shell-ready wrapper — rcfile
 # 加载用户正常的 bash 启动文件，然后发射 shell-ready 标记
 
 # 源码系统 profile（仅 login shell）
@@ -329,7 +329,7 @@ if [[ "\${PI_SHELL_READY_MARKER:-0}" == "1" ]]; then
     # 只发射一次，避免每个 prompt 都发射
     if [[ -z "\${_pi_shell_ready_done:-}" ]]; then
       _pi_shell_ready_done=1
-      printf '\\033]777;pi-desktop-shell-ready\\007'
+      printf '\\033]777;pi-workbench-shell-ready\\007'
     fi
   }
   # 追加到已有的 PROMPT_COMMAND
@@ -351,7 +351,7 @@ function ensureBashWrappers(): void {
 // ── PowerShell wrapper ───────────────────────────────────────────────
 
 function generatePowerShellBootstrap(): string {
-  return `# pi-desktop PowerShell shell-ready bootstrap
+  return `# pi-workbench PowerShell shell-ready bootstrap
 # 通过 -EncodedCommand 注入，在 profile 加载后执行
 # 替换 prompt 函数，在首次 prompt 时发射 OSC 777 标记
 
@@ -376,7 +376,7 @@ function Global:prompt {
 
     # 首次 prompt 发射 OSC 777 shell-ready 标记
     if (-not $Global:__PiShellReadyState.HasSeenPrompt) {
-        $result += "$($Global:__PiShellReadyState.Esc)]777;pi-desktop-shell-ready$($Global:__PiShellReadyState.Bel)"
+        $result += "$($Global:__PiShellReadyState.Esc)]777;pi-workbench-shell-ready$($Global:__PiShellReadyState.Bel)"
     }
 
     # 发射 OSC 133 序列（命令退出 + prompt 开始）
@@ -399,7 +399,7 @@ function Global:prompt {
 
 function generateGitBashRcfile(): string {
   // Git Bash 本质是 bash，但需要额外 chcp 65001 切换 UTF-8
-  return `# pi-desktop Git Bash shell-ready wrapper — rcfile
+  return `# pi-workbench Git Bash shell-ready wrapper — rcfile
 # 切换 UTF-8 编码，然后加载用户正常配置
 
 chcp.com 65001 >/dev/null 2>&1
@@ -424,7 +424,7 @@ if [[ "\${PI_SHELL_READY_MARKER:-0}" == "1" ]]; then
   _pi_shell_ready_mark() {
     if [[ -z "\${_pi_shell_ready_done:-}" ]]; then
       _pi_shell_ready_done=1
-      printf '\\033]777;pi-desktop-shell-ready\\007'
+      printf '\\033]777;pi-workbench-shell-ready\\007'
     fi
   }
   if [[ -n "\${PROMPT_COMMAND:-}" ]]; then
@@ -488,7 +488,7 @@ export interface ShellReadyLaunchConfig {
 export function getShellReadyLaunchConfig(profile: TerminalProfile): ShellReadyLaunchConfig {
   const shellKind = isGitBash(profile.path) ? 'git-bash' : detectShellKind(profile.path);
   const envMixin: NodeJS.ProcessEnv = {
-    PI_DESKTOP: '1',
+    PI_WORKBENCH: '1',
     PI_SHELL_READY_MARKER: '1',
   };
 

@@ -21,7 +21,7 @@ import { registerGitHandlers } from './handlers/gitHandlers';
 import { registerPiToolHandlers } from './handlers/piToolHandlers';
 import { registerUpdateHandlers } from './handlers/updateHandlers';
 import { disposeOperationManager } from './operationManager';
-import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desktop-sync-source';
+import { getPiWorkbenchSyncExtensionSource, PI_WORKBENCH_SYNC_FILE } from './pi-workbench-sync-source';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
 // terminal.integrated.gpuAcceleration 机制）。现代 Electron/Chromium 在无硬件 GPU 时
@@ -69,10 +69,10 @@ import { detectTerminalProfiles } from './shellProfiles';
 
 // 默认应用工作目录的绝对路径（仅 main 进程使用，有 node:os）。config.ts 因被
 // renderer（sandbox，无 node:os）共享而不能 import node 模块，故在此用 node:os/path 计算。
-// 文件夹名 ('defaultWorkSpace') 由 config.DEFAULT_APP_WORK_DIR_NAME 提供，保持单一来源。
-// 开发版实例开关：通过 PI_DESKTOP_DEV 环境变量启用，与安装版使用不同的
+// 文件夹名 ('defaultWorkbench') 由 config.DEFAULT_APP_WORK_DIR_NAME 提供，保持单一来源。
+// 开发版实例开关：通过 PI_WORKBENCH_DEV 环境变量启用，与安装版使用不同的
 // app.name 和 config 文件，使两者可同时运行（见设计文档「双实例方案」）。
-const isDevInstance = !!process.env.PI_DESKTOP_DEV;
+const isDevInstance = !!process.env.PI_WORKBENCH_DEV;
 
 function getDefaultAppWorkDir(): string {
   return path.join(os.homedir(), '.pi', 'pi-workbench', 'defaultWorkbench');
@@ -98,25 +98,25 @@ function loadConfig(): AppConfig {
   }
 }
 
-const PI_DESKTOP_MANAGED_MARKER = '@pi-desktop-managed';
+const PI_WORKBENCH_MANAGED_MARKER = '@pi-workbench-managed';
 
-/** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
- * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。
+/** 确保 pi-workbench 同步扩展已安装到 ~/.pi/agent/extensions/。
+ * 每次启动覆盖写入，保证扩展代码与 pi-workbench 版本一致。
  * 扩展源码内联于此，不依赖文件拷贝（避免 electron-vite 构建输出问题）。
- * 带 marker 保护：如果文件存在且不包含 @pi-desktop-managed 标记，
+ * 带 marker 保护：如果文件存在且不包含 @pi-workbench-managed 标记，
  * 视为用户自维护的扩展，不覆盖。 */
-function ensurePiDesktopExtension(): void {
+function ensurePiWorkbenchExtension(): void {
   const extDir = path.join(os.homedir(), '.pi', 'agent', 'extensions');
-  const extPath = path.join(extDir, PI_DESKTOP_SYNC_FILE);
+  const extPath = path.join(extDir, PI_WORKBENCH_SYNC_FILE);
   try {
     const existing = fs.readFileSync(extPath, 'utf-8');
-    if (!existing.includes(PI_DESKTOP_MANAGED_MARKER)) return;
+    if (!existing.includes(PI_WORKBENCH_MANAGED_MARKER)) return;
   } catch {
     // 文件不存在或不可读，继续写入
   }
   try {
     fs.mkdirSync(extDir, { recursive: true });
-    fs.writeFileSync(extPath, getPiDesktopSyncExtensionSource(), 'utf-8');
+    fs.writeFileSync(extPath, getPiWorkbenchSyncExtensionSource(), 'utf-8');
   } catch {
     // 写入失败时静默忽略
   }
@@ -125,7 +125,7 @@ function ensurePiDesktopExtension(): void {
 function ensureAppWorkDir(): string {
   ensureLoaded();
   const cfg = configState!;
-  // 旧配置/损坏时补全默认 ~/pi-desktop/defaultWorkSpace，并写回持久化（对齐 ADR §3 A1「自动填默认并写回」）。
+  // 旧配置/损坏时补全默认 ~/pi-workbench/defaultWorkbench，并写回持久化（对齐 ADR §3 A1「自动填默认并写回」）。
   // config.ts 的 defaultConfig 只返回文件夹名（renderer 安全），此处补全为绝对路径。
   let dir = cfg.appWorkDir;
   if (!dir || !path.isAbsolute(dir)) {
@@ -283,10 +283,10 @@ function createTray(win: BrowserWindow): void {
 function resolvePi(): string {
   const explicit = process.env.PI_BIN;
   if (explicit) return explicit;
-  // E2E 测试模式（PI_DESKTOP_FAKE=1，见 e2e/*.spec.ts）：用 node 直接跑 fake-pi.mjs
+  // E2E 测试模式（PI_WORKBENCH_FAKE=1，见 e2e/*.spec.ts）：用 node 直接跑 fake-pi.mjs
   // （收到首行 stdin 即写 .jsonl 会话文件，模拟真实 pi 的写盘晋升流程，不依赖真实 pi）。
   // fake-pi.mjs 由 scripts/copy-assets.mjs 复制到构建输出目录（out/main/）。
-  if (process.env.PI_DESKTOP_FAKE) {
+  if (process.env.PI_WORKBENCH_FAKE) {
     return `node ${path.join(__dirname, 'fake-pi.mjs')}`;
   }
   const exts = ['.cmd', '.exe', '.ps1', '.bat', ''];
@@ -318,7 +318,7 @@ function resolveNodeDir(): string | undefined {
 }
 
 function resolveSessionsDir(): string {
-  return process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
+  return process.env.PI_WORKBENCH_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
 }
 
 /** 在默认浏览器中打开 URL。
@@ -356,8 +356,8 @@ function unescapeField(s: string): string {
 }
 
 function createWindow() {
-  // 确保 pi-desktop 同步扩展已安装
-  ensurePiDesktopExtension();
+  // 确保 pi-workbench 同步扩展已安装
+  ensurePiWorkbenchExtension();
   // 确保 appWorkDir 已解析为绝对路径并已创建目录，避免 renderer 拿到相对路径后报错。
   ensureAppWorkDir();
   const cfg = getConfig();

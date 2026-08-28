@@ -1,10 +1,10 @@
-# Architecture Optimization — pi-desktop
+# Architecture Optimization — pi-workbench
 
 Status: `ready-for-agent`
 
 ## Problem Statement
 
-pi-desktop 的代码库经过多轮功能迭代，积累了一些架构债务（architectural debt）：
+pi-workbench 的代码库经过多轮功能迭代，积累了一些架构债务（architectural debt）：
 主进程入口文件（`main/index.ts`）达到 1568 行且零测试覆盖；3 个 PTY 池中 2 个已废弃但仍留存在代码库中造成混淆；
 5 个工具函数在 2 个文件中完全重复；tab 切换逻辑在 store 中重复 6 次；App.tsx 持有 ~20 个 useState 导致状态流碎片化；
 PTY 所有权追踪分散在 4 个数据结构中；IPC 通道命名存在不一致。

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { PI_DESKTOP_SYNC_FILE } from '../pi-desktop-sync-source';
+import { PI_WORKBENCH_SYNC_FILE } from '../pi-workbench-sync-source';
 
 /**
  * Pi 工具配置相关 IPC handler 注册。
@@ -424,14 +424,14 @@ export function registerPiToolHandlers(
       if (!(entry.isDirectory() || entry.isFile())) continue;
       if (seenNames.has(entry.name)) continue;             // 同名去重（启用目录先扫，优先）
       const full = path.join(dir, entry.name);
-      const isPiDesktop = entry.name === PI_DESKTOP_SYNC_FILE;
+      const isPiWorkbench = entry.name === PI_WORKBENCH_SYNC_FILE;
       result.push({
         name: entry.name,
         type: 'local',
         source: full,
         disabled,
-        // pi-desktop-sync 为系统内置同步扩展，界面不可禁用/删除（禁用会在下次启动被重写）。
-        managed: !isPiDesktop,
+        // pi-workbench-sync 为系统内置同步扩展，界面不可禁用/删除（禁用会在下次启动被重写）。
+        managed: !isPiWorkbench,
         dir: full,
       });
       seenNames.add(entry.name);
@@ -520,7 +520,7 @@ export function registerPiToolHandlers(
       const src = payload.dir;
       if (!isSafeLocalName(payload.name)) return { success: false, error: 'Invalid extension name' };
       if (!isInsideLocalExtDir(src)) return { success: false, error: 'Invalid extension path' };
-      if (payload.name === PI_DESKTOP_SYNC_FILE) return { success: false, error: 'Cannot disable built-in extension' };
+      if (payload.name === PI_WORKBENCH_SYNC_FILE) return { success: false, error: 'Cannot disable built-in extension' };
       if (!fs.existsSync(src)) return { success: false, error: 'Extension not found' };
       const disabledDir = path.join(path.dirname(src), '.disabled');
       const dst = path.join(disabledDir, payload.name);
@@ -562,7 +562,7 @@ export function registerPiToolHandlers(
       const dst = path.join(enabledRoot, payload.name);
       try {
         if (fs.existsSync(dst)) {
-          // 启用目录已有同名（如 pi-desktop-sync 被启动覆盖写回）。此时禁用副本是残留，删除即可。
+          // 启用目录已有同名（如 pi-workbench-sync 被启动覆盖写回）。此时禁用副本是残留，删除即可。
           fs.rmSync(src, { recursive: true, force: true });
           return { success: true };
         }
@@ -607,7 +607,7 @@ export function registerPiToolHandlers(
     if (payload.type === 'local' && payload.dir) {
       if (!isSafeLocalName(payload.name)) return { success: false, error: 'Invalid extension name' };
       if (!isInsideLocalExtDir(payload.dir)) return { success: false, error: 'Invalid extension path' };
-      if (payload.name === PI_DESKTOP_SYNC_FILE) return { success: false, error: 'Cannot delete built-in extension' };
+      if (payload.name === PI_WORKBENCH_SYNC_FILE) return { success: false, error: 'Cannot delete built-in extension' };
       if (!fs.existsSync(payload.dir)) return { success: false, error: 'Extension not found' };
       try {
         fs.rmSync(payload.dir, { recursive: true, force: true });

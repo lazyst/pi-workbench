@@ -64,7 +64,7 @@ export function SessionPane({ sessionKey, active }: Props) {
     termRef.current = term;
     // 视口贴底状态变化 → 驱动浮钮显隐（仅在状态翻转时回调，见 XtermTerminal.notifyScrollState）。
     setPaneScrollHandler(sessionKey, (bottom) => setAtBottom(bottom));
-    // 文件链接点击 → 在 pi-desktop 编辑器中打开（通过 tabStore.openPreview）。
+    // 文件链接点击 → 在 pi-workbench 编辑器中打开（通过 tabStore.openPreview）。
     term.onOpenFile = (path, line, col) => {
       const fileName = path.split(/[\\/]/).filter(Boolean).pop() || path;
       useTabStore.getState().openPreview('', path, fileName);

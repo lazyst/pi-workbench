@@ -149,7 +149,7 @@ export interface PiApi {
   onNewFromPi?: (cb: (payload: { ptyId: string; uuid: string; cwd: string; name: string }) => void) => void;
   // 会话名变更通知（/name 命令触发）
   onSessionNameChanged?: (cb: (payload: { ptyId: string; name: string }) => void) => () => void;
-  // 注册 PTY 初始 owner（pi-desktop 同步扩展用）
+  // 注册 PTY 初始 owner（pi-workbench 同步扩展用）
   registerPtyOwner?: (ptyId: string, ownerKey: string) => void;
   // 查询 PTY 所有权（替换 ptyOwnersRef 和 _virtualToPty）
   queryPtyOwner?: (key: string) => Promise<{ owner?: string; ptyId?: string; virtual?: string }>;

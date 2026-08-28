@@ -1,18 +1,18 @@
 /**
- * Pi Desktop 同步扩展源码 —— 由 ensurePiDesktopExtension() 写入 ~/.pi/agent/extensions/。
+ * Pi Workbench 同步扩展源码 —— 由 ensurePiWorkbenchExtension() 写入 ~/.pi/agent/extensions/。
  *
- * 此文件在 pi 进程内运行（由 jiti 加载），不能引用 pi-desktop 或 Electron 的任何模块。
+ * 此文件在 pi 进程内运行（由 jiti 加载），不能引用 pi-workbench 或 Electron 的任何模块。
  * 仅依赖 @earendil-works/pi-coding-agent 的 ExtensionAPI 类型。
  *
  * 环境变量守卫：
- * - 仅在 PI_DESKTOP=1 时生效（即由 pi-desktop spawn 的 pi 进程）
+ * - 仅在 PI_WORKBENCH=1 时生效（即由 pi-workbench spawn 的 pi 进程）
  * - 独立终端中运行的 pi 不受影响
  */
-export const PI_DESKTOP_SYNC_FILE = 'pi-desktop-sync.ts'
+export const PI_WORKBENCH_SYNC_FILE = 'pi-workbench-sync.ts'
 
-export function getPiDesktopSyncExtensionSource(): string {
+export function getPiWorkbenchSyncExtensionSource(): string {
   return [
-    '// @pi-desktop-managed',
+    '// @pi-workbench-managed',
     'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
     'import { randomUUID } from "node:crypto";',
     '',
@@ -20,7 +20,7 @@ export function getPiDesktopSyncExtensionSource(): string {
     "const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];",
     '',
     'export default function (pi: ExtensionAPI) {',
-    '  if (!process.env.PI_DESKTOP) return;',
+    '  if (!process.env.PI_WORKBENCH) return;',
     '',
     '  // ── spinner 动画状态 ──',
     '  let timer = null;',

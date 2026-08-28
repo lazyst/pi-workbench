@@ -7,7 +7,7 @@
  *
  * - command === 'pi'：spawn shell 进程，等待 shell 就绪后自动注入 pi 命令
  *   （走 Shell-Ready 模式，类似 Orca 的实现），
- *   id 形如 'live-<uuid>'，env 含 PI_DESKTOP=1。
+ *   id 形如 'live-<uuid>'，env 含 PI_WORKBENCH=1。
  * - command === undefined：spawn 用户 shell 进程（走原 IntegratedTerminalPool.create 路径），
  *   id 形如 'term-<uuid>'，env 含 TERM=xterm-256color / COLORTERM=truecolor，
  *   并注入 VS Code shell integration 脚本。
@@ -323,7 +323,7 @@ export class UnifiedTerminalPool {
   }
 
   /** spawn pi 进程（shell-ready 模式）：先 spawn shell，等待就绪后自动注入 pi 命令。
-   * id 形如 'live-<uuid>'，env 含 PI_DESKTOP=1。
+   * id 形如 'live-<uuid>'，env 含 PI_WORKBENCH=1。
    *
    * 支持以下场景：
    * - 新建会话：`spawnPi({ cwd, name })` → 传 pi --name 参数
@@ -345,7 +345,7 @@ export class UnifiedTerminalPool {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...(freshPath ? { PATH: freshPath } : {}),
-      PI_DESKTOP: '1',
+      PI_WORKBENCH: '1',
     };
 
     // ── 获取默认 shell profile ──

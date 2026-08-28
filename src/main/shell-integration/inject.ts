@@ -55,8 +55,8 @@ function integrationTmpDir(shell: string): string {
     }
   })();
   const base = process.env.APPDATA
-    ? path.join(process.env.APPDATA, 'pi-desktop', 'shell-integration')
-    : path.join(os.tmpdir(), `pi-desktop-${user}-shell-integration`);
+    ? path.join(process.env.APPDATA, 'pi-workbench', 'shell-integration')
+    : path.join(os.tmpdir(), `pi-workbench-${user}-shell-integration`);
   return path.join(base, shell);
 }
 

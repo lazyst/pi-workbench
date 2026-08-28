@@ -186,7 +186,7 @@ test('拖 Tab 到右边缘 → 水平分屏，被拖 Tab 进入右侧新窗格',
   writeDiskSessionAt(dir, proj, 'tabs-a', '2026-07-14T12-00-00-001Z');
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-002Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -218,7 +218,7 @@ test('拖 Tab 到左边缘 → 水平分屏，被拖 Tab 进入左侧新窗格�
   writeDiskSessionAt(dir, proj, 'tabs-a', '2026-07-14T12-00-00-011Z');
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-012Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -248,7 +248,7 @@ test('单 Tab 拖到自己窗格边缘 → 源空自动合并（分屏取消，�
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-b-'));
   writeDiskSessionAt(dir, proj, 'only-a', '2026-07-14T12-00-00-021Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -287,7 +287,7 @@ test('拖 Tab 到另一窗格 Tab 条 → 移入该窗格，源空后树回退�
   writeDiskSessionAt(dir, proj, 'tabs-a', '2026-07-14T12-00-00-031Z');
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-032Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -331,7 +331,7 @@ test('拖 Tab 到内容区中央 → 无操作（不创建分屏、不移入、�
   writeDiskSessionAt(dir, proj, 'tabs-a', '2026-07-14T12-00-00-041Z');
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-042Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -364,7 +364,7 @@ test('所见即所得：拖到右边缘时预览线框精确等于分屏后新�
   writeDiskSessionAt(dir, proj, 'tabs-a', '2026-07-14T12-00-00-051Z');
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-052Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -423,7 +423,7 @@ test('跨窗格分屏：拖 Tab 到另一窗格边缘，在该窗格处创建分
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-062Z');
   writeDiskSessionAt(dir, proj, 'tabs-c', '2026-07-14T12-00-00-063Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 
@@ -482,7 +482,7 @@ test('跨窗格分屏 + 源空自动合并：终端实例跨 leaf 保留（keep-
   writeDiskSessionAt(dir, proj, 'tabs-a', '2026-07-14T12-00-00-081Z');
   writeDiskSessionAt(dir, proj, 'tabs-b', '2026-07-14T12-00-00-082Z');
 
-  electronApp = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  electronApp = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
   const page = await electronApp.firstWindow();
   await page.waitForLoadState('domcontentloaded');
 

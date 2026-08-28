@@ -78,7 +78,7 @@ export function IntegratedPane({ terminalId, active }: Props) {
     //  - 文件链接点击 → 在系统文件管理器选中（应用无内置编辑器，系统打开已由 link 本身触发）。
     term.onCwdChange = (cwd) => pi.updateTerminalCwd?.(terminalId, cwd);
     term.onOpenFile = (path, line, col) => {
-      // 在 pi-desktop 编辑器中打开文件：通过 tabStore.openPreview 在中间区新建/激活预览 tab。
+      // 在 pi-workbench 编辑器中打开文件：通过 tabStore.openPreview 在中间区新建/激活预览 tab。
       // path 为绝对路径（如 /home/user/file.ts 或 C:\Users\file.ts），
       // 传给 openPreview 时使用空 root，使 fsReadFile 直接用 path.resolve('', absPath) 解析。
       const fileName = path.split(/[\\/]/).filter(Boolean).pop() || path;

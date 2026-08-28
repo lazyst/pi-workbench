@@ -16,7 +16,7 @@ process.stdin.on('data', (d) => {
   process.stdout.write(`echo: ${s}`);
   if (!wroteSession) {
     wroteSession = true;
-    const dir = process.env.PI_DESKTOP_SESSIONS_DIR;
+    const dir = process.env.PI_WORKBENCH_SESSIONS_DIR;
     if (dir) {
       const group = path.join(dir, encodeURIComponent(process.cwd()));
       fs.mkdirSync(group, { recursive: true });

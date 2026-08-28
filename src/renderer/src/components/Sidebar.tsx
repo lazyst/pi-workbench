@@ -40,7 +40,7 @@ interface Props {
   // 用户“添加目录”显式注册的目录列表：即使该目录下暂无会话，也需在侧边栏
   // 渲染出对应分组，保证“移除目录 / 新建会话 / 清空目录 / 置顶”等功能可用。
   addedDirs?: string[];
-  // 「应用工作目录」分组的根目录（config.appWorkDir，默认 ~/piDesktop）。
+  // 「应用工作目录」分组的根目录（config.appWorkDir，默认 ~/.pi/pi-workbench）。
   // 始终渲染为一个独立分组，收容与具体项目无关、与 pi-agent 闲聊/临时的集成终端。
   appWorkDir?: string;
   // 在「应用工作目录」分组下新建集成终端的入口。

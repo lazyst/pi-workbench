@@ -48,7 +48,7 @@ test('拖入单文件：PTY 收到绝对路径', async () => {
   const env = { ...process.env };
   delete (env as any).ELECTRON_RENDERER_URL;
 
-  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir } });
+  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir } });
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
@@ -90,7 +90,7 @@ test('拖入含空格路径的文件：PTY 收到双引号包裹的路径', asyn
   const env = { ...process.env };
   delete (env as any).ELECTRON_RENDERER_URL;
 
-  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir } });
+  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir } });
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');
@@ -126,7 +126,7 @@ test('拖入多个文件：PTY 收到空格拼接的多个转义路径', async (
   const env = { ...process.env };
   delete (env as any).ELECTRON_RENDERER_URL;
 
-  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir } });
+  electronApp = await _electron.launch({ args: [MAIN], env: { ...env, PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir } });
   const page: Page = await electronApp.firstWindow();
   await installSpy(page);
   await page.waitForLoadState('domcontentloaded');

@@ -3788,7 +3788,7 @@ html, body, #root {
 .diff-tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
 /* ── SingleDiffView（单栏 unified diff，按文件分块折叠）── */
-/* 设计参考 pi-web 的 DiffView，适配 pi-desktop 的 CSS 变量体系。 */
+/* 设计参考 pi-web 的 DiffView，适配 pi-workbench 的 CSS 变量体系。 */
 :root {
   --diff-added: #4ade80;
   --diff-added-bg: rgba(0, 200, 80, 0.12);

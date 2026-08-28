@@ -128,7 +128,7 @@ describe('UnifiedTerminalPool', () => {
         expect(opts.cwd).toBe(existingCwd);
         expect(opts.cols).toBe(80);
         expect(opts.rows).toBe(24);
-        expect(opts.env.PI_DESKTOP).toBe('1');
+        expect(opts.env.PI_WORKBENCH).toBe('1');
         expect(opts.env.PI_SHELL_READY_MARKER).toBe('1');
         // TERM_PROGRAM 不再设为 'vscode'，避免触发用户 VS Code shell integration
         expect(opts.env.TERM_PROGRAM).not.toBe('vscode');
@@ -144,7 +144,7 @@ describe('UnifiedTerminalPool', () => {
 
         // 发送 shell-ready 标记 → 触发 pi 命令注入
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         // 推进时间，触发定时器注入
         vi.advanceTimersByTime(200);
         expect(pty.write).toHaveBeenCalledWith('pi\r');
@@ -160,7 +160,7 @@ describe('UnifiedTerminalPool', () => {
         pool.create({ command: 'pi', cwd: existingCwd, name: 'My Session', profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200);
         expect(pty.write).toHaveBeenCalledWith('pi --name My Session\r');
       } finally {
@@ -192,7 +192,7 @@ describe('UnifiedTerminalPool', () => {
         expect(bin).toBe('/usr/bin/bash');
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200);
         expect(pty.write).toHaveBeenCalledWith(`pi --session ${file}\r`);
         expect(info.type).toBe('pi');
@@ -218,7 +218,7 @@ describe('UnifiedTerminalPool', () => {
         expect(bin).toBe('/usr/bin/bash');
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200);
         expect(pty.write).toHaveBeenCalledWith('/custom/pi\r');
       } finally {
@@ -251,7 +251,7 @@ describe('UnifiedTerminalPool', () => {
         pty.emit('data', 'Last login: ...\n');
         expect(pty.write).not.toHaveBeenCalled();
 
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200);
         expect(pty.write).toHaveBeenCalledWith('pi\r');
       } finally {
@@ -282,7 +282,7 @@ describe('UnifiedTerminalPool', () => {
         pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
         // shell prompt 的 OSC 133 D 只是间接信号（pi-tui 切换 TUI 模式 / conpty 重发
@@ -309,7 +309,7 @@ describe('UnifiedTerminalPool', () => {
         pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
         // conpty 误报 exit，但进程实际仍存活
@@ -329,7 +329,7 @@ describe('UnifiedTerminalPool', () => {
         const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
         // 进程真的退出了 → 关闭终端
@@ -350,7 +350,7 @@ describe('UnifiedTerminalPool', () => {
         const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200);
 
         // 用户主动终止 → 跳过进程存活检查，立即关闭
@@ -369,7 +369,7 @@ describe('UnifiedTerminalPool', () => {
         const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
         // 模拟 pi-tui fullscreen→regular 切换：afterTerminalStop 写 \x1b[?1049l，
@@ -395,7 +395,7 @@ describe('UnifiedTerminalPool', () => {
         const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
         const pty = mockPtys[0];
-        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        pty.emit('data', '\x1b]777;pi-workbench-shell-ready\x07');
         vi.advanceTimersByTime(200);
 
         // 模拟 pi 退出：stopInteractiveTui 写 \x1b[?1049l（switchTuiMode preserveScreen），

@@ -36,7 +36,7 @@ const NAV_ITEMS: { key: NavKey; label: string; sectionBreak?: boolean }[] = [
 //  - 常规：主题、关闭按钮行为（原有设置项迁移至此）。
 //  - 会话管理：展示全部磁盘会话（按目录分组），支持单条删除、清空目录、批量删除。
 //  - Pi 设置：集成 pi-tool 的配置管理功能（配置文件、模型、MCP、Skills、扩展）。
-const NAV_STORAGE_KEY = 'pi-desktop:settings-nav';
+const NAV_STORAGE_KEY = 'pi-workbench:settings-nav';
 
 function loadSavedNav(): NavKey {
   try {
@@ -1149,7 +1149,7 @@ function TerminalSettings() {
               type="text"
               className="app-work-dir-input"
               aria-label="应用工作目录"
-              placeholder={'~/piDesktop'}
+              placeholder={'~/.pi/pi-workbench'}
               value={appWorkDir}
               onChange={(e) => setAppWorkDir(e.target.value)}
             />

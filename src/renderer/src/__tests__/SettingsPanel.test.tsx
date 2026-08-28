@@ -24,7 +24,7 @@ describe('SettingsPanel', () => {
   // 会话管理相关测试会 handleNav('sessions') 并把导航写入 localStorage，
   // 若不清理，后续测试会从「会话管理」页起步，导致 GeneralSettings（含字体大小）不渲染。
   beforeEach(() => {
-    localStorage.removeItem('pi-desktop:settings-nav');
+    localStorage.removeItem('pi-workbench:settings-nav');
   });
 
   it('renders a close-behavior segmented control defaulting to minimize-to-tray', async () => {

@@ -65,7 +65,7 @@ export function PiExtensionsManager() {
   };
 
   // 不可管理的扩展给出原因提示：
-  //   local 且 !managed → pi-desktop 同步扩展等系统内置项
+  //   local 且 !managed → pi-workbench 同步扩展等系统内置项
   //   path              → settings.json 中的直接路径扩展，需编辑配置文件
   const unmanagedHint = (e: ExtensionInfo) => {
     if (e.type === 'path') return '直接路径扩展，请编辑 settings.json 管理';

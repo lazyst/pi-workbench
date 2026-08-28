@@ -1,7 +1,7 @@
 // Markdown 渲染预览（orca 风格）。
 // 插件链与 orca 的 MarkdownPreview 对齐：remark(gfm/breaks/frontmatter/math)
 // + rehype(raw → sanitize → slug → highlight → katex)。渲染产物套用 .markdown-file-preview 样式。
-// 与 orca 的区别：去掉 orca 特有的 runtime/doc-link/批注模块，链接路由改用 pi-desktop 的
+// 与 orca 的区别：去掉 orca 特有的 runtime/doc-link/批注模块，链接路由改用 pi-workbench 的
 // linkUtils + openExternal，富文本编辑不在此组件（由 RichMarkdownEditor 负责）。
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';

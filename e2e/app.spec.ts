@@ -39,7 +39,7 @@ test('open disk session → continuity across switch → hover terminate → clo
   const cwdB = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-b-'));
   writeDiskSession(dir, cwdA, 'session-A');
   writeDiskSession(dir, cwdB, 'session-B');
-  const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  const { page } = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
 
   // 注册会话 cwd 为已添加目录：侧边栏按 visibleDirs（addedDirs ∪ appWorkDir）过滤会话，
   // 否则临时目录下的会话不会出现在侧边栏。
@@ -82,7 +82,7 @@ test('new session from a directory promotes into the sidebar after first message
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-promo-'));
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));
   writeDiskSession(dir, proj, 'seeded-session');
-  const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  const { page } = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
 
   await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
   await page.reload();
@@ -117,7 +117,7 @@ test('promoted session reuses the live process (no duplicate) and is highlighted
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-reuse-'));
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));
   writeDiskSession(dir, proj, 'seeded-session');
-  const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  const { page } = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
 
   await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
   await page.reload();
@@ -166,7 +166,7 @@ test('pinning a directory persists across reload', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-pin-'));
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));
   writeDiskSession(dir, proj, 'pin-seeded');
-  const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  const { page } = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
 
   await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
   await page.reload();
@@ -197,7 +197,7 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-jump-'));
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));
   writeDiskSession(dir, proj, 'jump-seeded');
-  const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+  const { page } = await launch({ PI_WORKBENCH_FAKE: '1', PI_WORKBENCH_SESSIONS_DIR: dir });
 
   await page.evaluate((d) => (window as any).pi.setConfig({ addedDirs: [d] }), proj);
   await page.reload();

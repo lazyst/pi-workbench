@@ -8,7 +8,7 @@ import type { AppConfig, FontWeight } from '../renderer/src/types';
 // 中结合 os.homedir() 解析为绝对路径（见 index.ts 的 getDefaultAppWorkDir）。
 export const DEFAULT_APP_WORK_DIR_NAME = 'defaultWorkbench';
 
-// 默认应用工作目录根（~/piDesktop），可在「设置 → 终端」改为其他目录。
+// 默认应用工作目录根（~/.pi/pi-workbench），可在「设置 → 终端」改为其他目录。
 // 返回文件夹名（renderer 安全）；绝对路径由 main 进程的 getDefaultAppWorkDir 计算。
 export function getDefaultAppWorkDir(): string {
   return DEFAULT_APP_WORK_DIR_NAME;
@@ -31,7 +31,7 @@ export function defaultConfig(): AppConfig {
     defaultTerminalProfile: null,
     // 用户自定义终端 profile 覆盖（key 为 profile id）。
     terminalProfiles: {},
-    // app work dir group root (defaults to ~/piDesktop)
+    // app work dir group root (defaults to ~/.pi/pi-workbench)
     appWorkDir: getDefaultAppWorkDir(),
     // 终端 scrollback 行数，默认 5000
     scrollback: 5000,

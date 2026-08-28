@@ -4,7 +4,7 @@
   "private": true,
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "node scripts/copy-assets.mjs && cross-env PI_DESKTOP_DEV=1 electron-vite dev",
+    "dev": "node scripts/copy-assets.mjs && cross-env PI_WORKBENCH_DEV=1 electron-vite dev",
     "build": "electron-vite build && node scripts/copy-assets.mjs",
     "start": "electron-vite preview",
     "test": "vitest run",
@@ -80,7 +80,7 @@
     "vitest": "^4.1.11"
   },
   "build": {
-    "appId": "com.pi.desktop",
+    "appId": "com.pi.workbench",
     "productName": "pi-workbench",
     "files": [
       "out/**/*",
