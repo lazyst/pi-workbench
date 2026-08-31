@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5.0 (2026-08-31)
+
+### 新功能
+
+- **删除扩展时同时卸载 npm/git 包文件** — 此前「设置 → Pi 配置 → 扩展管理」删除 package 类型扩展（npm:/git:）仅从 settings.json 的 packages 移除配置条目，不卸载磁盘上的 npm 包或 git clone 目录，导致「配置没了但包还在」的脏状态。改为：删除 npm/git 包时调用 `pi remove <source>`（user scope，仅全局 ~/.pi/agent），由 pi 自身执行 npm uninstall / 删 git clone / 清 settings / scope 判断 / legacy 全局包处理，语义最准且能跟随 pi 演进；本地路径包（非 npm:/git:）保持「仅移除配置」（pi 本身也不复制/删除本地路径包）。前端删除按钮加 loading 态与禁用、确认框文案按类型区分（package 类型提示「将通过 pi remove 同时卸载对应的 npm/git 包文件」），失败时在工具栏显示错误。spawn pi 采用单命令字符串 + 手动引号转义 source（Windows 双写 `"`、Unix 单引号转义），规避 Node 22+ 的 DEP0190 弃用警告（shell:true + args 数组不再自动转义 args、仅拼接，有注入风险）。
+
+### 修复
+
+- **修复被禁用扩展删除的假性失败** — 被禁用的 package 扩展（settings 无此条目、仅在 pi-tool-state.json 的 disabledExtensions）调 `pi remove` 时，pi 的「先卸载磁盘包、后 removeSourceFromSettings」流程会因 settings 无条目报 `No matching package found` 退出 1，虽磁盘包实际已卸载，pi-workbench 仍向用户报告「删除失败」。修复：删除前先把 source 加回 settings packages（复用 enable 的写回逻辑），让 pi remove 正常退出 0，再卸载 + 清 disabledExtensions。罕见真失败时扩展会从「禁用」变「启用」状态，用户重试即可删除。
+
 ## v1.4.9 (2026-08-29)
 
 ### 新功能
