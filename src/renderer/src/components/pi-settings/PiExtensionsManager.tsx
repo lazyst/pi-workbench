@@ -18,6 +18,7 @@ export function PiExtensionsManager() {
   const [tab, setTab] = useState<'enabled' | 'disabled'>('enabled');
   const [status, setStatus] = useState('加载中...');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setStatus('加载中...');
@@ -51,7 +52,20 @@ export function PiExtensionsManager() {
     setConfirmDelete(null);
     const ext = extensions.find(e => e.name === name);
     if (!ext) return;
-    await runWithReload(() => pi.piExtensionsDelete({ name: ext.name, type: ext.type, source: ext.source, dir: ext.dir }));
+    setDeleting(name);
+    setStatus('删除中...');
+    try {
+      const res = await pi.piExtensionsDelete({ name: ext.name, type: ext.type, source: ext.source, dir: ext.dir });
+      if (!res.success) {
+        setStatus(`删除失败：${res.error ?? '未知错误'}`);
+        return;
+      }
+      await load();
+    } catch (err) {
+      setStatus(`删除失败：${String(err)}`);
+    } finally {
+      setDeleting(null);
+    }
   };
 
   const filtered = extensions.filter(e => e.disabled === (tab === 'disabled'));
@@ -107,13 +121,13 @@ export function PiExtensionsManager() {
                 <span className="pi-muted">{unmanagedHint(e)}</span>
               ) : e.disabled ? (
                 <>
-                  <button className="btn btn-sm" onClick={() => enable(e)}>启用</button>
-                  <button className="btn btn-sm btn-danger" onClick={() => setConfirmDelete(e.name)}>删除</button>
+                  <button className="btn btn-sm" disabled={!!deleting} onClick={() => enable(e)}>启用</button>
+                  <button className="btn btn-sm btn-danger" disabled={!!deleting} onClick={() => setConfirmDelete(e.name)}>{deleting === e.name ? '删除中…' : '删除'}</button>
                 </>
               ) : (
                 <>
-                  <button className="btn btn-sm" onClick={() => disable(e)}>禁用</button>
-                  <button className="btn btn-sm btn-danger" onClick={() => setConfirmDelete(e.name)}>删除</button>
+                  <button className="btn btn-sm" disabled={!!deleting} onClick={() => disable(e)}>禁用</button>
+                  <button className="btn btn-sm btn-danger" disabled={!!deleting} onClick={() => setConfirmDelete(e.name)}>{deleting === e.name ? '删除中…' : '删除'}</button>
                 </>
               )}
             </div>
@@ -124,7 +138,9 @@ export function PiExtensionsManager() {
       {confirmDelete && (
         <ConfirmDialog
           title="删除扩展"
-          message={`确定要删除扩展「${confirmDelete}」吗？此操作不可撤销。\n\n提示：如果扩展是通过 pi install 安装的，仅从配置中移除。`}
+          message={extensions.find(e => e.name === confirmDelete)?.type === 'package'
+            ? `确定要删除扩展「${confirmDelete}」吗？此操作不可撤销。\n\n提示：将通过 pi remove 同时卸载对应的 npm/git 包文件（仅清理全局 ~/.pi/agent）。`
+            : `确定要删除扩展「${confirmDelete}」吗？此操作不可撤销。`}
           onConfirm={() => doDelete(confirmDelete)}
           onCancel={() => setConfirmDelete(null)}
         />

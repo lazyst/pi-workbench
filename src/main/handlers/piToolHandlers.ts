@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { spawn } from 'node:child_process';
 
 import { PI_WORKBENCH_SYNC_FILE } from '../pi-workbench-sync-source';
 
@@ -13,6 +14,7 @@ export function registerPiToolHandlers(
   ipcMain: Electron.IpcMain,
   win: Electron.BrowserWindow,
   piAgentDir: string,
+  piBin: string,
 ): void {
   /** 深度合并 source 到 target（仅对象，数组直接替换） */
   function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
@@ -466,6 +468,95 @@ export function registerPiToolHandlers(
     return changed;
   }
 
+  /**
+   * 清理 pi-tool-state.json 中 disabledExtensions 的残留记录。
+   * 幂等、无副作用，pi remove 成败均可安全调用。
+   */
+  function cleanupDisabledExtensions(source: string): boolean {
+    try {
+      const st = readPiToolState();
+      const list: string[] = (st.disabledExtensions as string[]) || [];
+      const idx = list.indexOf(source);
+      if (idx !== -1) {
+        list.splice(idx, 1);
+        st.disabledExtensions = list;
+        writePiToolState(st);
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }
+
+  /**
+   * 把 source 加回全局 settings.json 的 packages（若已在不加）。
+   * 被禁用包（settings 无此条目）会让 pi remove 报 "No matching package found" 退出 1，
+   * 先加回条目让 pi remove 正常退出 0 再卸载（复用 enable 的写回逻辑）。
+   */
+  function ensurePackageInSettings(source: string): void {
+    const globalSettingsPath = path.join(piAgentDir, 'settings.json');
+    try {
+      const settings = fs.existsSync(globalSettingsPath)
+        ? JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8'))
+        : {};
+      if (!Array.isArray(settings.packages)) settings.packages = [];
+      const exists = settings.packages.some((p: unknown) => getPackageSourceString(p) === source);
+      if (!exists) {
+        settings.packages.push(source);
+        fs.writeFileSync(globalSettingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+      }
+    } catch { /* 损坏的 settings 文件忽略：pi remove 仍会尝试卸载 */ }
+  }
+
+  /**
+   * 调用 `pi remove <source>`（user scope，仅全局 ~/.pi/agent）卸载 npm/git 包文件，
+   * 并由 pi 自行从 settings.json 的 packages[] 移除条目。pi 处理 npm uninstall /
+   * 删 git clone / scope 判断 / legacy 全局包，语义最准且能跟随 pi 演进。
+   */
+  function runPiRemove(source: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    // shell:true + args 数组在 Node 22+ 触发 DEP0190（args 不被自动转义、仅拼接，有注入风险），
+    // 改为单命令字符串 + 手动引号包裹 source：既消除警告，又避免 source 含空格/特殊字符被 shell 拆分。
+    const safeSource = process.platform === 'win32'
+      ? `"${source.replace(/"/g, '""')}"`
+      : `'${source.replace(/'/g, "'\\''")}'`;
+    const cmdLine = `${piBin} remove ${safeSource}`;
+    return new Promise((resolve) => {
+      const child = spawn(cmdLine, {
+        env: process.env,
+        cwd: piAgentDir,
+        // Windows 下 pi 通常是 .cmd，需要 shell 才能执行。
+        shell: process.platform === 'win32',
+        windowsHide: true,
+      });
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      }, 180000);
+      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        resolve({ ok: false, stdout, stderr: stderr || String(err) });
+      });
+      child.on('close', (code: number | null) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          resolve({ ok: false, stdout, stderr: stderr || 'pi remove timed out' });
+          return;
+        }
+        resolve({ ok: code === 0, stdout, stderr });
+      });
+    });
+  }
+
+  /** 从 pi remove 的 stderr 中提取简短错误（去掉 npm 进度行 \r，取最后一条非空）。 */
+  function cleanPiError(stderr: string): string {
+    const line = stderr.replace(/\r/g, '\n').split('\n').map((s) => s.trim()).filter(Boolean).pop();
+    return line || 'pi remove failed';
+  }
+
   ipcMain.handle('pi:extensions:list', () => {
     const result: ExtItem[] = [];
     const seenNames = new Set<string>();
@@ -603,7 +694,7 @@ export function registerPiToolHandlers(
     return { success: false, error: 'Unsupported extension type' };
   });
 
-  ipcMain.handle('pi:extensions:delete', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
+  ipcMain.handle('pi:extensions:delete', async (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
     if (payload.type === 'local' && payload.dir) {
       if (!isSafeLocalName(payload.name)) return { success: false, error: 'Invalid extension name' };
       if (!isInsideLocalExtDir(payload.dir)) return { success: false, error: 'Invalid extension path' };
@@ -617,21 +708,28 @@ export function registerPiToolHandlers(
       }
     }
     if (payload.type === 'package') {
-      const changed = removePackageFromSettings(payload.source);
-      // 无论是否从 settings 移除，都清理 disabledExtensions 中的残留记录，
-      // 否则「仅禁用未启用」的包会永远删不掉、记录残留。
-      let stateChanged = false;
-      try {
-        const st = readPiToolState();
-        const list: string[] = (st.disabledExtensions as string[]) || [];
-        const idx = list.indexOf(payload.source);
-        if (idx !== -1) {
-          list.splice(idx, 1);
-          st.disabledExtensions = list;
-          writePiToolState(st);
-          stateChanged = true;
-        }
-      } catch { /* ignore */ }
+      const source = payload.source;
+      const isNpm = source.startsWith('npm:');
+      const isGit =
+        source.startsWith('git:') ||
+        /^https?:\/\//.test(source) ||
+        source.startsWith('ssh://') ||
+        source.startsWith('git://');
+      if (isNpm || isGit) {
+        // 被禁用包（settings 无此条目）会让 pi remove 报 "No matching package found" 退出 1，
+        // 虽磁盘卸载仍会执行。先把 source 加回 settings 让 pi remove 正常退出 0，再卸载。
+        // 罕见失败时扩展会从「禁用」变「启用」状态，用户重试即可删除。
+        ensurePackageInSettings(source);
+        // 调用 pi remove（user scope，仅全局 ~/.pi/agent）：卸载 npm/git 包文件 + 清理 settings。
+        const r = await runPiRemove(source);
+        // pi remove 成败都清理 pi-workbench 自己的 disabledExtensions 残留（幂等、无副作用）。
+        cleanupDisabledExtensions(source);
+        if (!r.ok) return { success: false, error: cleanPiError(r.stderr) };
+        return { success: true };
+      }
+      // 本地路径包（非 npm:/git:）：仅移除配置，不卸载外部目录（pi 本身也不复制/删除本地路径包）。
+      const changed = removePackageFromSettings(source);
+      const stateChanged = cleanupDisabledExtensions(source);
       const ok = changed || stateChanged;
       return { success: ok, error: ok ? undefined : 'Package not found' };
     }

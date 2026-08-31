@@ -529,7 +529,7 @@ function createWindow() {
 
   // Pi 工具配置 IPC（settings、models、MCP、skills、extensions）
   const piAgentDir = path.join(os.homedir(), '.pi', 'agent');
-  registerPiToolHandlers(ipcMain, win, piAgentDir);
+  registerPiToolHandlers(ipcMain, win, piAgentDir, resolvePi());
 
   // 版本更新检查 IPC
   registerUpdateHandlers(ipcMain, win);
