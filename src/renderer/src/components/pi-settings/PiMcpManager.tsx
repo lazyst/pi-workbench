@@ -88,9 +88,11 @@ const IMPORT_OPTIONS = [
 
 // ─── 工具函数 ──────────────────────────────────────────────────────────
 
+// 传输类型由字段「存在性」推断（而非 truthy）：切到 http/socket 时
+// 初值字段是空字符串 ''，若按 truthy 判断会回落 stdio，导致下拉框看似无反应。
 function detectTransport(server: McpServer): TransportType {
-  if (server.socket) return 'socket';
-  if (server.url) return 'http';
+  if (server.socket !== undefined) return 'socket';
+  if (server.url !== undefined) return 'http';
   return 'stdio';
 }
 
@@ -121,6 +123,9 @@ export function PiMcpManager() {
   const [status, setStatus] = useState('检测中...');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [importInputs, setImportInputs] = useState<Record<string, string>>({});
+  // 服务器重命名：正在重命名的目标 + 草稿 + 错误提示
+  const [renaming, setRenaming] = useState<{ fIdx: number; sKey: string; draft: string } | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const initialLoadDone = useRef(false);
   const saveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
@@ -187,6 +192,27 @@ export function PiMcpManager() {
     setExpanded(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
+  const startRename = (fIdx: number, sKey: string) => {
+    setRenaming({ fIdx, sKey, draft: sKey });
+    setRenameError(null);
+  };
+
+  const commitRename = () => {
+    if (!renaming) return;
+    const { fIdx, sKey: oldKey, draft } = renaming;
+    const trimmed = draft.trim();
+    if (!trimmed) { setRenameError('名称不能为空'); return; }
+    if (trimmed === oldKey) { setRenaming(null); setRenameError(null); return; }
+    const servers = files[fIdx]?.config?.mcpServers;
+    if (servers && Object.prototype.hasOwnProperty.call(servers, trimmed)) {
+      setRenameError('已存在同名服务器');
+      return;
+    }
+    renameServer(fIdx, oldKey, trimmed);
+    setRenaming(null);
+    setRenameError(null);
+  };
+
   const updateFile = (fIdx: number, updater: (f: McpFile) => McpFile) => {
     setFiles(prev => {
       const next = [...prev];
@@ -211,11 +237,34 @@ export function PiMcpManager() {
     });
   };
 
+  // value 为 undefined 时删除字段，避免配置残留 command: undefined 等脏数据
+  //（JSON 序列化后会变成 "command": null），也保证 detectTransport 的
+  //「存在性判断」语义干净——切换传输方式时旧字段会被真正移除。
   const updateServer = (fIdx: number, sKey: string, field: string, value: unknown) => {
     updateFile(fIdx, (f) => {
       const servers = { ...(f.config?.mcpServers || {}) };
-      servers[sKey] = { ...(servers[sKey] || {}), [field]: value };
+      const server = { ...(servers[sKey] || {}) };
+      if (value === undefined) {
+        delete server[field as keyof McpServer];
+      } else {
+        server[field as keyof McpServer] = value as never;
+      }
+      servers[sKey] = server;
       return { ...f, config: { ...f.config, mcpServers: servers } };
+    });
+  };
+
+  // 重命名服务器：重建 mcpServers 对象的 key（名字即 key）。
+  // 校验在调用方（commitRename）基于当前 files 完成。
+  const renameServer = (fIdx: number, oldKey: string, newKey: string) => {
+    updateFile(fIdx, (f) => {
+      const servers = { ...(f.config?.mcpServers || {}) };
+      const reordered: Record<string, McpServer> = {};
+      for (const [k, v] of Object.entries(servers)) {
+        if (k === oldKey) reordered[newKey] = v;
+        else reordered[k] = v;
+      }
+      return { ...f, config: { ...f.config, mcpServers: reordered } };
     });
   };
 
@@ -457,12 +506,35 @@ export function PiMcpManager() {
     const otherSection = `other-${fIdx}-${sKey}`;
     const serverKey = `svr-${fIdx}-${sKey}`;
     const isServerOpen = expanded[serverKey] === true;
+    const isRenaming = renaming?.fIdx === fIdx && renaming?.sKey === sKey;
 
     return (
       <div className="pi-mcp-server" key={sKey}>
         <div className="pi-mcp-server-header" style={{ cursor: 'pointer' }} onClick={() => toggleSection(serverKey)}>
           <span className="pi-collapse-icon">{isServerOpen ? '▼' : '▶'}</span>
-          <span className="pi-mcp-server-name">{sKey}</span>
+          {isRenaming ? (
+            <input
+              className="pi-input pi-mcp-server-name"
+              style={renameError ? { borderColor: 'var(--danger)', color: 'var(--danger)' } : undefined}
+              autoFocus
+              value={renaming!.draft}
+              onChange={e => { setRenaming({ ...renaming!, draft: e.target.value }); setRenameError(null); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                else if (e.key === 'Escape') { setRenaming(null); setRenameError(null); }
+              }}
+              onBlur={() => commitRename()}
+              onClick={e => e.stopPropagation()}
+              title={renameError ?? '回车确认，Esc 取消'}
+              placeholder="服务器名称"
+            />
+          ) : (
+            <>
+              <span className="pi-mcp-server-name" title={renameError ?? undefined}>{sKey}</span>
+              <button className="btn btn-sm" title="重命名" style={{ padding: '0 6px', flex: 'none' }}
+                onClick={e => { e.stopPropagation(); startRename(fIdx, sKey); }}>✎</button>
+            </>
+          )}
           <label className="pi-toggle" style={{ marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>
             <input type="checkbox" checked={!server.disabled}
               onChange={e => updateServer(fIdx, sKey, 'disabled', !e.target.checked)} />
