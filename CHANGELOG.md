@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.1 (2026-09-02)
+
+### 修复
+
+- **修复 MCP 管理的两个 bug** —「设置 → Pi 配置 → MCP 管理」面板存在两个问题：
+  - **服务器无法重命名**：MCP 服务器名即 `mcpServers` 对象的 key，此前仅有新增/删除/改字段的能力，没有任何改名入口。新增 `renameServer`（重建对象 key、保持其他顺序不变）与组件级 `renaming`/`renameError` 状态；服务器卡片头部名称旁加 ✎ 按钮，点击进入内联 input 编辑态（回车/失焦提交、Esc 取消），带空名与重名校验（重名/空名时输入框红框 + title 提示）。
+  - **传输方式下拉框点击选项无反应**：根因是 `detectTransport` 用 truthy 判断（`if (server.url)`），而切换到 http/socket 时 `getTransportDefaults` 产生的初值字段是空字符串 `''`（falsy），导致 `detectTransport` 又回落 `stdio`，下拉框 value 仍显示 stdio、字段区也仍显示 stdio 字段，看似没反应。查阅 pi-mcp-adapter 的 `ServerEntry` 接口确认其**无显式 transport 字段**、传输类型完全靠字段推断，故保持纯推断思路：`detectTransport` 改为字段**存在性判断**（`server.socket !== undefined` / `server.url !== undefined`），`url: ""` 也能被正确识别为 http（用户机器上的 `context7` 正因 `url: ""` 被误判为 stdio，修复后正确显示为 http）；`updateServer` 在写入 `undefined` 时改为 `delete` 字段，避免配置残留 `command: undefined`（JSON 序列化后变成 `"command": null` 的脏数据），同时让 `getTransportDefaults` 里的 `url/socket/headers/auth` 等清理项真正删除属性，存在性判断的语义更干净。附带收益：HTTP 认证切回「无」时 `auth/bearerToken/bearerTokenEnv/oauth` 现在会被真正删除而非残留 `null`。
+
 ## v1.5.0 (2026-08-31)
 
 ### 新功能
